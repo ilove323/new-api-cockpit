@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 用户配额</title>
+  <link rel="stylesheet" href="/quota/static/quota.css">
+  <script defer src="/quota/static/quota.js"></script>
+</head>
+<body>
+  <header><div class="brand">{{ site_name }} <span>用户配额</span></div><a href="/statistics/">返回用量统计</a></header>
+  <main>
+    <div class="intro"><h1>用户配额</h1><p>选择用户后，按现有剩余额度增加或减少。不会覆盖原额度；实际变更由 New API 官方接口完成。</p></div>
+    <section class="toolbar" aria-label="筛选与批量操作">
+      <label>搜索用户或显示名<input id="search" type="search" placeholder="输入关键词" autocomplete="off"></label>
+      <label>操作<select id="mode"><option value="add">增加额度</option><option value="subtract">减少额度</option></select></label>
+      <label>每人金额（元）<input id="amount" type="number" min="0.01" max="1000000000" step="0.01" placeholder="例如 380.00"></label>
+      <button id="preview" type="button">预览变更</button>
+    </section>
+    <section class="group-toolbar" aria-label="按用户组批量选择">
+      <details id="group-picker">
+        <summary id="group-summary">选择用户组</summary>
+        <div id="group-options" role="group" aria-label="用户组"></div>
+      </details>
+      <button id="select-groups" type="button" disabled>选中所选组的用户</button>
+      <button id="deselect-groups" type="button" disabled>取消所选组的用户</button>
+      <button id="clear-selection" type="button">清空已选用户</button>
+      <span class="group-hint">按组选择不受搜索框影响；仅改变勾选，不会调整额度。</span>
+    </section>
+    <p id="status" role="status" aria-live="polite">正在读取用户…</p>
+    <p class="hint">已选 <strong id="selected-count">0</strong> 人。减少额度允许产生负余额，请仔细核对。批量操作逐人执行；若中途失败，已经成功的用户不会自动回滚。</p>
+    <div class="table-wrap"><table><thead><tr><th><input id="select-all" type="checkbox" aria-label="选择当前筛选结果中的全部用户"></th><th>ID</th><th>用户名 / 显示名</th><th>用户组</th><th>状态</th><th>剩余额度（元）</th><th>已用额度（元）</th></tr></thead><tbody id="users"></tbody></table></div>
+  </main>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <h2 id="confirm-title">确认额度变更</h2>
+    <p id="confirm-summary"></p>
+    <div class="preview-wrap"><table><thead><tr><th>用户</th><th>当前剩余（元）</th><th>预计变更后（元）</th></tr></thead><tbody id="preview-rows"></tbody></table></div>
+    <p class="warning">预览仅供核对；最终按提交时的实际余额增减，不会覆盖余额。确认后请勿重复提交。</p>
+    <div class="dialog-actions"><button id="cancel" type="button">取消</button><button id="apply" type="button">确认执行</button></div>
+  </dialog>
+</body>
+</html>

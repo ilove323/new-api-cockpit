@@ -8,12 +8,13 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 
-from flask import Flask, g, jsonify, render_template, request, send_file
+from flask import Flask, g, jsonify, render_template, request, send_file, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 import psycopg
 from new_api_statistics import balance
 from new_api_statistics import scopes as scope_backend
 from new_api_statistics import notifications
+from new_api_statistics import quota as quota_backend
 
 from new_api_statistics.report import (
     TZ,
@@ -110,6 +111,38 @@ def index():
         ),
         end=now.strftime("%Y-%m-%dT%H:%M:%S"),
     )
+
+
+@app.get("/quota")
+@app.get("/quota/")
+def quota_page():
+    return render_template("quota.html", site_name=load_site_name())
+
+
+@app.get("/quota/static/<path:filename>")
+def quota_static(filename):
+    if filename not in {"quota.css", "quota.js"}:
+        return "Not Found", 404
+    return send_from_directory(app.static_folder, filename)
+
+
+@app.get("/quota/api/users")
+def quota_users():
+    return jsonify(rows=quota_backend.list_users())
+
+
+@app.post("/quota/api/preview")
+def quota_preview():
+    if request.headers.get("X-Quota-Action") != "preview":
+        return jsonify(error="请求来源无效。"), 403
+    return jsonify(quota_backend.preview(request.authorization.username, request.get_json(silent=True)))
+
+
+@app.post("/quota/api/apply")
+def quota_apply():
+    if request.headers.get("X-Quota-Action") != "confirm":
+        return jsonify(error="请先确认额度调整。"), 403
+    return jsonify(quota_backend.apply(request.authorization.username, request.get_json(silent=True)))
 
 
 def scope_context():
@@ -473,6 +506,11 @@ def database_error(exc):
     if isinstance(exc, psycopg.errors.QueryCanceled):
         return jsonify(error="查询超过 60 秒，请缩小时间范围后重试。"), 504
     return jsonify(error="数据库查询失败，请检查连接配置与数据库日志。"), 503
+
+
+@app.errorhandler(quota_backend.QuotaError)
+def quota_error(exc):
+    return jsonify(error=str(exc)), 400
 
 
 if __name__ == "__main__":

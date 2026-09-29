@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a separate administrator quota page backed by New API's atomic add/subtract API, with preview and a 100-user batch limit.
+- Show each user's New API group and support selecting or deselecting users from multiple groups before a quota operation.
+- Document the `/quota/` Nginx route, administrator PAT requirement and read-only database boundary.
+
 ## 0.1.2 - 2026-09-23
 
 - Add separate usage and budget ledgers for all channels, each active New API channel tag, and ungrouped channels.

@@ -15,7 +15,7 @@
 </head>
 <body>
   <header><span class="brand">{{ site_name }} <span>用量统计</span></span>
-    <div class="header-actions"><span id="updated">北京时间</span>
+    <div class="header-actions"><a class="quota-nav" href="/quota">用户配额</a><span id="updated">北京时间</span>
       <button id="balance-bell" class="icon-button" type="button" title="余额警报" aria-label="余额警报">
         <img src="{{ url_for('static', filename='bell.svg') }}" alt="" width="20" height="20">
       </button>

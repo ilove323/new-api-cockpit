@@ -2,7 +2,7 @@
 
 # New API Statistics
 
-**为 New API 提供用量统计、成本分析与余额报警**
+**为 New API 提供用量统计、成本分析、余额报警与管理员配额操作**
 
 [![CI](https://github.com/ilove323/new-api-statistics/actions/workflows/ci.yml/badge.svg)](https://github.com/ilove323/new-api-statistics/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -24,7 +24,8 @@ New API Statistics 是配合 [QuantumNous/new-api](https://github.com/QuantumNou
 > 登录使用 New API 原有的管理员账号密码。本项目不提供模型网关或独立用户系统。
 
 应用采用 Flask + PostgreSQL，作为独立容器与 New API 部署在同一 Docker 网络，
-由 Nginx 将 `/statistics/` 转发到统计应用。New API 原库用于只读查询；
+由 Nginx 将 `/statistics/` 与 `/quota/` 转发到统计应用。对 New API 数据库只执行查询；
+配额增减另由 New API 官方管理接口执行，不直接写其用户表。
 预算、月度归档与报警配置保存在单独的监控库。
 
 ## 界面预览
@@ -46,6 +47,7 @@ New API Statistics 是配合 [QuantumNous/new-api](https://github.com/QuantumNou
 | 定时检查 | 每天北京时间 10:00 检查，也可通过铃铛或 API 手动触发 |
 | 通知渠道 | 所有账本共用飞书企业自建应用或钉钉 Webhook 通知配置 |
 | 报警 API | 实时余额与报警检查，使用 New API 管理员 PAT Bearer 认证 |
+| 用户配额 | 独立 `/quota/` 页面列出用户组和配额，支持按一个或多个用户组批量选择、预览及增减；通过 New API 官方增减接口执行，不直接写用户表 |
 
 Token 缓存语义取决于上游日志。部分报表数值涉及数学折算，
 请先阅读[统计口径](docs/calculation.md)。应用不会修改 New API 原始日志和实际消费金额。
@@ -58,7 +60,7 @@ Token 缓存语义取决于上游日志。部分报表数值涉及数学折算�
 | New API | 必须已部署，数据库字段符合[兼容范围](docs/compatibility.md) |
 | PostgreSQL | New API 原库及只读查询账号；余额监控另建独立库 |
 | Docker | Docker Engine 与 Docker Compose，共用 New API 的现有网络 |
-| Nginx | 推荐复用现有 HTTPS 站点，转发 `/statistics/` |
+| Nginx | 推荐复用现有 HTTPS 站点，转发 `/statistics/` 与 `/quota/` |
 | 登录账号 | 有效的 New API 管理员账号 |
 
 SQLite 和 MySQL 后端目前不支持。不同 New API fork 的字段、配额单位和缓存语义
@@ -97,6 +99,7 @@ docker compose ps
 
 ```text
 https://<你的域名>/statistics/
+https://<你的域名>/quota/
 ```
 
 使用 **New API 管理员账号密码**登录。
@@ -113,6 +116,7 @@ https://<你的域名>/statistics/
 | [统计口径](docs/calculation.md) | 缓存包含关系、金额、倍率及数学折算 |
 | [兼容范围](docs/compatibility.md) | New API 数据库字段与运行环境 |
 | [余额监控](docs/monitoring.md) | 建库 SQL、额度设置、归档和报警规则 |
+| [用户配额](docs/quota.md) | 增减接口、权限、预览和批量操作限制 |
 | [通知渠道](docs/notifications.md) | 飞书与钉钉配置及通知行为 |
 | [报警 API](docs/api.md) | 认证方式、请求示例与返回值 |
 | [升级与备份](docs/upgrading.md) | 数据库迁移、备份和回退 |

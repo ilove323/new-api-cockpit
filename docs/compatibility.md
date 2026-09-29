@@ -9,7 +9,7 @@ CI 配置覆盖 PostgreSQL 15/16，其他版本需自行验证。尚无按 New A
 | 表 | 字段 |
 | --- | --- |
 | logs | id, created_at, user_id, username, token_id, token_name, model_name, quota, prompt_tokens, completion_tokens, other, type, group, channel_id, channel_name |
-| users | access_token, id, username, display_name, password, role, status, deleted_at |
+| users | access_token, id, username, display_name, group, password, role, status, quota, used_quota, deleted_at |
 | options | key, value |
 | channels | id, name, status, tag |
 
