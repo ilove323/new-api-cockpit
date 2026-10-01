@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.3 - 2026-10-01
+
+- Recover request-time prices from legacy ratio and supported expression billing logs; merge equal-price requests and split changed prices into separate rows, matching current tiers only when uniquely identifiable.
+- Keep ratio outside row grouping; reconcile cache-read tokens only for valid current-tier matches whose historical group ratio changed, without rewriting logs or billed amounts.
+- Add hover/click formula details and expression price reference sheets while preserving unknown historical prices rather than substituting current prices.
 - Add opt-in group-based quota schedules at Beijing midnight (daily, Monday weekly, first-of-month monthly), a settings dialog and paginated execution history.
 - Add migration 007 and a single-leader quota worker with frozen rules, live enabled-user selection, durable per-user request states, five-user concurrent waves and no replay of missed or uncertain adjustments.
 - Include the opt-in quota worker in source and release Compose templates; document schema, administrator ownership, deployment, management APIs and non-destructive rollback.
@@ -12,6 +17,8 @@
 - Default the quota user list to enabled accounts; status multi-select also limits select-all and group selection, and removes hidden statuses from the operation selection.
 - Document the `/quota/` Nginx route, administrator PAT requirement and read-only database boundary.
 - Keep statistics/quota navigation on the current origin, including nonstandard ports, using canonical path-only links and relative Nginx entry redirects.
+
+See [release notes](docs/releases/v0.1.3.md) for migration 007, the opt-in worker and quota operation safety requirements.
 
 ## 0.1.2 - 2026-09-23
 
