@@ -7,6 +7,7 @@ services:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
+    stop_grace_period: 90s
     env_file: .env
     ports:
       - "${BIND_HOST:-127.0.0.1}:${PORT:-8091}:8000"
@@ -23,40 +24,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-  balance-worker:
-    image: new-api-statistics:local
-    command: [python, -m, new_api_statistics.balance_worker]
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      statistics:
-        condition: service_healthy
-    networks:
-      - new-api
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
-  quota-worker:
-    image: new-api-statistics:local
-    command: [python, -m, new_api_statistics.quota_worker]
-    profiles: [quota-schedules]
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      statistics:
-        condition: service_healthy
-    networks:
-      - new-api
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
-    stop_grace_period: 60s
+
 networks:
   new-api:
     external: true

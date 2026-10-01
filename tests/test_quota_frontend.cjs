@@ -174,3 +174,27 @@ test('incomplete per-user response stops dispatch instead of treating the wave a
   assert.match(h.run('resultCells.get(1).textContent'),/结果待核对/);
   assert.equal(h.run('resultCells.get(6).textContent'),'未发起');
 });
+for(const change of ['amount','mode','clear','select-all','select-groups','deselect-groups','user-checkbox'])test(`late quota preview is discarded after ${change}`,async()=>{
+  const h=await harness();h.run("selected.add(1);selectedGroups.add('default');render()");h.elements.get('amount').value='10';h.elements.get('mode').value='add';
+  let release;h.ctx.fetch=async()=>({ok:true,json:()=>new Promise(resolve=>{release=resolve;})});
+  const request=h.elements.get('preview').fire('click');await settle();
+  if(change==='amount'){h.elements.get('amount').value='99';await h.elements.get('amount').fire('input');}
+  else if(change==='mode'){h.elements.get('mode').value='subtract';await h.elements.get('mode').fire('change');}
+  else if(change==='clear')await h.elements.get('clear-selection').fire('click');
+  else if(change==='select-all')await h.change('select-all',false);
+  else if(change==='user-checkbox'){const checkbox=h.elements.get('users').children[0].children[0].children[0];checkbox.checked=false;await checkbox.fire('change');}
+  else await h.elements.get(change).fire('click');
+  release({mode:'add',amount_yuan:'10',users:[]});await request;
+  assert.equal(h.elements.get('confirm-dialog').open,false);
+  assert.equal(h.run('pending'),null);
+});
+test('outdated preview errors do not erase a newer confirmation',async()=>{
+  const h=await harness();h.run('selected.add(1)');h.elements.get('amount').value='10';h.elements.get('mode').value='add';
+  let reject;h.ctx.fetch=()=>new Promise((_,r)=>{reject=r;});
+  const old=h.elements.get('preview').fire('click');await settle();
+  h.elements.get('amount').value='99';await h.elements.get('amount').fire('input');
+  h.ctx.fetch=async()=>({ok:true,json:async()=>({mode:'add',amount_yuan:'99',users:[]})});
+  await h.elements.get('preview').fire('click');reject(new Error('obsolete'));await old;
+  assert.equal(h.elements.get('confirm-dialog').open,true);
+  assert.equal(h.run('pending.amount_yuan'),'99');
+});

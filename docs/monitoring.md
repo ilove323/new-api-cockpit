@@ -15,7 +15,7 @@
 - 渠道删除后保留最后同步到的标签和名称。首次升级无法恢复未曾保存的历史标签：现存渠道历史按当前标签归类，无法确定标签的历史渠道归入“未分组”。升级保留费用，不将未知标签猜测成某上游。
 - 现有余额配置、状态、报警和设置审计迁入“全部”。迁移不清空月度费用。通过版本化 SQL 增量升级，仅操作独立监控库，不更改 New API 原库。
 - 保存余额设置时补齐起始月份至上月所需归档，失败不将费用当零。历史追溯用于重新读取原始渠道费用：先预览前后金额并确认，才覆盖所选月份的共用渠道归档；仅调整标签不需要追溯。
-- `balance-worker` 每天北京时间 10:00 检查所有已启用的账本；月初补齐上月归档。没有每分钟轮询，不在进程启动时立即报警。各账本分别记录每日运行状态，某个账本失败不应阻断其他账本。
+- 主程序内置余额定时器每天北京时间 10:00 检查所有已启用的账本；月初补齐上月归档。没有每分钟轮询，不在进程启动时立即报警。各账本分别记录每日运行状态，某个账本失败不应阻断其他账本。
 - 点击铃铛手动检查当前账本，不占用每日定时检查。关闭该账本余额监控后不进行余额告警检查或发送通知，用量统计和导出不受影响。
 - 剩余额度严格小于阈值时报警；每个账本最多保留一条当前报警，下次检查恢复至阈值以上或等于阈值则删除。无已读/未读状态。
 - 查询失败保留旧结果并显示失败状态，不显示为零消费。月度归档取决于原日志保留情况，无法恢复已经删除且从未归档的数据。
@@ -23,10 +23,12 @@
 
 ### 升级说明
 
-程序通过 `schema_migrations` 自动顺序执行未应用的迁移。`005_balance_scopes.sql`
+程序启动入口通过 `schema_migrations` 自动顺序执行未应用的迁移；正常 API 请求不执行迁移。`005_balance_scopes.sql`
 增加账本和逐账本设置；`006_scope_visibility.sql` 增加标签可见性状态。
 `007_quota_schedules.sql` 为可选的[定时用户配额](quota.md#定时额度修改)增加四张规则及执行记录表，
 与余额检查分开运行，不改变余额归档或每天 10:00 的告警时间。
+`008_runtime_optimizations.sql` 新增渠道发现完成标记及两张限时展示快照表，
+不覆盖费用、配置或历史执行数据；详情与回退说明见[升级文档](upgrading.md)。
 首次同步渠道标签后建立账本；查询历史账本金额时使用保存的逐渠道费用与当前渠道归属。
 无需清空数据库。上线前备份监控库，勿把迁移 SQL 执行到 New API 原库。
 
@@ -69,18 +71,19 @@ docker run --rm python:3.12-slim \
 NOTIFICATION_ENCRYPTION_KEY=<上一步生成的值>
 ```
 
-`PG*` 仍指向 New API 原库，查询使用只读事务。`MONITOR_DATABASE_URL` 必须指向新建的独立库；服务账号不需要建库权限。新库由 worker 自动建表，需可创建表及读写自己拥有的表。管理员登录仍读取 New API 的用户和密码，不建立另一套登录账号。
+`PG*` 仍指向 New API 原库，查询使用只读事务。`MONITOR_DATABASE_URL` 必须指向新建的独立库；服务账号不需要建库权限。新库由容器启动入口自动建表，需可创建表及读写自己拥有的表。管理员登录仍读取 New API 的用户和密码，不建立另一套登录账号。
 
 ```bash
 chmod 600 .env
-docker compose up -d --build statistics balance-worker
+docker compose up -d --build statistics
 docker compose ps
-docker compose logs --tail=50 balance-worker
+docker compose logs --tail=50 statistics
 ```
 
 首次启动后，应用会自动创建监控表。可使用 PostgreSQL 管理员验证，正常应能看到
 `balance_*`、`notification_settings`、`notification_feishu_settings` 和
-`notification_dingtalk_webhook_settings` 等表；应用 `007` 后还会出现四张 `quota_schedule_*` 表：
+`notification_dingtalk_webhook_settings` 等表；应用 `007` 后还会出现四张 `quota_schedule_*` 表，应用 `008` 后增加
+`channel_catalog_sync_state`、`report_snapshots`、`report_snapshot_rows`：
 
 ```bash
 docker exec <PostgreSQL容器名> sh -lc \

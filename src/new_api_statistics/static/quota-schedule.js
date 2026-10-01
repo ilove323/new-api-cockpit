@@ -44,7 +44,7 @@
   }
   async function loadRules(){
     data=await api('schedules');needsRefresh=false;renderRules();
-    status(data.configured?'保存/重新启用规则后，从下一周期执行；定时器需要部署并启动 quota-worker。':'未配置监控数据库，定时额度功能不可用。',!data.configured);
+    status(data.configured?'保存/重新启用规则后，从下一周期执行；定时器随服务自动启动，无需单独部署。':'未配置监控数据库，定时额度功能不可用。',!data.configured);
   }
   function edit(rule=null){
     if(busy||needsRefresh||!data.configured)return;

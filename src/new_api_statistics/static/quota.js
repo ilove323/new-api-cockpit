@@ -3,7 +3,8 @@ let users = [];
 let selected = new Set();
 let selectedGroups = new Set();
 let selectedStatuses = new Set(['enabled']);
-let statusFilterVersion = 0;
+let previewVersion = 0;
+let previewLoading = false;
 let pending = null;
 let executing = false;
 let resultCells = new Map();
@@ -20,6 +21,11 @@ async function api(path, options={}){
 }
 const userStatus = user => user.status===1?'enabled':'disabled';
 function eligibleUsers(){return users.filter(user=>selectedStatuses.has(userStatus(user)));}
+function invalidatePreview(){
+  if(executing)return;
+  previewVersion++;previewLoading=false;pending=null;
+  byId('confirm-dialog').close();
+}
 function pruneSelection(){
   const allowed=new Set(eligibleUsers().map(user=>user.id));
   selected=new Set([...selected].filter(id=>allowed.has(id)));
@@ -34,7 +40,7 @@ function render(){
   for(const user of list){
     const row=document.createElement('tr'),check=document.createElement('input');
     check.type='checkbox';check.checked=selected.has(user.id);check.setAttribute('aria-label',`选择 ${user.username}`);
-    check.addEventListener('change',()=>{if(check.checked)selected.add(user.id);else selected.delete(user.id);render();});
+    check.addEventListener('change',()=>{if(executing)return;invalidatePreview();if(check.checked)selected.add(user.id);else selected.delete(user.id);render();});
     const first=document.createElement('td');first.append(check);row.append(first);
     const id=document.createElement('td');id.textContent=user.id;row.append(id);
     const name=document.createElement('td');name.textContent=user.username;
@@ -47,7 +53,7 @@ function render(){
   byId('selected-count').textContent=selected.size;
   byId('select-all').checked=list.length>0&&list.every(user=>selected.has(user.id));
   byId('select-all').indeterminate=list.some(user=>selected.has(user.id))&&!byId('select-all').checked;
-  byId('preview').disabled=selected.size===0||executing;
+  byId('preview').disabled=selected.size===0||executing||previewLoading;
   byId('clear-selection').disabled=selected.size===0;
 }
 function renderGroups(){
@@ -74,7 +80,7 @@ function updateGroupControls(){
 }
 async function load(){
   status('正在读取用户…');
-  try{users=(await api('/quota/api/users')).rows;pruneSelection();renderGroups();render();status(`当前状态范围 ${eligibleUsers().length} 人，共 ${users.length} 个用户。`);}
+  try{invalidatePreview();users=(await api('/quota/api/users')).rows;invalidatePreview();pruneSelection();renderGroups();render();status(`当前状态范围 ${eligibleUsers().length} 人，共 ${users.length} 个用户。`);}
   catch(error){status(error.message,true);}
 }
 byId('search').addEventListener('input',render);
@@ -83,8 +89,7 @@ function changeStatusFilter(){
   selectedStatuses=new Set();
   if(byId('status-enabled').checked)selectedStatuses.add('enabled');
   if(byId('status-disabled').checked)selectedStatuses.add('disabled');
-  statusFilterVersion++;pending=null;
-  byId('confirm-dialog').close();
+  invalidatePreview();
   byId('status-summary').textContent=selectedStatuses.size===2?'启用、禁用用户':selectedStatuses.has('enabled')?'启用用户':selectedStatuses.has('disabled')?'禁用用户':'未选择状态';
   pruneSelection();renderGroups();render();
   status(`当前状态范围 ${eligibleUsers().length} 人，已选 ${selected.size} 人。`);
@@ -94,37 +99,41 @@ byId('status-disabled').checked=false;
 byId('status-enabled').addEventListener('change',changeStatusFilter);
 byId('status-disabled').addEventListener('change',changeStatusFilter);
 byId('select-all').addEventListener('change',event=>{
+  if(executing)return;invalidatePreview();
   for(const user of visibleUsers()){if(event.target.checked)selected.add(user.id);else selected.delete(user.id);}render();
 });
 byId('select-groups').addEventListener('click',()=>{
+  if(executing)return;invalidatePreview();
   for(const user of eligibleUsers())if(selectedGroups.has(user.user_group))selected.add(user.id);
   render();status(`已选 ${selected.size} 人，请核对名单。`);
 });
 byId('deselect-groups').addEventListener('click',()=>{
+  if(executing)return;invalidatePreview();
   for(const user of eligibleUsers())if(selectedGroups.has(user.user_group))selected.delete(user.id);
   render();status(`已选 ${selected.size} 人。`);
 });
-byId('clear-selection').addEventListener('click',()=>{selected.clear();render();status('已清空所选用户。');});
+byId('clear-selection').addEventListener('click',()=>{if(executing)return;invalidatePreview();selected.clear();render();status('已清空所选用户。');});
 byId('preview').addEventListener('click',async()=>{
-  if(executing||selected.size===0)return;
+  if(executing||previewLoading||selected.size===0)return;
   const amount=byId('amount').value.trim();
   if(!amount||!byId('amount').checkValidity()){status('请输入有效的每人金额。',true);return;}
   const body={user_ids:[...selected].sort((a,b)=>a-b),mode:byId('mode').value,amount_yuan:amount};
-  const filterVersion=statusFilterVersion;
+  const version=++previewVersion;previewLoading=true;
   byId('preview').disabled=true;
   try{
     const result=await api('/quota/api/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'preview'},body:JSON.stringify(body)});
-    if(filterVersion!==statusFilterVersion){status('状态筛选已改变，请按新的范围重新预览。');return;}
+    if(version!==previewVersion)return;
     pending=body;byId('confirm-summary').textContent=`将为 ${result.users.length} 人每人${result.mode==='add'?'增加':'减少'} ¥${money(result.amount_yuan)}。`;
     const rows=byId('preview-rows');rows.replaceChildren();resultCells=new Map();
     for(const user of result.users){const tr=document.createElement('tr');for(const value of [user.username,tableMoney(user.before_yuan),tableMoney(user.estimated_after_yuan)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}const state=document.createElement('td');state.textContent='待执行';tr.append(state);resultCells.set(user.id,state);rows.append(tr);}
     byId('execution-progress').textContent='确认后每组最多 5 人并发，当前组全部返回后再发下一组。';
     byId('apply').disabled=false;byId('cancel').disabled=false;byId('cancel').textContent='取消';
     byId('confirm-dialog').showModal();status('请核对预览，再确认执行。');
-  }catch(error){pending=null;status(error.message,true);}
-  finally{render();}
+  }catch(error){if(version===previewVersion){pending=null;status(error.message,true);}}
+  finally{if(version===previewVersion){previewLoading=false;render();}}
 });
-byId('cancel').addEventListener('click',()=>{if(executing)return;pending=null;byId('confirm-dialog').close();});
+for(const [id,event] of [['amount','input'],['mode','change']])byId(id).addEventListener(event,()=>{if(executing)return;invalidatePreview();render();});
+byId('cancel').addEventListener('click',()=>{if(executing)return;invalidatePreview();render();});
 byId('confirm-dialog').addEventListener('cancel',event=>{if(executing)event.preventDefault();else pending=null;});
 globalThis.addEventListener?.('beforeunload',event=>{if(executing){event.preventDefault();event.returnValue='';}});
 function setResult(userId,message){const cell=resultCells.get(userId);if(cell)cell.textContent=message;}

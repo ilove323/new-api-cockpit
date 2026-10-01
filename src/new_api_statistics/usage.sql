@@ -13,6 +13,7 @@ WITH source AS MATERIALIZED (
       AND (%(groups)s::text[] IS NULL OR COALESCE("group", '') = ANY(%(groups)s::text[]))
 ), parts AS MATERIALIZED (
     SELECT *,
+        jsonb_typeof(o) <> 'object' AS metadata_invalid,
         COALESCE(NULLIF(o->>'cache_tokens', '')::bigint, 0) AS cr,
         COALESCE(NULLIF(o->>'cache_write_tokens', '')::bigint,
                  NULLIF(o->>'cache_creation_tokens', '')::bigint, 0) AS cw,
@@ -46,6 +47,8 @@ WITH source AS MATERIALIZED (
 ), tier_buckets AS (
     SELECT user_id, username, token_id, token_name, model_name,
         matched_tier, group_name, group_ratio, price_snapshot,
+        BOOL_OR(metadata_invalid OR cr<0 OR cw<0 OR group_ratio<0
+          OR group_ratio IN ('NaN'::numeric,'Infinity'::numeric,'-Infinity'::numeric)) AS metadata_invalid,
         COUNT(*) AS request_count,
         SUM(p) AS raw_input_tokens,
         SUM(noncache_input) AS input_tokens,
@@ -63,6 +66,7 @@ WITH source AS MATERIALIZED (
              matched_tier, group_name, group_ratio, price_snapshot
 ), totals AS (
     SELECT user_id, username, token_id, token_name, model_name,
+        BOOL_OR(metadata_invalid) AS metadata_invalid,
         SUM(request_count) AS request_count,
         COUNT(DISTINCT group_ratio) AS ratio_count,
         SUM(raw_input_tokens) AS raw_input_tokens,

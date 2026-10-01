@@ -70,7 +70,9 @@ class ScopeDatabaseTest(unittest.TestCase):
         self.enterContext(patch.object(balance, "connect", self.connect))
         self.enterContext(patch.object(balance, "configured", return_value=True))
         self.enterContext(
-            patch.object(balance, "source_channels", side_effect=lambda: self.catalog)
+            patch.object(
+                balance, "source_channels", side_effect=lambda **kwargs: self.catalog
+            )
         )
         self.enterContext(patch("new_api_statistics.notifications.notify_safely"))
         balance.initialize()

@@ -87,23 +87,39 @@ New API 增减接口不提供本功能所需的请求幂等键。因此不能承
 四张表均不存管理员密码或 PAT；执行记录仅保留脱敏结果，不保存远端原始响应。
 
 ```bash
-# 先构建同一份应用镜像，再执行增量迁移。
-docker compose build statistics
-docker compose run --rm --no-deps statistics python -c 'from new_api_statistics.balance import initialize; initialize()'
-docker compose up -d statistics
-# 显式开启定时额度修改；普通 compose up 不会自动启用此 worker。
-docker compose --profile quota-schedules up -d quota-worker
-docker compose logs --tail 100 quota-worker
+# 一个容器包含网页与两个内置定时器；启动入口自动应用增量迁移。
+docker compose up -d --build statistics
+docker compose logs --tail 100 statistics
 ```
 
-使用 `compose.release.yml` 发布镜像时，将上述命令改为 `docker compose -f compose.release.yml ...`，
-跳过本地构建、先执行 `pull`，并确保 `IMAGE_TAG` 指向包含本功能的版本，而不是较早的发布镜像。
+配置监控库后，配额定时器随应用启动，不需要额外容器或 profile。
+设置页提示“定时器随服务自动启动，无需单独部署”。保存规则只安排下一周期，
+不是手动启动定时器；关闭浏览器不会影响已启用规则的后台执行。
+Gunicorn 在子进程初始化后启动后台线程，不在模块导入或 HTTP 请求中启动，也不在 fork 前建立数据库连接。
+各网页进程均可待命；PostgreSQL 会话锁保证只有一个配额调度器实际执行。余额定时器使用不同领导锁，
+仍每天北京时间 10:00 检查。SQL 迁移、余额事务、通知发送和两种调度领导锁互不复用。
 
-生产环境若用 Compose override 指定镜像，`statistics` 和 `quota-worker` 应使用包含新代码的同一版本。
-调度器在独立容器内运行，不放在 Gunicorn worker；PostgreSQL 会话锁保证只有一个活动调度器，多余实例待命。
-余额监控仍由独立 `balance-worker` 在北京时间 10:00 检查，不受此功能影响。
-所有页面、静态资源和管理 API 继续要求 New API 管理员 Basic Auth；规则写请求还要求 JSON、专用请求头及非跨站来源。
-新增接口均位于现有 `/quota/` 下，不增加端口，也无需新增 Nginx location。没有监控数据库时，手工额度功能仍可使用。
+进程收到退出信号后停止领取任务与发起下一组请求，保留当前组保存结果的时间；
+应用升级会暂时停止定时任务，既有不补发、不续跑、不重试不明确请求的边界不变。
+`/healthz` 会检查当前网页进程的两个调度线程，以及数据库里两种调度器是否都有领导者；
+配置监控库但调度未就绪时返回 `503`，不再仅凭网页可访问认定功能完整运行。
+没有监控库时不启动定时器，手工额度和基础统计仍可用。
+完整探活示例见[运行状态检查](deployment.md#运行状态检查)；探活不会执行额度修改。
+
+非 Docker 部署使用统一入口，自动加载 Gunicorn 生命周期配置：
+
+```bash
+python -m new_api_statistics.runtime gunicorn --bind 127.0.0.1:8000 new_api_statistics.app:app
+```
+
+如自行指定 `--config`，需在自定义配置中引入 `new_api_statistics.gunicorn_conf` 的
+`post_worker_init`、`worker_exit` 和 `graceful_timeout`，不得遗漏启动/退出钩子。
+`python -m new_api_statistics.app` 的直接启动也会管理定时器，但不建议将 Flask 开发服务器用于生产。
+
+使用发布镜像时，Compose 与镜像必须来自同一版本。当前单容器改动尚未发布，
+不能用新模板启动不包含定时器生命周期的旧 `0.1.3` 镜像。
+旧部署切换前停止旧 `balance-worker`、`quota-worker` 并确认退出，见[升级说明](upgrading.md)。
+所有页面、静态资源和管理 API 的认证及请求来源检查保持原样，无新增端口或 Nginx location。
 
 ### 管理接口
 
@@ -124,13 +140,13 @@ docker compose logs --tail 100 quota-worker
 
 ### 停用与回退
 
-平时停用某条规则使用页面开关，不影响其他规则；要暂停整个定时配额服务：
+平时停用某条规则使用页面开关；暂停所有配额规则时，在页面逐条停用，不需要删除记录。
+停止整个应用会同时暂停网页、余额检查与配额定时器：
 
 ```bash
-docker compose --profile quota-schedules stop quota-worker
+docker compose stop statistics
 ```
 
-停止调度器不清空规则或执行记录。请求已经发出时，停止进程不能撤销远端增减，
-应核对本次记录与 New API 审计日志；重启时不重发中断或错过周期的请求。
-回退旧镜像前先停 `quota-worker`，再恢复原有应用镜像与 Compose 配置。
-迁移 `007` 仅新增表，回退应用无需删除这些表，也不要为了回退而清空或重建监控库。
+停止不清空数据，也不能撤销已经发出的额度请求。重启不重发中断或错过周期的请求。
+回退时先停止新应用，再恢复旧镜像及与该版本配套的 Compose，确认不留下新旧调度器并行。
+`007`、`008` 均为新增表，可保留规则、执行记录和归档；不要为了回退清空或重建监控库。

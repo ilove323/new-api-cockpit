@@ -53,6 +53,27 @@ def initialize():
         )
 
 
+class SchemaUnavailable(ValueError):
+    pass
+
+
+def require_schema():
+    """Read-only readiness check; never apply migrations on a request path."""
+    expected = {
+        p.name for p in Path(__file__).with_name("migrations").glob("[0-9]*.sql")
+    }
+    try:
+        with connect() as conn:
+            applied = {
+                r["version"]
+                for r in conn.execute("SELECT version FROM schema_migrations")
+            }
+    except psycopg.errors.UndefinedTable:
+        raise SchemaUnavailable("监控数据库尚未初始化，请执行启动迁移。") from None
+    if not expected <= applied:
+        raise SchemaUnavailable("监控数据库需要升级，请执行启动迁移。")
+
+
 def next_month(month):
     return date(month.year + (month.month == 12), month.month % 12 + 1, 1)
 
@@ -65,55 +86,90 @@ def month_list(first, end):
     return result
 
 
-def source_channels():
+def source_channels(*, include_deleted=False):
     """Read the current New API channel catalog without modifying it."""
     with psycopg.connect(
         connect_timeout=8,
         row_factory=dict_row,
         options="-c default_transaction_read_only=on -c statement_timeout=15000",
     ) as conn:
-        return conn.execute(
-            """SELECT id AS channel_id,
+        query = """SELECT id AS channel_id,
                 COALESCE(NULLIF(btrim(name),''),'渠道 #' || id::text) AS channel_name,
                 status AS channel_status,COALESCE(NULLIF(btrim(tag),''),'') AS tag_value,
-                false AS is_deleted FROM channels
-            UNION ALL
+                false AS is_deleted FROM channels"""
+        if include_deleted:
+            query += """ UNION ALL
             SELECT DISTINCT l.channel_id,'渠道 #' || l.channel_id::text,NULL::bigint,''::text,true
             FROM logs l LEFT JOIN channels c ON c.id=l.channel_id
-            WHERE c.id IS NULL AND l.channel_id IS NOT NULL
-            ORDER BY channel_id"""
-        ).fetchall()
+            WHERE c.id IS NULL AND l.channel_id IS NOT NULL"""
+        return conn.execute(query + " ORDER BY channel_id").fetchall()
 
 
 def sync_channel_inventory(conn, live_channels):
     """Use the live name for a channel ID across inventory and archived details."""
+    tag_ids = {
+        r["tag_value"]: r["id"]
+        for r in conn.execute(
+            "SELECT id,tag_value FROM balance_scopes WHERE kind='tag'"
+        )
+    }
+    stored = {
+        r["channel_id"]: r
+        for r in conn.execute(
+            "SELECT channel_id,channel_name,scope_id FROM balance_channel_inventory"
+        )
+    }
     for row in live_channels:
         if row.get("is_deleted"):
-            conn.execute(
-                """INSERT INTO balance_channel_inventory(channel_id,channel_name)
-                VALUES (%s,%s) ON CONFLICT DO NOTHING""",
-                (row["channel_id"], row["channel_name"]),
-            )
+            if row["channel_id"] not in stored:
+                conn.execute(
+                    """INSERT INTO balance_channel_inventory(channel_id,channel_name)
+                    VALUES (%s,%s) ON CONFLICT DO NOTHING""",
+                    (row["channel_id"], row["channel_name"]),
+                )
             continue
         tag = (row.get("tag_value") or "").strip() if row["channel_id"] else ""
-        if tag:
-            scope_id = conn.execute(
+        if tag and tag not in tag_ids:
+            created = conn.execute(
                 """INSERT INTO balance_scopes(kind,tag_value)
-                VALUES ('tag',%s) ON CONFLICT(kind,tag_value) DO UPDATE SET updated_at=now()
+                VALUES ('tag',%s) ON CONFLICT(kind,tag_value) DO NOTHING
                 RETURNING id""",
                 (tag,),
-            ).fetchone()["id"]
+            ).fetchone()
+            scope_id = (
+                created
+                or conn.execute(
+                    "SELECT id FROM balance_scopes WHERE kind='tag' AND tag_value=%s",
+                    (tag,),
+                ).fetchone()
+            )["id"]
+            if created:
+                conn.execute(
+                    """INSERT INTO balance_month_scopes(month,scope_id,tag_value,amount)
+                    SELECT month,%s,%s,0 FROM balance_channel_archive_months
+                    ON CONFLICT DO NOTHING""",
+                    (scope_id, tag),
+                )
+            tag_ids[tag] = scope_id
         else:
-            scope_id = 2
+            scope_id = tag_ids.get(tag, 2)
+        previous = stored.get(row["channel_id"])
+        if previous and (previous["channel_name"], previous["scope_id"]) == (
+            row["channel_name"],
+            scope_id,
+        ):
+            continue
         conn.execute(
             """INSERT INTO balance_channel_inventory(channel_id,channel_name,scope_id)
             VALUES (%s,%s,%s) ON CONFLICT(channel_id) DO UPDATE SET
-            channel_name=EXCLUDED.channel_name,scope_id=EXCLUDED.scope_id,last_seen_at=now()""",
+            channel_name=EXCLUDED.channel_name,scope_id=EXCLUDED.scope_id,last_seen_at=now()
+            WHERE (balance_channel_inventory.channel_name,balance_channel_inventory.scope_id)
+              IS DISTINCT FROM (EXCLUDED.channel_name,EXCLUDED.scope_id)""",
             (row["channel_id"], row["channel_name"], scope_id),
         )
         conn.execute(
-            "UPDATE balance_month_channels SET channel_name=%s WHERE channel_id=%s",
-            (row["channel_name"], row["channel_id"]),
+            "UPDATE balance_month_channels SET channel_name=%s WHERE channel_id=%s AND channel_name IS DISTINCT FROM %s",
+            (row["channel_name"], row["channel_id"], row["channel_name"]),
         )
     from new_api_statistics.scopes import ensure_settings
 
@@ -124,12 +180,11 @@ def usage_channels_snapshot(scope_id=1):
     """Refresh the channel inventory and mark channels absent from New API as deleted."""
     from new_api_statistics import scopes
 
-    scopes.refresh_scopes()
+    catalog = scopes.refresh_scopes()
     scope_id = scopes.get_scope(scope_id)["id"]
-    live_channels = [r for r in source_channels() if not r.get("is_deleted")]
+    live_channels = [r for r in catalog if not r.get("is_deleted")]
     live_by_id = {row["channel_id"]: row for row in live_channels}
     with connect() as conn:
-        sync_channel_inventory(conn, live_channels)
         excluded = set()
         inventory = conn.execute(
             "SELECT channel_id,channel_name,scope_id FROM balance_channel_inventory WHERE (%s=1 OR scope_id=%s) ORDER BY channel_id",
@@ -526,7 +581,7 @@ def write_channel_archives(conn, months, details):
         """UPDATE balance_month_channels detail SET channel_name=inventory.channel_name
            FROM balance_channel_inventory inventory
            WHERE detail.channel_id=inventory.channel_id
-             AND detail.channel_name<>inventory.channel_name"""
+             AND detail.channel_name IS DISTINCT FROM inventory.channel_name"""
     )
 
     from new_api_statistics.scopes import rebuild_month_scopes
@@ -684,11 +739,46 @@ def current_scope_amount(conn, scope_id, current, now):
     )
 
 
-def check_once(now=None, source=None, daily=True, scope_id=1):
+class CurrentMonthBatch:
+    """A single daily invocation, NOT a balance cache across requests/runs."""
+
+    def __init__(self):
+        self.amounts = None
+        self.error = None
+
+    def amount(self, conn, scope_id, current, now):
+        if self.error:
+            raise self.error
+        if self.amounts is None:
+            try:
+                details = source_channel_amounts([current], now)[current]
+                mapping = {
+                    r["channel_id"]: r["scope_id"]
+                    for r in conn.execute(
+                        "SELECT channel_id,scope_id FROM balance_channel_inventory"
+                    )
+                }
+                amounts = {1: Decimal(0)}
+                for row in details:
+                    ledger = mapping.get(row["channel_id"], 2)
+                    amounts[1] += row["amount"]
+                    if ledger != 1:
+                        amounts[ledger] = (
+                            amounts.get(ledger, Decimal(0)) + row["amount"]
+                        )
+                self.amounts = amounts
+            except Exception as exc:
+                self.error = exc
+                raise
+        return self.amounts.get(scope_id, Decimal(0))
+
+
+def check_once(now=None, source=None, daily=True, scope_id=1, _batch=None):
     """Check exactly one ledger; commit alert before global-channel delivery."""
     from new_api_statistics import scopes
 
-    scopes.refresh_scopes()
+    if _batch is None:
+        scopes.refresh_scopes()
     scope = scopes.get_scope(scope_id)
     if not scope["is_visible"]:
         return None
@@ -745,7 +835,11 @@ def check_once(now=None, source=None, daily=True, scope_id=1):
             amount = amounts[current]
         else:
             archive_missing(conn, settings["start_month"], now)
-            amount = current_scope_amount(conn, scope_id, current, now)
+            amount = (
+                current_scope_amount(conn, scope_id, current, now)
+                if _batch is None
+                else _batch.amount(conn, scope_id, current, now)
+            )
         latest = conn.execute(
             "SELECT version FROM balance_settings WHERE scope_id=%s FOR UPDATE",
             (scope_id,),
@@ -810,16 +904,22 @@ def check_once(now=None, source=None, daily=True, scope_id=1):
     return True
 
 
-def check_all_enabled(now=None):
+def check_all_enabled(now=None, _stopped=None):
     """Daily worker: one failed ledger must not prevent the remaining checks."""
     from new_api_statistics import scopes
     import logging
 
     results = {}
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    batch = CurrentMonthBatch()
     for scope in scopes.list_scopes(refresh=True):
+        if _stopped is not None and _stopped.is_set():
+            break
         if scope["enabled"]:
             try:
-                results[scope["id"]] = check_once(now=now, scope_id=scope["id"])
+                results[scope["id"]] = check_once(
+                    now=now, scope_id=scope["id"], _batch=batch
+                )
             except Exception as exc:
                 logging.error(
                     "Balance scope %s failed: %s", scope["id"], type(exc).__name__

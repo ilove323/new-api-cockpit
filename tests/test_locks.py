@@ -17,9 +17,10 @@ class AdvisoryLockTest(unittest.TestCase):
                     locks.BALANCE_LOCK,
                     locks.NOTIFICATION_LOCK,
                     locks.QUOTA_SCHEDULER_LOCK,
+                    locks.BALANCE_SCHEDULER_LOCK,
                 }
             ),
-            3,
+            4,
         )
 
     def test_notification_delivery_uses_its_own_lock(self):

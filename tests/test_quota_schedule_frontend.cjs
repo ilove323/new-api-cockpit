@@ -40,6 +40,16 @@ test('settings opens rule tab, safely renders group choices and never requests m
   assert.ok(h.calls.every(call=>call.options.method==='GET'));
   assert.equal(h.elements.get('schedule-enabled').checked,false);
 });
+test('schedule help describes built-in timers on open and refresh, never standalone workers',async()=>{
+  const h=harness();await h.open();
+  const expected='保存/重新启用规则后，从下一周期执行；定时器随服务自动启动，无需单独部署。';
+  assert.equal(h.elements.get('schedule-status').textContent,expected);
+  await h.elements.get('schedule-refresh').fire('click');
+  assert.equal(h.elements.get('schedule-status').textContent,expected);
+  assert.ok(h.calls.every(call=>call.options.method==='GET'));
+  const js=fs.readFileSync(path.join(root,'static/quota-schedule.js'),'utf8');
+  assert.doesNotMatch(js,/quota-worker|balance-worker/);
+});
 test('unconfigured monitor leaves manual quota page alone and disables creation',async()=>{
   const h=harness({configured:false,rows:[],groups:[]});await h.open();
   assert.equal(h.elements.get('schedule-new').disabled,true);

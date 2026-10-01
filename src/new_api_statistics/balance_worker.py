@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Usage: PG*=New API read-only connection, MONITOR_DATABASE_URL=... python -m new_api_statistics.balance_worker
-# Docker: docker compose up -d balance-worker
+# Legacy standalone compatibility only; normal deployment uses built-in timers.
 """Sleep until 10:00 Beijing time; no minute polling or startup usage checks."""
 
 import logging

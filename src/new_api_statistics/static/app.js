@@ -20,7 +20,7 @@ const number = (n, digits=6) => n === null || n === undefined ? '—' : Number(n
 // Presentation only: never round the source values used by calculations or tooltips.
 const tableMoney = n => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 function priceDisplay(row,key){
-  return !row.pricing_buckets&&row.pricing_mode==='expression'&&!row.price_tiers?.length?'无法拆分':tableMoney(row[key]);
+  return !(row.pricing_buckets||row.has_pricing_buckets)&&row.pricing_mode==='expression'&&!(row.price_tiers?.length||row.price_tier_count)?'无法拆分':tableMoney(row[key]);
 }
 const cell = (tr, value, cls='', column='') => {const td=document.createElement('td');td.textContent=value;td.className=cls;if(column)td.dataset.column=column;tr.append(td);return td;};
 const userCell = (tr,row) => {
@@ -37,7 +37,7 @@ function aggregateModels(data){
     }
     const total=grouped.get(key);
     total.amount+=Number(row.amount);total.request_count+=Number(row.request_count);
-    tokenFields.forEach(field=>total[field]+=Number(row[field]));
+    tokenFields.forEach(field=>total[field]=total[field]===null||row[field]===null?null:total[field]+Number(row[field]));
     for(const [code,count] of Object.entries(row.failure_codes||{}))total.failure_codes[code]=(total.failure_codes[code]||0)+Number(count);
     total.failure_count+=Number(row.failure_count||0);
     total._sourceRows.push(row);
@@ -147,7 +147,7 @@ if(failureMode){
 function developerCells(tr,row){
   if(!developerMode)return;
   const read=Number(row.cache_read_tokens),denominator=Number(row.input_tokens)+read;
-  cell(tr,denominator>0?number(read/denominator*100,2)+'%':'—','','cache_hit_rate');
+  cell(tr,row.cache_read_tokens!==null&&row.input_tokens!==null&&denominator>0?number(read/denominator*100,2)+'%':'—','','cache_hit_rate');
   const tokens=Number(row.total_tokens);
   cell(tr,tokens>0?tableMoney(Number(row.amount)/tokens*1000000):'—','','amount_per_million');
 }
@@ -160,7 +160,7 @@ function sumRows(data) {
   const total={amount:0,request_count:0,failure_count:0,failure_codes:{},...Object.fromEntries(tokenFields.map(k=>[k,0]))};
   data.forEach(r=>{
     total.amount+=Number(r.amount);total.request_count+=Number(r.request_count);total.failure_count+=Number(r.failure_count||0);
-    tokenFields.forEach(k=>total[k]+=Number(r[k]));
+    tokenFields.forEach(k=>total[k]=total[k]===null||r[k]===null?null:total[k]+Number(r[k]));
     for(const [code,count] of Object.entries(r.failure_codes||{}))total.failure_codes[code]=(total.failure_codes[code]||0)+Number(count);
   });
   return total;
@@ -170,7 +170,7 @@ function renderSummary(data) {
   $('amount').textContent='¥ '+number(total.amount,2);
   tokenFields.forEach(k=>$(k).textContent=number(total[k],0));
   const seconds=Number(snapshot.totals.duration_seconds);
-  $('tpm').textContent=number(total.total_tokens*60/seconds,2);
+  $('tpm').textContent=number(total.total_tokens===null?null:total.total_tokens*60/seconds,2);
   $('rpm').textContent=number(total.request_count*60/seconds,4);
   $('counts').textContent=`${new Set(data.map(r=>r.user_id)).size} / ${new Set(data.map(r=>r.model_name)).size}`;
 }
@@ -190,7 +190,7 @@ function renderDetails() {
     for(const key of [...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount']){
       const price=['input_price','output_price','cache_price','write_price'].includes(key);
       const td=cell(tr,price?priceDisplay(r,key):key==='amount'?tableMoney(r[key]):number(r[key],tokenFields.includes(key)?0:6),price?'price-breakdown':'',key);
-      if(key==='amount')bindMoneyTooltip(td,()=>modelMode==='summary'?totalMoneyFormula(r._sourceRows,r.amount):rowMoneyFormula(r));
+      if(key==='amount')bindMoneyTooltip(td,()=>modelMode==='summary'?totalMoneyFormula(r._sourceRows,r.amount):(r.report_id?lazyRowMoneyFormula(r):rowMoneyFormula(r)));
     }
     developerCells(tr,r);
     failureCell(tr,r);
@@ -226,9 +226,10 @@ function updateReportStatus(){
   const label=modelMode==='summary'?(detailMode==='token'?'用户令牌汇总':'用户汇总'):(detailMode==='token'?'用户令牌模型汇总':'用户模型汇总');
   $('status').className='';
   $('status').textContent=`${snapshot.start.replace('T',' ')} 至 ${snapshot.end.replace('T',' ')} · ${rows.length} 条${label}`;
-  if(modelMode==='model'&&snapshot.rows.some(r=>r.pricing_buckets&&r.input_price===null))$('status').textContent+=' · 部分请求的历史价格无法还原，显示为 —';
-  else if(modelMode==='model'&&snapshot.rows.some(r=>!r.pricing_buckets&&r.pricing_mode==='expression'&&!r.price_tiers?.length))$('status').textContent+=' · 部分表达式无法拆分价格';
-  else if(modelMode==='model'&&snapshot.rows.some(r=>!r.pricing_buckets&&r.pricing_mode!=='expression'&&['input_price','output_price','cache_price','write_price'].some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
+  if(snapshot.rows.some(r=>r.metadata_error_count))$('status').textContent+=' · 部分日志元数据损坏：金额保留，无法确认的用量显示为 —';
+  if(modelMode==='model'&&snapshot.rows.some(r=>(r.pricing_buckets||r.has_pricing_buckets)&&r.input_price===null))$('status').textContent+=' · 部分请求的历史价格无法还原，显示为 —';
+  else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode==='expression'&&!(r.price_tiers?.length||r.price_tier_count)))$('status').textContent+=' · 部分表达式无法拆分价格';
+  else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode!=='expression'&&r.pricing_mode!=='unknown'&&['input_price','output_price','cache_price','write_price'].some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
 }
 async function loadTokenDetails(){
   const ticket=Scope.epoch;
@@ -236,7 +237,7 @@ async function loadTokenDetails(){
   const expected=`${snapshot.start}\n${snapshot.end}`;
   const params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
   if(failureMode)params.set('dev','2');
-  const response=await Scope.request('/statistics/api/usage/by-token?'+params);
+  const response=await Scope.request('/statistics/api/usage/by-token?'+params+'&details=lazy');
   if(!response.ok){let msg='分令牌查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
   if(snapshot&&expected===`${snapshot.start}\n${snapshot.end}`)tokenSnapshot=result;
@@ -269,7 +270,7 @@ async function loadFilteredSelection(){
   tokenIds.forEach(id=>params.append('token_id',id));
   groups.forEach(group=>params.append('group',group));
   if(detailMode==='token')params.set('by_token','1');
-  const response=await Scope.request('/statistics/api/usage/by-selection?'+params);
+  const response=await Scope.request('/statistics/api/usage/by-selection?'+params+'&details=lazy');
   if(!response.ok){let msg='筛选查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
   const current=`${snapshot.start}\n${snapshot.end}\n${detailMode}\n${[...selectedFilterValues('token')].sort().join(',')}\n${[...selectedFilterValues('group')].sort().join(',')}`;
@@ -317,7 +318,7 @@ function renderRanking(data) {
   const models=new Map();data.forEach(r=>models.set(r.model_name,(models.get(r.model_name)||0)+Number(r.amount)));
   const tokens=ranking==='user_tokens';
   const entries=ranking==='model_amount'?[...models].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])):
-    rankingsForSelection(data,ranking).map(r=>[r.username,Number(r[tokens?'total_tokens':'amount'])]);
+    rankingsForSelection(data,ranking).map(r=>[r.username,r[tokens?'total_tokens':'amount']===null?null:Number(r[tokens?'total_tokens':'amount'])]);
   const max=Math.max(...entries.map(e=>e[1]),1);
   $('chart').replaceChildren();
   if(!entries.length){$('chart').textContent='该时间范围内暂无消费记录';return;}
@@ -325,14 +326,14 @@ function renderRanking(data) {
   for(const [model,amount] of entries){
     const row=document.createElement('div');row.className='bar-row';
     const label=document.createElement('span');label.className='bar-label';label.textContent=`${++rank}. ${model}`;label.title=model;
-    const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.width=`${amount/max*100}%`;track.append(bar);
+    const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.width=`${(amount||0)/max*100}%`;track.append(bar);
     const val=document.createElement('span');val.className='bar-value';val.textContent=tokens?number(amount,0)+' Token':'¥ '+number(amount,2);row.append(label,track,val);$('chart').append(row);
   }
 }
 function rankingsForSelection(data,type){
   const field=type==='user_tokens'?'total_tokens':'amount',users=new Map();
-  data.forEach(row=>users.set(row.username,(users.get(row.username)||0)+Number(row[field])));
-  return [...users].map(([username,value])=>({username,[field]:value})).sort((a,b)=>b[field]-a[field]||a.username.localeCompare(b.username));
+  data.forEach(row=>users.set(row.username,users.get(row.username)===null||row[field]===null?null:(users.get(row.username)||0)+Number(row[field])));
+  return [...users].map(([username,value])=>({username,[field]:value})).sort((a,b)=>(a[field]===null)-(b[field]===null)||(b[field]||0)-(a[field]||0)||a.username.localeCompare(b.username));
 }
 const tabs=[...document.querySelectorAll('[data-ranking]')];
 tabs.forEach((tab,i)=>{
@@ -359,7 +360,7 @@ async function query(event){
   const params=new URLSearchParams({start:$('start').value,end:$('end').value});
   if(failureMode)params.set('dev','2');
   try{
-    const response=await Scope.request('/statistics/api/usage?'+params);
+    const response=await Scope.request('/statistics/api/usage?'+params+'&details=lazy');
     if(!response.ok){let msg='查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
     const result=await response.json();Scope.guard(ticket);snapshot=result;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
     const userNames=[...new Set(snapshot.rows.map(r=>r.username))].sort();

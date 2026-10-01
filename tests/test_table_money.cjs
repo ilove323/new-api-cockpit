@@ -57,3 +57,12 @@ test('token detail and model-summary tables keep the same presentation-only form
     assert.equal(amount.textContent,'1,234.57');assert.equal(amount.formula(),row.amount);
   }
 });
+test('unknown cache counts propagate to table totals rather than pretending zero',()=>{
+  const h=harness();h.run(`snapshot={rows:[${JSON.stringify({...row,cache_read_tokens:null,input_tokens:null,total_tokens:null})}],totals:{duration_seconds:60}};renderSummary(snapshot.rows);renderDetails()`);
+  assert.equal(h.elements.get('cache_read_tokens').textContent,'—');
+  assert.equal(h.elements.get('total_tokens').textContent,'—');
+  assert.equal(h.elements.get('tpm').textContent,'—');
+  const footer=h.elements.get('totals').children[0].children;
+  assert.equal(footer.find(c=>c.dataset.column==='cache_read_tokens').textContent,'—');
+  assert.equal(footer.find(c=>c.dataset.column==='amount').textContent,'1,234.57');
+});

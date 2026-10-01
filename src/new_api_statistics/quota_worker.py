@@ -1,6 +1,10 @@
-"""Independent single-leader scheduler; no Gunicorn timers or startup quota catch-up."""
+"""Single-leader quota loop used by the application's internal timer.
+
+The module entrypoint remains for legacy compatibility, not normal deployment.
+"""
 
 import logging
+import os
 import signal
 from datetime import datetime
 from threading import Event
@@ -21,9 +25,14 @@ def serve(stopped):
             "SELECT pg_try_advisory_lock(%s) AS acquired", (schedules.LEADER_LOCK,)
         ).fetchone()["acquired"]
         if not acquired:
-            LOG.info("Another quota scheduler is active; standby.")
+            LOG.debug("Another quota scheduler is active; standby.")
             stopped.wait(10)
             return
+        leader.execute(
+            "SELECT set_config('application_name',%s,false)",
+            (f"statistics-quota-timer:{os.getpid()}",),
+        )
+        LOG.info("Quota timer leadership acquired.")
         leader.execute("LISTEN " + schedules.NOTIFY_CHANNEL)
         schedules.recover_interrupted()
 
@@ -52,6 +61,22 @@ def serve(stopped):
                 break
 
 
+def run(stopped):
+    """Restart a failed loop, never replay uncertain upstream mutations."""
+    while not stopped.is_set():
+        try:
+            serve(stopped)
+        except Exception as exc:
+            if stopped.is_set():
+                return
+            # No credentials, SQL, response bodies or database URLs in logs.
+            LOG.error(
+                "Quota scheduler interrupted (%s); no mutations will be replayed.",
+                type(exc).__name__,
+            )
+            stopped.wait(5)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -62,16 +87,8 @@ def main():
     if not balance.configured():
         LOG.error("MONITOR_DATABASE_URL is required for the quota scheduler.")
         raise SystemExit(1)
-    while not stopped.is_set():
-        try:
-            serve(stopped)
-        except Exception as exc:
-            # No credentials, SQL, response bodies or database URLs in logs.
-            LOG.error(
-                "Quota scheduler interrupted (%s); no mutations will be replayed.",
-                type(exc).__name__,
-            )
-            stopped.wait(5)
+    balance.initialize()
+    run(stopped)
 
 
 if __name__ == "__main__":

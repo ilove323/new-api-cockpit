@@ -32,7 +32,10 @@ def initialize():
         raise ScheduleUnavailable(
             "请先配置 MONITOR_DATABASE_URL，定时规则需要独立监控数据库。"
         )
-    balance.initialize()
+    try:
+        balance.require_schema()
+    except balance.SchemaUnavailable as exc:
+        raise ScheduleUnavailable(str(exc)) from None
 
 
 def next_boundary(period, now):

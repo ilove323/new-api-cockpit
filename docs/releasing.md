@@ -31,21 +31,17 @@ contents:write。首次发布后检查 GHCR 包的可见性；公开仓库不保
 nginx.conf.example，按部署文档配置 .env 并创建监控库。设置：
 
 ```ini
-IMAGE_TAG=0.1.3
+IMAGE_TAG=<与配置模板对应的已发布版本>
 ```
 
 ```bash
 docker compose -f compose.release.yml up -d
 ```
 
-定时用户配额为可选功能。配置监控库并增量迁移后，显式启动对应服务：
-
-```bash
-docker compose -f compose.release.yml --profile quota-schedules up -d quota-worker
-```
-
-所有配额服务应使用同一精确版本；旧版 Compose 不含该服务，升级时一并更新模板。
-步骤和失败处理见[用户配额](quota.md#部署与数据库)。
+新版本单容器内置余额与配额定时器；配置监控库即可随应用运行，无需另启 worker。
+Compose 模板必须与镜像同版：目前单容器改动尚未发布，现有 `0.1.3` 镜像仍是旧架构，
+不能把新模板和旧镜像混用。测试当前改动请从源码构建，正式发版后再填对应 `IMAGE_TAG`。
+从旧部署迁移前须停止旧后台服务并清理私有 override 的 worker 配置，见[升级说明](upgrading.md)。
 
 Release 说明按 PR 标签分类生成；有数据库或配置变化时，
 维护者必须补充升级说明，不能只依赖自动生成的提交列表。

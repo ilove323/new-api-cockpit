@@ -33,15 +33,24 @@ def get_scope(scope_id=ALL, conn=None):
 def ensure_settings(conn):
     conn.execute(
         """INSERT INTO balance_settings(id,scope_id,start_month)
-        SELECT id,id,%s FROM balance_scopes ON CONFLICT DO NOTHING""",
+        SELECT id,id,%s FROM balance_scopes s
+        WHERE NOT EXISTS (SELECT 1 FROM balance_settings b WHERE b.scope_id=s.id)
+        ON CONFLICT DO NOTHING""",
         (datetime.now(balance.TZ).date().replace(day=1),),
     )
 
 
-def refresh_scopes():
-    live = balance.source_channels()
+def refresh_scopes(*, full_discovery=False):
+    balance.require_schema()
     with balance.connect() as conn:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
+        state = conn.execute(
+            "SELECT history_discovered FROM channel_catalog_sync_state WHERE id=1"
+        ).fetchone()
+        discover = full_discovery or not state["history_discovered"]
+        # A historical scan is permitted once on initialization or explicitly.
+        # Routine catalog refreshes read only the small channels table.
+        live = balance.source_channels(include_deleted=discover)
         balance.sync_channel_inventory(conn, live)
         tags = sorted(
             {
@@ -52,17 +61,22 @@ def refresh_scopes():
         )
         conn.execute(
             """UPDATE balance_scopes SET is_visible=
-            (kind<>'tag' OR tag_value=ANY(%s::text[]))""",
-            (tags,),
+            (kind<>'tag' OR tag_value=ANY(%s::text[]))
+            WHERE is_visible IS DISTINCT FROM (kind<>'tag' OR tag_value=ANY(%s::text[]))""",
+            (tags, tags),
         )
         ensure_settings(conn)
         # Deleted channels found only in archives retain ID/name and default to ungrouped.
-        conn.execute("""INSERT INTO balance_channel_inventory(channel_id,channel_name)
+        if discover:
+            conn.execute("""INSERT INTO balance_channel_inventory(channel_id,channel_name)
             SELECT DISTINCT ON (channel_id) channel_id,channel_name FROM balance_month_channels
             WHERE channel_id IS NOT NULL ORDER BY channel_id,month DESC
             ON CONFLICT(channel_id) DO NOTHING""")
+            conn.execute(
+                "UPDATE channel_catalog_sync_state SET history_discovered=true WHERE id=1 AND NOT history_discovered"
+            )
         marker = conn.execute(
-            "SELECT completed FROM balance_scope_backfill WHERE id=1 FOR UPDATE"
+            "SELECT completed FROM balance_scope_backfill WHERE id=1"
         ).fetchone()
         if not marker["completed"]:
             conn.execute("""UPDATE balance_month_channels d SET scope_id=COALESCE(i.scope_id,2),
@@ -74,11 +88,12 @@ def refresh_scopes():
                   AND d.scope_id IS NULL""")
             rebuild_month_scopes(conn)
             conn.execute("UPDATE balance_scope_backfill SET completed=true WHERE id=1")
-        # Keep legacy monthly scope rows for schema compatibility; reads use
-        # channel archives joined with current inventory, not these rows.
-        conn.execute("""INSERT INTO balance_month_scopes(month,scope_id,tag_value,amount)
-            SELECT m.month,s.id,s.tag_value,0 FROM balance_channel_archive_months m
-            CROSS JOIN balance_scopes s ON CONFLICT DO NOTHING""")
+            # Keep legacy monthly scope rows for schema compatibility; reads use
+            # channel archives joined with current inventory, not these rows.
+            conn.execute("""INSERT INTO balance_month_scopes(month,scope_id,tag_value,amount)
+                SELECT m.month,s.id,s.tag_value,0 FROM balance_channel_archive_months m
+                CROSS JOIN balance_scopes s ON CONFLICT DO NOTHING""")
+    return live
 
 
 def rebuild_month_scopes(conn, months=None):
@@ -101,7 +116,6 @@ def list_scopes(refresh=True):
     if refresh:
         refresh_scopes()
     with balance.connect() as conn:
-        ensure_settings(conn)
         return conn.execute("""SELECT s.*,b.enabled FROM balance_scopes s
             JOIN balance_settings b ON b.scope_id=s.id
             WHERE s.is_visible

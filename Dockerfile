@@ -10,4 +10,5 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps .
 USER statistics
 EXPOSE 8000
+ENTRYPOINT ["python", "-m", "new_api_statistics.runtime"]
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "2", "--timeout", "90", "--access-logfile", "-", "new_api_statistics.app:app"]

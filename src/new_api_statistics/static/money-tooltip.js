@@ -2,11 +2,28 @@
 const moneyTip=document.createElement('div');
 moneyTip.id='money-tooltip';moneyTip.className='money-tooltip';moneyTip.role='tooltip';moneyTip.hidden=true;
 document.body.append(moneyTip);
-let moneyAnchor=null,moneyHideTimer;
+let moneyAnchor=null,moneyHideTimer,moneyTipVersion=0;
+const moneyDetails=new WeakMap();
+async function lazyRowMoneyFormula(row){
+  if(row.cost_formula||!row.report_id)return rowMoneyFormula(row);
+  if(!moneyDetails.has(row)){
+    const promise=(async()=>{
+      const response=await Scope.request('/statistics/api/usage/details',{method:'POST',headers:{'Content-Type':'application/json','X-Statistics-Request':'1'},body:JSON.stringify({report_id:row.report_id,row_ids:[row.row_id]})});
+      const body=await response.json();
+      if(!response.ok)throw new Error(body.error||'详情加载失败，请重新查询。');
+      return body.rows[0].detail;
+    })();
+    moneyDetails.set(row,promise);
+    promise.catch(()=>moneyDetails.delete(row));
+  }
+  const detail=await moneyDetails.get(row);
+  return rowMoneyFormula({...row,...detail});
+}
 const moneyNumber=n=>n===null||n===undefined?'未配置':Number(n).toLocaleString('zh-CN',{maximumFractionDigits:9});
 function rowMoneyFormula(row){
   const f=row.cost_formula;
   if(!f)return [row.model_name,'暂无计算信息'];
+  if(f.mode==='unknown')return [`${row.username} · ${row.model_name}`,`实际消费金额：¥ ${moneyNumber(row.amount)}`,'日志元数据损坏，缓存用量或倍率无法确认，不能完整试算。'];
   if(f.mode==='historical'){
     const lines=[`${row.username} · ${row.model_name}`,
       `${f.matched_tier?'历史价格匹配当前档位':'请求发生时的价格'}；单位：元 / 百万 Token`,
@@ -71,7 +88,7 @@ function totalMoneyFormula(rows,total){
     `${rows.length?rows.map(r=>moneyNumber(r.amount)).join(' + '):'0'} = ${moneyNumber(total)}`];
 }
 function hideMoneyTooltip(){
-  clearTimeout(moneyHideTimer);
+  moneyTipVersion++;clearTimeout(moneyHideTimer);
   moneyAnchor?.removeAttribute('aria-describedby');moneyAnchor=null;moneyTip.hidden=true;
 }
 function placeMoneyTooltip(){
@@ -83,8 +100,19 @@ function placeMoneyTooltip(){
 }
 function showMoneyTooltip(anchor,content){
   hideMoneyTooltip();moneyAnchor=anchor;
-  moneyTip.replaceChildren(...content().map((line,i)=>{const p=document.createElement('p');p.textContent=line;if(i===0)p.className='money-title';return p;}));
-  moneyTip.hidden=false;moneyTip.scrollTop=0;anchor.setAttribute('aria-describedby',moneyTip.id);placeMoneyTooltip();
+  const version=moneyTipVersion;
+  const fill=lines=>{
+    if(version!==moneyTipVersion||moneyAnchor!==anchor)return;
+    moneyTip.replaceChildren(...lines.map((line,i)=>{const p=document.createElement('p');p.textContent=line;if(i===0)p.className='money-title';return p;}));
+    moneyTip.hidden=false;moneyTip.scrollTop=0;anchor.setAttribute('aria-describedby',moneyTip.id);placeMoneyTooltip();
+  };
+  try{
+    const result=content();
+    if(result&&typeof result.then==='function'){
+      fill(['正在加载计算详情…']);
+      result.then(fill,error=>fill([error.message||'详情加载失败，请重新查询。']));
+    }else fill(result);
+  }catch(error){fill([error.message||'详情加载失败，请重新查询。']);}
 }
 function bindMoneyTooltip(anchor,content){
   anchor.classList.add('money-cell');anchor.tabIndex=0;

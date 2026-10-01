@@ -46,7 +46,7 @@ class SourceChannelCatalogTest(unittest.TestCase):
 
         # Only redirect the connection; the production SQL and its result are not mocked.
         with patch.object(balance.psycopg, "connect", side_effect=source_connection):
-            rows = balance.source_channels()
+            rows = balance.source_channels(include_deleted=True)
 
         self.assertEqual([row["channel_id"] for row in rows], [0, 1, 2, 3, 99, 100])
         by_id = {row["channel_id"]: row for row in rows}
@@ -68,3 +68,19 @@ class SourceChannelCatalogTest(unittest.TestCase):
                     is_deleted=True,
                 ),
             )
+
+    def test_routine_catalog_query_never_requires_a_logs_table(self):
+        conn = psycopg.Connection.connect(
+            os.environ["MONITOR_DATABASE_URL"], row_factory=dict_row
+        )
+        self.addCleanup(conn.close)
+        conn.execute(
+            "CREATE TEMP TABLE channels(id bigint,name text,status bigint,tag text)"
+        )
+        conn.execute("INSERT INTO channels VALUES (7,'fixture',1,'A')")
+        conn.commit()
+        conn.execute("SET default_transaction_read_only=on")
+        conn.commit()
+        with patch.object(balance.psycopg, "connect", return_value=conn):
+            rows = balance.source_channels()
+        self.assertEqual([r["channel_id"] for r in rows], [7])

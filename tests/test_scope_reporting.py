@@ -234,7 +234,13 @@ class ScopeReportingTest(unittest.TestCase):
             report.load_report(
                 "2026-07-01", "2026-07-31", channel_ids=[11], include_failures=True
             )
-            for call in conn.execute.call_args_list[:2]:
+            scoped_calls = [
+                call
+                for call in conn.execute.call_args_list
+                if "channel_id = ANY" in call.args[0]
+            ]
+            self.assertEqual(len(scoped_calls), 2)
+            for call in scoped_calls:
                 query, params = call.args
                 self.assertIn("channel_id = ANY", query)
                 self.assertEqual(params["channel_ids"], [11])

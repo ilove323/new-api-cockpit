@@ -23,7 +23,7 @@ from new_api_statistics import balance
 from new_api_statistics import scopes as scope_backend
 from new_api_statistics import notifications
 from new_api_statistics import quota as quota_backend
-from new_api_statistics import quota_schedule
+from new_api_statistics import quota_schedule, report_snapshots, timers
 
 from new_api_statistics.report import (
     TZ,
@@ -105,7 +105,10 @@ def headers(response):
 
 @app.get("/healthz")
 def health():
-    return jsonify(status="ok")
+    state = timers.status()
+    return jsonify(status="ok" if state["ready"] else "unhealthy", timers=state), (
+        200 if state["ready"] else 503
+    )
 
 
 @app.get("/statistics")
@@ -322,6 +325,30 @@ def selected(*, by_token=False, include_failures=False):
     return start, end, rows
 
 
+def report_rows(rows):
+    if request.args.get("details") == "lazy" and balance.configured():
+        return report_snapshots.create(
+            rows, request.authorization.username, scope_context()["id"]
+        )
+    return rows
+
+
+@app.post("/statistics/api/usage/details")
+def usage_details():
+    if not monitor_write_allowed():
+        return jsonify(error="不允许的详情请求。"), 403
+    return jsonify(
+        rows=report_snapshots.fetch(
+            request.get_json(), request.authorization.username, scope_context()["id"]
+        )
+    )
+
+
+@app.errorhandler(report_snapshots.SnapshotExpired)
+def snapshot_expired(exc):
+    return jsonify(error=str(exc)), 410
+
+
 @app.get("/statistics/api/usage")
 def usage():
     start, end, rows = selected(include_failures=failure_diagnostics())
@@ -329,7 +356,7 @@ def usage():
         scope=scope_context(),
         start=start,
         end=end,
-        rows=rows,
+        rows=report_rows(rows),
         totals=totals(rows, start, end),
         rankings=rankings(rows),
         updated_at=datetime.now(TZ).isoformat(timespec="seconds"),
@@ -339,7 +366,7 @@ def usage():
 @app.get("/statistics/api/usage/by-token")
 def usage_by_token():
     start, end, rows = selected(by_token=True, include_failures=failure_diagnostics())
-    return jsonify(scope=scope_context(), start=start, end=end, rows=rows)
+    return jsonify(scope=scope_context(), start=start, end=end, rows=report_rows(rows))
 
 
 @app.get("/statistics/api/usage/tokens")
@@ -405,7 +432,7 @@ def usage_by_selection():
     if failure_diagnostics():
         kwargs["include_failures"] = True
     rows = load_report(start, end, **kwargs)
-    return jsonify(scope=scope_context(), start=start, end=end, rows=rows)
+    return jsonify(scope=scope_context(), start=start, end=end, rows=report_rows(rows))
 
 
 @app.get("/statistics/api/export")
@@ -592,6 +619,11 @@ def notification_test():
     return jsonify(sent=True)
 
 
+@app.errorhandler(balance.SchemaUnavailable)
+def schema_unavailable(exc):
+    return jsonify(error=str(exc)), 503
+
+
 @app.errorhandler(psycopg.Error)
 def database_error(exc):
     app.logger.error("Database query failed: %s", type(exc).__name__)
@@ -606,4 +638,14 @@ def quota_error(exc):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "8091")))
+    if balance.configured():
+        balance.initialize()
+    timers.start()
+    try:
+        app.run(
+            host="127.0.0.1",
+            port=int(os.environ.get("PORT", "8091")),
+            use_reloader=False,
+        )
+    finally:
+        timers.stop()

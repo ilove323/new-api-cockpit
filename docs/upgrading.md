@@ -1,21 +1,77 @@
 # 升级与备份
 
-## 未发布修复：定时配额与通知锁冲突
+## 未发布：单容器内置定时器
 
-`0.1.3` 的定时配额调度器与通知发送使用了相同的 advisory lock 编号。
-启用 `quota-worker` 后可能导致飞书/钉钉测试和报警发送锁等待超时。
-修复将调度器锁独立分配，保持既有余额与通知事务锁编号不变；不增加数据库迁移，不修改数据。
+当前程序只需要 `statistics` 一个容器。配置独立监控库后，网页进程自动管理余额和配额定时器，
+不再部署 `balance-worker`、`quota-worker` 或开启 `quota-schedules` profile。
+仅合并定时器不新增迁移：复用已有规则、执行记录、归档和配置。
+本批性能修复同时包含下文的 `008`；从已发布的 `0.1.3` 升级时启动入口会自动补齐，
+已应用 `001`—`008` 的数据库不再改结构，不清空数据。
 
-应用本修复时，**先停止并确认全部旧 `quota-worker` 实例退出**，再更新网页服务和定时配额服务镜像，
-最后启动新调度器。旧、新版本领导锁不同，不能同时运行，否则可能出现多个调度器并行执行。
-如果暂时无法部署修复，可先停止旧 `quota-worker` 恢复通知发送，但定时额度修改也会暂停；
-错过的周期不会自动补发。不需要清空监控库或删除已有规则。
+切换前备份监控库、私有配置和旧镜像，使用**旧版配置**停止全部旧应用/worker：
+
+```bash
+# 在统计项目目录操作；不要对 New API 项目执行 down。
+docker compose --profile quota-schedules stop
+```
+
+确认旧后台进程全部退出后，再更新 Compose 与镜像；私有 override 中也须去掉旧两个 worker 服务。
+保留 `.env`、端口与现有网络，启动新版 `statistics`，确认健康检查中的两种定时器都已就绪。
+源码部署使用 `docker compose up -d --build statistics`；探活命令与字段见
+[运行状态检查](deployment.md#运行状态检查)。`docker compose ps` 应只列出一个统计应用服务。
+旧余额 worker 没有新版领导锁；早期配额 worker 还与通知锁冲突，因此不能混用旧、新后台进程。
+已有配额领导锁编号保持当前修复后的值，另新增独立余额领导锁，不复用余额/通知事务锁。
+
+网页重启会同时暂停内置任务。余额启动只安排未来的 10:00，不立即查消费；
+配额按已有到期窗口处理，错过的周期及中断请求不补发、不自动重试。现有日志和执行记录保留。
+回退时先停新版应用，再恢复旧配置和镜像；数据库保留新增表，不自动恢复/覆盖业务数据。
+
+当前改动尚未发布，必须使用包含 `timers`/Gunicorn 生命周期代码的新镜像。
+不能把新单容器模板搭配旧 `0.1.3` 发布镜像，后者不会自动运行内置定时器。
+
+## 未发布：选定 BUG 与五项性能修复
+
+本批新增 `008_runtime_optimizations.sql`，仅在独立监控库新增三张表：
+`channel_catalog_sync_state`、`report_snapshots`、`report_snapshot_rows`。
+不清空、不重新计费、不改写已有费用、配置或配额执行记录，也不修改 New API 原库结构。
+
+Docker 镜像的 entrypoint 在启动应用前执行幂等迁移。
+非 Docker 的 Gunicorn 部署需要使用统一启动入口（环境变量沿用现有配置）：
+
+```bash
+python -m new_api_statistics.runtime gunicorn --bind 127.0.0.1:8000 new_api_statistics.app:app
+```
+
+也可在维护窗口单独执行 `python -m new_api_statistics.runtime`，此命令仅执行迁移，不启动网页或定时器。
+随后仍须用上面的统一入口启动 Gunicorn；如果使用自定义 Gunicorn 配置，必须引入
+[定时器生命周期钩子](quota.md#部署与数据库)，不能只执行迁移后裸启动 Gunicorn。
+正常 API 请求不再执行 DDL；定时规则读取只检查迁移版本，缺失时返回 `503` 并提示启动迁移。
+部署仍须先处理上面的旧调度器停止要求；不要让旧、新调度器同时运行。
+
+迁移后的首次渠道同步会一次性发现历史日志里已删除的渠道 ID，成功后记录完成标记。
+后续刷新只读当前渠道表，同时保留已保存的删除渠道。普通当月/月度查询发现的渠道继续用于归档，
+不会因减少全表扫描而删掉已有库存。需要再次完整发现历史渠道时手动执行：
+
+```bash
+docker compose exec statistics python -m new_api_statistics.catalog_sync --full
+# 非 Docker：python -m new_api_statistics.catalog_sync --full
+```
+
+此命令仅同步渠道库存和当前标签，不覆盖月度金额；来源读取失败时事务回滚，完成标记不前进。
+正常刷新不再改动未变更渠道的名称、归属、时间戳或账本 ID 序列。
+`last_seen_at` 仅随库存名称/归属变更而更新，是否已删除仍由本次实时渠道目录判断。
+
+报表详情快照有效期 15 分钟，每管理员最多保留最近 10 份；在新建快照时清理过期数据。
+没有请求时不运行额外轮询任务，过期快照不可再读。快照是展示辅助数据，不是历史账单或余额缓存。
+回退旧镜像时保留新增表和迁移记录，无需删除任何业务数据；重新升级可直接复用。
+
+修复范围和本地回归结果见[优化计划](optimization-plan.md#本次选定修复)。
 
 ## 升级到 0.1.3：定时用户配额
 
 新增 `007_quota_schedules.sql`，使用现有监控库增量创建四张定时配额表。
-无需清空数据库，也不修改 New API 数据库结构。网页与 `quota-worker` 必须使用包含本功能的同版镜像。
-`quota-worker` 为可选服务，需要显式启用 `quota-schedules` profile；未启用时只保存规则，不会执行增减。
+无需清空数据库，也不修改 New API 数据库结构。`0.1.3` 历史发布使用独立配额 worker；
+当前未发布版本已改为单容器内置调度，升级方式以本文顶部说明为准。
 具体步骤、管理员 PAT 与不自动补发/重试的边界见[用户配额](quota.md#定时额度修改)。
 本版还引入请求历史价格拆行、手工批量配额管理和表格金额两位小数展示。
 升级时一并更新 Compose 与 Nginx 示例中的 `/quota/` 入口；发布步骤见[0.1.3 发布说明](releases/v0.1.3.md)。
@@ -37,7 +93,7 @@ docker exec <PostgreSQL容器名> sh -lc \
 ```bash
 docker compose -f compose.release.yml pull
 docker compose -f compose.release.yml up -d
-docker compose -f compose.release.yml logs --tail=100 balance-worker
+docker compose -f compose.release.yml logs --tail=100 statistics
 ```
 
 监控库初始化在事务和 advisory lock 内运行。schema_migrations 保存已执行脚本名称；

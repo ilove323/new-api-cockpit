@@ -12,19 +12,16 @@ from new_api_statistics.report import TZ
 
 
 class ScheduleTest(unittest.TestCase):
-    def test_both_compose_templates_include_opt_in_quota_worker(self):
+    def test_both_compose_templates_have_one_complete_application_service(self):
         root = Path(__file__).resolve().parents[1]
         for name in ("docker-compose.yml", "compose.release.yml"):
             with self.subTest(template=name):
                 text = (root / name).read_text()
-                self.assertEqual(text.count("  quota-worker:"), 1)
-                service = text.split("  quota-worker:", 1)[1].split("\nnetworks:", 1)[0]
-                self.assertIn("profiles: [quota-schedules]", service)
-                self.assertIn("new_api_statistics.quota_worker", service)
-                self.assertIn("condition: service_healthy", service)
-                self.assertIn("stop_grace_period: 60s", service)
-                self.assertNotIn("ports:", service)
-                self.assertNotIn("PAT", service)
+                self.assertEqual(text.count("  statistics:"), 1)
+                self.assertNotIn("  quota-worker:", text)
+                self.assertNotIn("  balance-worker:", text)
+                self.assertNotIn("profiles:", text)
+                self.assertIn("stop_grace_period: 90s", text)
 
     def test_calendar_boundaries_are_strictly_future_and_beijing(self):
         examples = [

@@ -48,7 +48,7 @@ New API Statistics 是配合 [QuantumNous/new-api](https://github.com/QuantumNou
 | 通知渠道 | 所有账本共用飞书企业自建应用或钉钉 Webhook 通知配置 |
 | 报警 API | 实时余额与报警检查，使用 New API 管理员 PAT Bearer 认证 |
 | 用户配额 | 独立 `/quota/` 页面列出用户组、状态和配额，默认只显示启用用户；支持按组选择、预览和每组 5 人并发增减，无选择人数上限，显示逐人结果；通过 New API 官方增减接口执行，不直接写用户表 |
-| 定时配额 | `/quota/` 齿轮内按用户组设置每日、每周、每月零点的每人增减额度；独立调度进程、逐用户执行记录，不自动补发或重试不明确的请求 |
+| 定时配额 | `/quota/` 齿轮内按用户组设置每日、每周、每月零点的每人增减额度；主程序内置定时器、逐用户执行记录，不自动补发或重试不明确的请求 |
 
 Token 缓存语义取决于上游日志。部分报表数值涉及数学折算，
 请先阅读[统计口径](docs/calculation.md)。应用不会修改 New API 原始日志和实际消费金额。
@@ -93,15 +93,19 @@ docker compose up -d --build
 docker compose ps
 ```
 
-定时配额为可选功能，不随普通启动命令自动运行。配置独立监控库后，按
-[用户配额文档](docs/quota.md#部署与数据库)执行增量迁移，并显式启动：
+配置监控库后，容器启动入口会先执行幂等增量迁移；正常页面请求不执行迁移。
+旧、新定时调度器不能混用，更新前请阅读[升级说明](docs/upgrading.md)。
 
-```bash
-docker compose --profile quota-schedules up -d quota-worker
-```
-
-然后在 `/quota/` 右上角齿轮里设置规则。未创建并启用规则时，不会修改任何用户额度。
+配置 `MONITOR_DATABASE_URL` 后，同一个 `statistics` 容器会自动运行余额和配额定时器，
+不需要单独启动 worker 或启用 Compose profile。余额仍每天北京时间 10:00 检查；
+配额在 `/quota/` 右上角齿轮里配置，未创建并启用规则时不会修改用户额度。
 规则使用执行管理员在 New API 中已有的 PAT，无需在 `.env` 中配置 PAT。
+定时器会随服务重启自动恢复，无需保持浏览器页面打开。配置了监控库的部署可通过
+`/healthz` 确认两个内置定时器都已就绪，见[运行状态检查](docs/deployment.md#运行状态检查)。
+
+**单容器调度属于当前未发布改动**。请用当前源码构建，或使用包含此功能的匹配发布镜像；
+已发布的 `0.1.3` 镜像仍采用旧 worker 架构，不能只套用新 Compose 模板。
+旧部署切换前必须停止全部旧后台容器，具体见[升级说明](docs/upgrading.md)。
 
 ### 4. 配置入口
 
@@ -116,8 +120,8 @@ https://<你的域名>/quota/
 使用 **New API 管理员账号密码**登录。
 
 没有 Nginx 时，可按[直接端口访问说明](docs/deployment.md#无-nginx-直接访问)配置宿主机端口。
-镜像部署可下载 [v0.1.3 Release](https://github.com/ilove323/new-api-statistics/releases/tag/v0.1.3)
-中的配置文件，设置 `IMAGE_TAG=0.1.3`，按[发版说明](docs/releasing.md)启动。
+镜像部署应下载与目标版本匹配的发布配置文件，并设置对应 `IMAGE_TAG`；
+当前未发布的单容器模板不能配旧 `0.1.3` 镜像，详情见[发版说明](docs/releasing.md)。
 
 ## 文档
 

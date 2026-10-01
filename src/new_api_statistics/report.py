@@ -13,6 +13,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from . import metadata_fallback
 from .expression_prices import extract_prices, low_tier, PRICE_VARS
 from .historical_prices import (
     PRICE_FIELDS,
@@ -269,6 +270,17 @@ def expand_price_rows(rows, options):
         *TOKEN_FIELDS,
     ]
     for source in rows:
+        if source.get("metadata_error_count"):
+            expanded.append(
+                dict(
+                    source,
+                    tier_name="-",
+                    pricing_mode="unknown",
+                    price_tiers=[],
+                    **dict.fromkeys(PRICE_FIELDS),
+                )
+            )
+            continue
         details = price_details(source["model_name"], options)
         tiers = details["price_tiers"]
         usage = source.get("tier_usage") or []
@@ -665,6 +677,21 @@ def decorate(rows, options):
     rows = expand_price_rows(rows, options)
     for row in rows:
         row["display_name"] = (row.get("display_name") or "").strip()
+        if row.get("metadata_error_count"):
+            row.update(
+                converted_cache_read_tokens=None,
+                converted_total_tokens=None,
+                original_cache_read_tokens=None,
+                original_total_tokens=row["total_tokens"],
+                cost_formula=dict(
+                    mode="unknown",
+                    calculated=None,
+                    difference=None,
+                    actual=row["amount"],
+                    metadata_error_count=row["metadata_error_count"],
+                ),
+            )
+            continue
         for field in ["total_tokens", "request_count", *TOKEN_FIELDS]:
             row[field] = int(row[field])
         if "pricing_buckets" in row:
@@ -771,7 +798,7 @@ def merge_failures(rows, failures, by_token):
             row["username"],
             row["user_id"],
             row.get("token_name", ""),
-            -row["total_tokens"],
+            -(row["total_tokens"] or 0),
             row["model_name"],
         )
     )
@@ -814,31 +841,50 @@ def load_report(
         options="-c default_transaction_read_only=on -c statement_timeout=60000",
     ) as conn:
         conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
-        rows = conn.execute(
-            scoped_sql(SQL, channel_ids, excluded_channel_ids),
-            {
-                "start": first,
-                "end": last,
-                "by_token": by_token,
-                "token_ids": token_ids,
-                "groups": groups,
-                "channel_ids": channel_ids,
-                "excluded_channel_ids": excluded_channel_ids,
-            },
-        ).fetchall()
+        conn.execute("SET TRANSACTION READ ONLY")
+        params = dict(
+            start=first,
+            end=last,
+            by_token=by_token,
+            token_ids=token_ids,
+            groups=groups,
+            channel_ids=channel_ids,
+            excluded_channel_ids=excluded_channel_ids,
+        )
+        # Savepoints retain the SAME read-only repeatable-read snapshot on a
+        # cast failure. Fallback is exceptional, streamed and never skips fees.
+        try:
+            with conn.transaction():
+                rows = conn.execute(
+                    scoped_sql(SQL, channel_ids, excluded_channel_ids), params
+                ).fetchall()
+            invalid = any(
+                row.pop("metadata_invalid", False) or not row["group_ratio"].is_finite()
+                for row in rows
+            )
+        except (
+            psycopg.errors.InvalidTextRepresentation,
+            psycopg.errors.NumericValueOutOfRange,
+            psycopg.errors.UntranslatableCharacter,
+        ):
+            invalid = True
+        if invalid:
+            rows = metadata_fallback.load(conn, params, scoped_sql)
         if include_failures:
-            failures = conn.execute(
-                scoped_sql(FAILURE_SQL, channel_ids, excluded_channel_ids),
-                {
-                    "start": first,
-                    "end": last,
-                    "by_token": by_token,
-                    "token_ids": token_ids,
-                    "groups": groups,
-                    "channel_ids": channel_ids,
-                    "excluded_channel_ids": excluded_channel_ids,
-                },
-            ).fetchall()
+            try:
+                with conn.transaction():
+                    failures = conn.execute(
+                        scoped_sql(FAILURE_SQL, channel_ids, excluded_channel_ids),
+                        params,
+                    ).fetchall()
+            except (
+                psycopg.errors.InvalidTextRepresentation,
+                psycopg.errors.NumericValueOutOfRange,
+                psycopg.errors.UntranslatableCharacter,
+            ):
+                failures = metadata_fallback.load(
+                    conn, params, scoped_sql, failures=True
+                )
             merge_failures(rows, failures, by_token)
         user_ids = list({row["user_id"] for row in rows})
         names = {}
@@ -932,8 +978,13 @@ def load_group_options(
         ).fetchall()
 
 
+def known_sum(rows, field):
+    values = [r[field] for r in rows]
+    return None if any(value is None for value in values) else sum(values)
+
+
 def totals(rows, start=None, end=None):
-    tokens = sum(r["total_tokens"] for r in rows)
+    tokens = known_sum(rows, "total_tokens")
     amount = sum((r["amount"] for r in rows), Decimal(0))
     result = {
         "total_tokens": tokens,
@@ -941,7 +992,7 @@ def totals(rows, start=None, end=None):
         "request_count": sum(r["request_count"] for r in rows),
         "users": len({r["user_id"] for r in rows}),
         "models": len({r["model_name"] for r in rows}),
-        **{field: sum(r[field] for r in rows) for field in TOKEN_FIELDS},
+        **{field: known_sum(rows, field) for field in TOKEN_FIELDS},
     }
     if start is not None and end is not None:
         first, last = period(start, end)
@@ -949,7 +1000,7 @@ def totals(rows, start=None, end=None):
         seconds = last - first
         result.update(
             duration_seconds=seconds,
-            tpm=Decimal(tokens) * 60 / seconds,
+            tpm=Decimal(tokens) * 60 / seconds if tokens is not None else None,
             rpm=Decimal(result["request_count"]) * 60 / seconds,
         )
     return result
@@ -972,7 +1023,11 @@ def rankings(rows):
             ),
         )
         for field in ["amount", "total_tokens", *TOKEN_FIELDS]:
-            user[field] += row[field]
+            user[field] = (
+                None
+                if user[field] is None or row[field] is None
+                else user[field] + row[field]
+            )
         models[row["model_name"]] = (
             models.get(row["model_name"], Decimal(0)) + row["amount"]
         )
@@ -983,12 +1038,25 @@ def rankings(rows):
         ),
         "user_tokens": sorted(
             users.values(),
-            key=lambda r: (-r["total_tokens"], r["username"], r["user_id"]),
+            key=lambda r: (
+                r["total_tokens"] is None,
+                -(r["total_tokens"] or 0),
+                r["username"],
+                r["user_id"],
+            ),
         ),
         "user_amount": sorted(
             users.values(), key=lambda r: (-r["amount"], r["username"], r["user_id"])
         ),
     }
+
+
+def append_literal(sheet, values):
+    """All external strings are Excel text, never workbook formulas."""
+    sheet.append(values)
+    for cell in sheet[sheet.max_row]:
+        if isinstance(cell.value, str):
+            cell.data_type = "s"
 
 
 def export_excel(rows, start, end):
@@ -1007,7 +1075,7 @@ def export_excel(rows, start, end):
     ws.append(HEADERS)
     for r in rows:
         values = [r.get(f) for f in FIELDS]
-        ws.append(values)
+        append_literal(ws, values)
         # Treat database names literally, including strings starting with '='.
         for col in (1, 2, 4, 5):
             ws.cell(ws.max_row, col).data_type = "s"
@@ -1015,7 +1083,8 @@ def export_excel(rows, start, end):
     ws.append(["总计"])
     for col in (3, 6, 7, 8, 9, 10, 16):
         letter = get_column_letter(col)
-        ws.cell(last + 1, col, f"=SUM({letter}3:{letter}{last})" if rows else 0)
+        if col == 16 or all(r[FIELDS[col - 1]] is not None for r in rows):
+            ws.cell(last + 1, col, f"=SUM({letter}3:{letter}{last})" if rows else 0)
     begin = 3
     for i in range(1, len(rows) + 1):
         if i == len(rows) or (rows[i]["user_id"], rows[i]["username"]) != (
@@ -1083,14 +1152,16 @@ def export_excel(rows, start, end):
             sheet.merge_cells("C1:H1")
         sheet.append(["序号", *[label for label, _ in columns]])
         for rank, row in enumerate(ranked[key], 1):
-            sheet.append([rank, *[row[field] for _, field in columns]])
+            append_literal(sheet, [rank, *[row[field] for _, field in columns]])
             for col, (_, field) in enumerate(columns, 2):
                 if field in ("username", "display_name"):
                     sheet.cell(sheet.max_row, col).data_type = "s"
         end_row = sheet.max_row
         sheet.append(["总计"])
         for col, (_, field) in enumerate(columns, 2):
-            if field not in ("username", "display_name"):
+            if field not in ("username", "display_name", "model_name") and all(
+                row[field] is not None for row in ranked[key]
+            ):
                 letter = get_column_letter(col)
                 sheet.cell(
                     end_row + 1,
@@ -1124,10 +1195,19 @@ def export_excel(rows, start, end):
         ("缓存写入Token", "J"),
         ("消费请求数", "C"),
     ]:
-        summary.append([title, f"='用户模型用量'!{col}{last + 1}"])
+        summary.append(
+            [
+                title,
+                f"='用户模型用量'!{col}{last + 1}"
+                if ws[f"{col}{last + 1}"].value is not None
+                else None,
+            ]
+        )
     first_second, last_second = period(start, end)
     summary.append(["区间分钟数", f"=({last_second}-{first_second})/60"])
-    summary.append(["区间平均 TPM", "=B4/B10"])
+    summary.append(
+        ["区间平均 TPM", "=B4/B10" if summary["B4"].value is not None else None]
+    )
     summary.append(["区间平均 RPM", "=B9/B10"])
     summary.column_dimensions["A"].width = 26
     summary.column_dimensions["B"].width = 62
@@ -1163,7 +1243,8 @@ def export_excel(rows, start, end):
         )
         for model, row in sorted(expression_rows.items()):
             for tier in row["price_tiers"] or [None]:
-                prices.append(
+                append_literal(
+                    prices,
                     [
                         model,
                         tier["name"] if tier else None,
@@ -1182,7 +1263,7 @@ def export_excel(rows, start, end):
                             else [None] * 4
                         ),
                         "已拆分" if tier else "表达式无法安全拆分",
-                    ]
+                    ],
                 )
                 prices.cell(prices.max_row, 1).data_type = "s"
                 for column in range(4, 8):

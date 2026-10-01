@@ -88,3 +88,21 @@ curl --fail-with-body -H 'Authorization: Bearer <管理员PAT>' \
 
 `/balance` 仅实时计算指定账本余额，不发送通知；`/alert` 只检查指定账本，
 关闭该账本监控后不发送余额告警。通知渠道配置仍为全局共用。
+
+## 网页报表的按需详情（管理员内部接口）
+
+这些接口仍使用网页管理员 Basic Auth，不属于上述 PAT 对外余额接口。
+
+- `/statistics/api/usage`、`/statistics/api/usage/by-token` 和
+  `/statistics/api/usage/by-selection` 支持 `details=lazy`。
+- 配置监控库并完成迁移后，列表只保留显示字段；不携带 `cost_formula`、
+  `tier_usage`、`pricing_buckets`、`price_tiers`。新增 `report_id`、`row_id`、
+  `has_pricing_buckets` 和 `price_tier_count` 用于关联详情及显示提示。
+- 不传 `details=lazy` 保留完整响应，兼容已有内部调用方；未配置可选监控库时也返回完整数据。
+- 悬浮时调用 `POST /statistics/api/usage/details?scope_id=<原账本ID>`：
+  请求为 `{"report_id":"<UUID>","row_ids":[0,1]}`，最多 500 行；要求 JSON 和
+  `X-Statistics-Request: 1`，不允许跨站调用。返回
+  `{"rows":[{"row_id":0,"detail":{"cost_formula":{...}}}]}`。
+- 详情只读取查询时保存的不可变结果，不重新拉日志或当前价格。按管理员账号和账本隔离，
+  有效期 15 分钟，每账号最多保留最近 10 份；过期、范围不符或已被替换返回 `410`，应重新查询。
+- 详情不改变消费、报警、月度归档或余额 API；Excel 仍独立实时查询，精度和工作表规则不变。

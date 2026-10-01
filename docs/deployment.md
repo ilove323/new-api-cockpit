@@ -41,20 +41,52 @@
 
 ```bash
 chmod 600 .env
-docker compose up -d --build statistics balance-worker
+docker compose up -d --build statistics
 docker compose ps
 docker compose logs --tail 100 statistics
-docker compose logs --tail 100 balance-worker
 ```
 
+配置独立监控库后，Docker entrypoint 会先执行增量迁移，失败则不启动该容器进程；
+正常请求仅检查版本，不尝试建表。无需清空数据库。非 Docker 进程启动入口及旧、新调度器
+切换要求见[升级文档](upgrading.md)。
+
 应用默认仅绑定宿主机 `127.0.0.1:8091`。使用 Nginx 时继续阅读下一节；不使用 Nginx 时按“无 Nginx 直接访问”配置外部监听。
+
+## 运行状态检查
+
+同一个 `statistics` 容器包含网页、每天北京时间 10:00 的余额检查和按规则执行的零点配额任务。
+配置 `MONITOR_DATABASE_URL` 后，两个定时器随应用启动；无需另起 worker，也不依赖浏览器保持打开。
+没有启用的配额规则时，不会自行增减用户额度。暂停全部应用会同时暂停两个定时器。
+
+在应用宿主机执行（非默认 `PORT` 请替换 `8091`）：
+
+```bash
+docker compose ps statistics
+curl --fail-with-body http://127.0.0.1:8091/healthz
+```
+
+配置监控库并正常就绪时返回 HTTP `200`：
+
+```json
+{"status":"ok","timers":{"configured":true,"ready":true,"threads_running":true,"leaders_active":true}}
+```
+
+`threads_running` 表示当前网页进程的两个调度线程正在运行；`leaders_active` 表示监控库中
+余额和配额两种领导锁均有持有者。多个网页进程可以待命，但每种定时任务只有一个领导者执行。
+调度线程停止或领导锁尚未就绪时返回 HTTP `503`；先检查容器日志、监控库连接及迁移版本，
+不要再启动旧 worker。健康检查只检查线程和锁，不拉取消费、不发报警、不修改用户额度。
+该结果表示调度就绪，不等于某条规则已成功执行；具体执行结果在 `/quota/` 的“执行记录”查看。
+
+未配置可选监控库时返回 `{"status":"ok","timers":{"configured":false,"ready":true}}`，
+只提供基础统计和手工配额操作，不启动余额或配额定时器。
+`/healthz` 用于容器或宿主机探活；现有 Nginx 无需新增公开转发路径。
 
 ## 配合 Nginx
 
 把 `../nginx.conf.example` 中 `/statistics`、`/statistics/`、`/quota`、`/quota/` 四个 location 加入现有站点的 HTTPS `server` 块，
 保留 New API 原来的 `/` 转发配置。前两者是用量统计，后两者是用户配额；其他路径继续访问 New API。
 `proxy_pass` 不要额外添加末尾斜杠，以保留应用需要的 `/statistics/` 路径前缀。
-`/quota/` 的定时额度修改需要 `MONITOR_DATABASE_URL` 和显式启动 `quota-worker`，
+`/quota/` 的定时额度修改需要 `MONITOR_DATABASE_URL`；定时器随同一个应用容器自动启动，
 启动步骤与失败边界见[用户配额](quota.md#定时额度修改)。不改变余额检查时间或现有 Nginx 路由。
 页面互跳使用 `/statistics/` 和 `/quota/`，不写死域名。入口缺少末尾斜杠时，
 示例配置使用 `absolute_redirect off` 返回相对路径，并保留查询参数；浏览器会
@@ -119,5 +151,5 @@ curl -H 'Authorization: Bearer <管理员PAT>' \
 且未软删除的账号；每次请求重新检查，禁用、降权和修改密码立即生效。
 不配置独立网页登录账号。统计查询不会修改 New API 数据；管理员在 `/quota/`
 确认配额增减时，服务才会通过 New API 官方管理接口修改所选用户额度，详情见
-[用户配额](quota.md)。启用定时配额规则后，独立 `quota-worker` 会在对应周期按执行管理员权限调用同一接口；
-不会由网页访问或 Gunicorn 启动触发额度调整。
+[用户配额](quota.md)。启用定时配额规则后，主程序内置定时器会在对应周期按执行管理员权限调用同一接口。
+网页访问不启动任务，应用启动也不会无条件发额度；仅执行符合既有到期窗口的启用规则。

@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+- Run web/API, daily balance monitoring and scheduled quota adjustments in one application container; start fork-safe internal timers automatically with distinct database leadership locks, signal-aware shutdown and timer-aware health checks. Retain existing rule/archive data; remove worker services/profiles from current Compose templates.
+- Replace the stale quota settings help that required a standalone worker; document automatic timer startup, health verification and non-destructive upgrades from the old deployment.
+
 - Fix advisory-lock collision between the quota scheduler and notification delivery; centralize distinct lock IDs and add real PostgreSQL cross-channel regression coverage.
+
+- Treat all external Excel strings as literal text across worksheets while retaining generated totals and numeric precision.
+- Validate pathological quota amounts before arithmetic and invalidate pending previews after changes to users, amount, operation or status filters.
+- Recover reports containing corrupt log metadata via an exceptional read-only streamed fallback; retain billed amounts and show unavailable token categories as unknown rather than zero.
+- Discover historical channel IDs once or explicitly; synchronize only changed catalog metadata without advancing ledger IDs on unchanged reads.
+- Share one fresh current-month channel aggregate within each daily multi-ledger check; manual checks and the balance API remain uncached.
+- Add opt-in slim report responses and owner/scoped immutable tooltip snapshots with bounded retention in monitoring migration 008.
+- Move monitoring migrations to process startup/deployment; normal schedule requests only verify the migration version.
 
 ## 0.1.3 - 2026-10-01
 

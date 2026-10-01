@@ -9,7 +9,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException, localcontext
 from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
@@ -75,17 +75,23 @@ def validate_request(body):
     if mode not in ("add", "subtract"):
         raise QuotaError("只允许增加或减少额度，不允许覆盖。")
     try:
-        amount = Decimal(str(body.get("amount_yuan", "")))
-    except (InvalidOperation, ValueError):
+        raw = str(body.get("amount_yuan", ""))
+        if len(raw) > 128:
+            raise ValueError()
+        amount = Decimal(raw)
+        # Check finiteness/range BEFORE arithmetic: sNaN and enormous
+        # exponents otherwise raise outside the application's JSON handler.
+        if not amount.is_finite() or not 0 < amount <= MAX_AMOUNT:
+            raise ValueError()
+        if amount.as_tuple().exponent < -128:
+            raise ValueError()
+        with localcontext() as context:
+            context.prec = max(32, len(amount.as_tuple().digits) + 6)
+            units = amount * QUOTA_PER_YUAN
+            if units != units.to_integral_value():
+                raise ValueError()
+    except (DecimalException, ValueError):
         raise QuotaError("请输入有效金额。") from None
-    units = amount * QUOTA_PER_YUAN
-    if (
-        not amount.is_finite()
-        or amount <= 0
-        or amount > MAX_AMOUNT
-        or units != units.to_integral_value()
-    ):
-        raise QuotaError("金额必须大于 0、最多十亿元，且能精确换算为整数额度单位。")
     return ids, mode, int(units), amount
 
 
