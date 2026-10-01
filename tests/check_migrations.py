@@ -3,6 +3,7 @@
 """Verify fresh installs, legacy upgrades and migration version recording."""
 
 import os
+from pathlib import Path
 import uuid
 from unittest.mock import patch
 
@@ -45,11 +46,14 @@ def main():
                     conn.execute("UPDATE balance_settings SET budget=1234 WHERE id=1")
                 balance.initialize()
             with connect() as conn:
-                assert (
-                    conn.execute(
-                        "SELECT count(*) AS n FROM schema_migrations"
-                    ).fetchone()["n"]
-                    == 6
+                assert conn.execute(
+                    "SELECT count(*) AS n FROM schema_migrations"
+                ).fetchone()["n"] == len(
+                    list(
+                        Path(balance.__file__)
+                        .with_name("migrations")
+                        .glob("[0-9]*.sql")
+                    )
                 )
                 assert (
                     conn.execute(
@@ -145,11 +149,10 @@ def main():
             balance.initialize()
             balance.initialize()
         with v010_connect() as conn:
-            assert (
-                conn.execute("SELECT count(*) AS n FROM schema_migrations").fetchone()[
-                    "n"
-                ]
-                == 6
+            assert conn.execute(
+                "SELECT count(*) AS n FROM schema_migrations"
+            ).fetchone()["n"] == len(
+                list(Path(balance.__file__).with_name("migrations").glob("[0-9]*.sql"))
             )
             settings = conn.execute(
                 "SELECT * FROM notification_settings WHERE id=1"

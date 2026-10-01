@@ -24,8 +24,13 @@
 | `PYTHON_IMAGE` | 构建使用的 Python 镜像，默认 `python:3.12-slim` |
 | `PIP_INDEX_URL` | 可选 Python 包索引地址 |
 | `NEW_API_NETWORK` | 已有 New API Docker 网络名，默认 `new-api-network` |
-| `MONITOR_DATABASE_URL` | 独立监控库连接串；用于保存额度、月度归档、报警及通知渠道配置 |
+| `NEW_API_INTERNAL_URL` | New API 在共享 Docker 网络中的内部地址，默认 `http://new-api:3000`；用于手工和定时用户配额增减 |
+| `MONITOR_DATABASE_URL` | 独立监控库连接串；保存预算、月度归档、报警、通知配置及定时配额规则与执行记录 |
 | `NOTIFICATION_ENCRYPTION_KEY` | 通知渠道 Secret 的 Fernet 加密密钥；生成一次后必须持久保存 |
+
+用户配额操作还要求当前登录管理员在 New API 中已有 PAT，并且统计容器能通过
+`NEW_API_INTERNAL_URL` 访问 New API 的管理接口。此地址应使用共享 Docker 网络中的
+内部服务名，不要填公网地址；PAT 只从 New API 数据库读取并在服务端使用。
 
 设置 `NEW_API_NETWORK` 为现有 New API 网络的实际名称，也可在本机专用的
 `docker-compose.override.yml` 中覆盖 `networks.new-api.name`，无需改动通用 Compose 文件。
@@ -46,16 +51,21 @@ docker compose logs --tail 100 balance-worker
 
 ## 配合 Nginx
 
-把 `../nginx.conf.example` 中两个 location 加入现有站点的 HTTPS `server` 块，
-保留 New API 原来的 `/` 转发配置。`/statistics/` 转发到统计应用，其他路径继续访问 New API。
+把 `../nginx.conf.example` 中 `/statistics`、`/statistics/`、`/quota`、`/quota/` 四个 location 加入现有站点的 HTTPS `server` 块，
+保留 New API 原来的 `/` 转发配置。前两者是用量统计，后两者是用户配额；其他路径继续访问 New API。
 `proxy_pass` 不要额外添加末尾斜杠，以保留应用需要的 `/statistics/` 路径前缀。
+`/quota/` 的定时额度修改需要 `MONITOR_DATABASE_URL` 和显式启动 `quota-worker`，
+启动步骤与失败边界见[用户配额](quota.md#定时额度修改)。不改变余额检查时间或现有 Nginx 路由。
+页面互跳使用 `/statistics/` 和 `/quota/`，不写死域名。入口缺少末尾斜杠时，
+示例配置使用 `absolute_redirect off` 返回相对路径，并保留查询参数；浏览器会
+沿用当前协议、域名和端口，避免在代理或非标准端口访问时跳到别的地址。
 
 ```bash
 nginx -t
 nginx -s reload
 ```
 
-随后访问 `https://<你的域名>/statistics/`。如果修改了 `PORT`，应同步修改
+随后访问 `https://<你的域名>/statistics/` 或 `https://<你的域名>/quota/`。如果修改了 `PORT`，应同步修改
 `../nginx.conf.example` 中的 upstream 端口。HTTP 请求应跳转 HTTPS，避免明文传输登录凭据。
 
 如果 Nginx 也在容器内，需要将其加入共享 Docker 网络，并将 upstream 改为
@@ -83,6 +93,7 @@ docker compose ps
 
 ```text
 http://<服务器IP>:8091/statistics/
+http://<服务器IP>:8091/quota/
 ```
 
 报警 API 地址相应为：
@@ -106,4 +117,7 @@ curl -H 'Authorization: Bearer <管理员PAT>' \
 网页使用 New API 原有管理员用户名和密码，
 读取 `users.password` 的 bcrypt 哈希进行校验。仅允许 `role >= 10`、`status = 1`
 且未软删除的账号；每次请求重新检查，禁用、降权和修改密码立即生效。
-不配置独立网页登录账号，也不修改 New API 用户数据。
+不配置独立网页登录账号。统计查询不会修改 New API 数据；管理员在 `/quota/`
+确认配额增减时，服务才会通过 New API 官方管理接口修改所选用户额度，详情见
+[用户配额](quota.md)。启用定时配额规则后，独立 `quota-worker` 会在对应周期按执行管理员权限调用同一接口；
+不会由网页访问或 Gunicorn 启动触发额度调整。

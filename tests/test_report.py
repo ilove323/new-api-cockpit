@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 from new_api_statistics.app import app
 from new_api_statistics.report import (
     current_prices,
+    price_details,
     decorate,
     export_excel,
     period,
@@ -25,6 +26,329 @@ from new_api_statistics.report import (
 
 
 class ReportTest(unittest.TestCase):
+    def test_expression_prices_single_and_tiered(self):
+        options = {
+            "ModelRatio": {"claude-sonnet-5": 99},
+            "billing_setting.billing_mode": {
+                "claude-sonnet-5": "tiered_expr",
+                "gpt-5.6-sol": "tiered_expr",
+            },
+            "billing_setting.billing_expr": {
+                "claude-sonnet-5": 'tier("standard", p * 2 + cr * 0.2 + cc * 2.5 + cc1h * 4 + c * 10)',
+                "gpt-5.6-sol": 'len <= 272000 ? tier("0_272k", p * 4 + cr * 0.4 + cc * 5 + c * 20) : tier("272k_plus", p * 8 + cr * 0.8 + cc * 10 + c * 30)',
+            },
+        }
+        one = price_details("claude-sonnet-5", options)
+        self.assertEqual(one["input_price"], Decimal(2))
+        self.assertEqual(one["write_1h_price"], Decimal(4))
+        self.assertEqual(one["output_price"], Decimal(10))
+        self.assertEqual(one["pricing_mode"], "expression")
+        self.assertEqual(one["price_tiers"][0]["name"], "standard")
+        two = price_details("gpt-5.6-sol", options)
+        self.assertIsNone(two["input_price"])
+        self.assertEqual(
+            [t["input_price"] for t in two["price_tiers"]], [Decimal(4), Decimal(8)]
+        )
+        self.assertEqual(two["price_tiers"][1]["condition"], "len > 272000")
+        self.assertEqual(
+            price_details(
+                "gpt-6-astra",
+                {
+                    "billing_setting.billing_mode": {"gpt-6-astra": "tiered_expr"},
+                    "billing_setting.billing_expr": {
+                        "gpt-6-astra": 'tier("x", p * 1 + fixed(2))'
+                    },
+                },
+            )["price_tiers"],
+            [],
+        )
+
+    def test_expression_amount_and_usage_not_reconciled(self):
+        original = dict(
+            user_id=2,
+            username="a",
+            model_name="claude-sonnet-5",
+            request_count=3,
+            total_tokens=100,
+            input_tokens=10,
+            output_tokens=20,
+            cache_read_tokens=40,
+            cache_write_tokens=30,
+            pricing_input_tokens=10,
+            ratio_count=2,
+            group_ratio=Decimal(4),
+            amount=Decimal("1.25"),
+        )
+        options = {
+            "billing_setting.billing_mode": {"claude-sonnet-5": "tiered_expr"},
+            "billing_setting.billing_expr": {
+                "claude-sonnet-5": 'tier("standard", p * 2 + cr * 0.2 + cc * 2.5 + cc1h * 4 + c * 10)'
+            },
+        }
+        row = decorate([original], options)[0]
+        self.assertEqual(row["cache_read_tokens"], 40)
+        self.assertEqual(row["total_tokens"], 100)
+        self.assertEqual(row["amount"], Decimal("1.25"))
+        self.assertEqual(row["cost_formula"]["calculated"], Decimal("0.001212"))
+        self.assertEqual(row["cost_formula"]["terms"][3]["tokens"], 30)
+        self.assertEqual(row["cost_formula"]["terms"][3]["price"], Decimal("2.5"))
+        wb = load_workbook(export_excel([row], "2026-09-01", "2026-09-01"))
+        self.assertIn("表达式价格", wb.sheetnames)
+        self.assertEqual(wb["表达式价格"]["D3"].value, 2)
+        self.assertEqual(wb["表达式价格"]["G3"].value, 2.5)
+        self.assertEqual(wb["表达式价格"]["H3"].value, "已拆分")
+        self.assertEqual(wb["用户模型用量"]["P3"].value, 1.25)
+
+    def test_single_tier_expression_matches_example(self):
+        prices = price_details(
+            "claude-sonnet-5",
+            {
+                "billing_setting.billing_mode": {"claude-sonnet-5": "tiered_expr"},
+                "billing_setting.billing_expr": {
+                    "claude-sonnet-5": 'tier("standard", p * 2 + cr * 0.2 + cc * 2.5 + cc1h * 4 + c * 10)'
+                },
+            },
+        )
+        row = dict(
+            **prices,
+            input_tokens=1623,
+            output_tokens=226,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            group_ratio=Decimal(4),
+            ratio_count=1,
+            amount=Decimal("0.022024"),
+        )
+        formula = cost_formula(row)
+        self.assertEqual(formula["calculated"], Decimal("0.022024"))
+        self.assertEqual(formula["difference"], 0)
+        row["cache_write_tokens"] = 100
+        self.assertEqual(cost_formula(row)["calculated"], Decimal("0.023024"))
+
+    def test_missing_tier_uses_low_price_for_trial(self):
+        prices = price_details(
+            "gpt-5.6-sol",
+            {
+                "billing_setting.billing_mode": {"gpt-5.6-sol": "tiered_expr"},
+                "billing_setting.billing_expr": {
+                    "gpt-5.6-sol": 'len <= 272000 ? tier("short", p * 4 + c * 20) : tier("long", p * 8 + c * 30)'
+                },
+            },
+        )
+        row = dict(
+            **prices,
+            input_tokens=100,
+            output_tokens=10,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            group_ratio=Decimal(1),
+            amount=Decimal("0.001"),
+        )
+        result = cost_formula(row)
+        self.assertEqual(result["buckets"][0]["tier"], "short")
+        self.assertTrue(result["buckets"][0]["inferred_low_tier"])
+        self.assertEqual(result["calculated"], Decimal("0.0006"))
+
+    def test_tier_rows_keep_actual_amounts_and_numeric_prices(self):
+        options = {
+            "billing_setting.billing_mode": {"gpt-5.6-sol": "tiered_expr"},
+            "billing_setting.billing_expr": {
+                "gpt-5.6-sol": 'len <= 272000 ? tier("short", p * 4 + cr * 0.4 + cc * 5 + c * 20) : tier("long", p * 8 + cr * 0.8 + cc * 10 + c * 30)'
+            },
+        }
+        buckets = []
+        for index, (tier, ratio, amount) in enumerate(
+            [("short", "1", "0.001"), ("long", "2", "0.002"), ("", "1", "0.003")], 1
+        ):
+            buckets.append(
+                dict(
+                    matched_tier=tier,
+                    group_ratio=ratio,
+                    amount=amount,
+                    request_count=1,
+                    raw_input_tokens=105,
+                    pricing_input_tokens=100,
+                    input_tokens=100,
+                    output_tokens=10,
+                    cache_read_tokens=5,
+                    cache_write_tokens=0,
+                    total_tokens=115,
+                    latest_at=index,
+                    latest_id=index,
+                )
+            )
+        source = dict(
+            user_id=1,
+            username="tester",
+            display_name="",
+            model_name="gpt-5.6-sol",
+            token_id=0,
+            token_name="",
+            request_count=3,
+            raw_input_tokens=315,
+            pricing_input_tokens=300,
+            input_tokens=300,
+            output_tokens=30,
+            cache_read_tokens=15,
+            cache_write_tokens=0,
+            total_tokens=345,
+            ratio_count=2,
+            group_ratio=Decimal(1),
+            amount=Decimal("0.006"),
+            tier_usage=buckets,
+            failure_codes={"429": 1},
+            failure_count=1,
+        )
+        rows = decorate([source], options)
+        self.assertEqual([row["tier_name"] for row in rows], ["short", "long", "-"])
+        self.assertEqual(
+            [row["input_price"] for row in rows], [Decimal(4), Decimal(8), Decimal(4)]
+        )
+        self.assertEqual(
+            [row["amount"] for row in rows],
+            [Decimal("0.001"), Decimal("0.002"), Decimal("0.003")],
+        )
+        self.assertEqual(sum(row["request_count"] for row in rows), 3)
+        self.assertEqual(totals(rows)["total_tokens"], 345)
+        self.assertEqual(totals(rows)["amount"], Decimal("0.006"))
+        self.assertEqual(sum(row["failure_count"] for row in rows), 1)
+        self.assertEqual(rows[-1]["cost_formula"]["buckets"][0]["tier"], "short")
+        self.assertTrue(rows[-1]["cost_formula"]["buckets"][0]["inferred_low_tier"])
+        wb = load_workbook(export_excel(rows, "2026-09-22", "2026-09-22"))
+        ws = wb["用户模型用量"]
+        self.assertEqual(
+            [ws[f"E{line}"].value for line in (3, 4, 5)], ["short", "long", "-"]
+        )
+        self.assertEqual([ws[f"L{line}"].value for line in (3, 4, 5)], [4, 8, 4])
+        self.assertEqual(ws["P6"].value, "=SUM(P3:P5)")
+
+    def test_unknown_recorded_tier_uses_current_low_price(self):
+        options = {
+            "billing_setting.billing_mode": {"gpt-6-astra": "tiered_expr"},
+            "billing_setting.billing_expr": {
+                "gpt-6-astra": 'len <= 272000 ? tier("0_272k", p * 10 + cr * 1 + cc * 12.5 + c * 50) : tier("272k_plus", p * 20 + cr * 2 + cc * 25 + c * 75)'
+            },
+        }
+        source = dict(
+            user_id=1,
+            username="tester",
+            display_name="",
+            model_name="gpt-6-astra",
+            token_id=0,
+            token_name="",
+            request_count=1,
+            raw_input_tokens=4402,
+            pricing_input_tokens=434,
+            input_tokens=434,
+            output_tokens=53,
+            cache_read_tokens=3968,
+            cache_write_tokens=0,
+            total_tokens=4455,
+            ratio_count=1,
+            group_ratio=Decimal("3.4"),
+            amount=Decimal("0.037258"),
+            tier_usage=[
+                dict(
+                    matched_tier="base",
+                    group_ratio="3.4",
+                    amount="0.037258",
+                    request_count=1,
+                    raw_input_tokens=4402,
+                    pricing_input_tokens=434,
+                    input_tokens=434,
+                    output_tokens=53,
+                    cache_read_tokens=3968,
+                    cache_write_tokens=0,
+                    total_tokens=4455,
+                    latest_at=1,
+                    latest_id=1,
+                )
+            ],
+            failure_codes={},
+            failure_count=0,
+        )
+        row = decorate([source], options)[0]
+        self.assertEqual(row["tier_name"], "0_272k")
+        self.assertEqual(row["input_price"], Decimal(10))
+        self.assertEqual(row["output_price"], Decimal(50))
+        self.assertEqual(row["cache_price"], Decimal(1))
+        self.assertEqual(row["write_price"], Decimal("12.5"))
+        bucket = row["cost_formula"]["buckets"][0]
+        self.assertEqual(bucket["recorded_tier"], "base")
+        self.assertEqual(bucket["tier"], "0_272k")
+        self.assertTrue(bucket["inferred_low_tier"])
+        self.assertEqual(bucket["calculated"], Decimal("0.0372572"))
+        self.assertEqual(row["amount"], Decimal("0.037258"))
+
+        # An obsolete name must not become its own row: it joins the current
+        # low tier, while other current tiers and missing names remain separate.
+        merged_source = deepcopy(source)
+        original = source["tier_usage"][0]
+        merged_source["tier_usage"] = [
+            original,
+            {
+                **original,
+                "matched_tier": "0_272k",
+                "group_ratio": "3.4",
+                "amount": "0.04",
+                "latest_at": 2,
+                "latest_id": 2,
+            },
+            {
+                **original,
+                "matched_tier": "0_272k",
+                "group_ratio": "2",
+                "amount": "0.05",
+                "latest_at": 3,
+                "latest_id": 3,
+            },
+            {
+                **original,
+                "matched_tier": "272k_plus",
+                "group_ratio": "1",
+                "amount": "0.08",
+                "latest_at": 4,
+                "latest_id": 4,
+            },
+            {
+                **original,
+                "matched_tier": "",
+                "group_ratio": "1",
+                "amount": "0.01",
+                "latest_at": 5,
+                "latest_id": 5,
+            },
+        ]
+        merged_source["request_count"] = 5
+        merged_source["amount"] = Decimal("0.217258")
+        merged_source["failure_count"] = 1
+        rows = decorate([merged_source], options)
+        self.assertEqual([r["tier_name"] for r in rows], ["0_272k", "272k_plus", "-"])
+        low = rows[0]
+        self.assertEqual(low["request_count"], 3)
+        self.assertEqual(low["total_tokens"], 13365)
+        self.assertEqual(low["amount"], Decimal("0.127258"))
+        self.assertEqual(low["group_ratio"], Decimal(2))
+        self.assertEqual(low["ratio_count"], 2)
+        self.assertEqual(len(low["cost_formula"]["buckets"]), 2)
+        combined = low["cost_formula"]["buckets"][0]
+        self.assertEqual(combined["request_count"], 2)
+        self.assertEqual(combined["input_tokens"], 868)
+        self.assertEqual(combined["actual"], Decimal("0.077258"))
+        self.assertEqual(combined["calculated"], Decimal("0.0745144"))
+        self.assertEqual(combined["terms"][0]["tokens"], 868)
+        self.assertEqual(sum(r["request_count"] for r in rows), 5)
+        self.assertEqual(totals(rows)["amount"], Decimal("0.217258"))
+        self.assertEqual(sum(r["failure_count"] for r in rows), 1)
+        ws = load_workbook(export_excel(rows, "2026-09-01", "2026-09-23"))[
+            "用户模型用量"
+        ]
+        self.assertEqual(
+            [ws[f"E{n}"].value for n in (3, 4, 5)], ["0_272k", "272k_plus", "-"]
+        )
+        self.assertEqual(ws["C3"].value, 3)
+        self.assertEqual(ws["P3"].value, float(Decimal("0.127258")))
+
     def test_cost_formula_decimal_and_difference(self):
         row = dict(
             input_tokens=1000000,
@@ -84,6 +408,8 @@ class ReportTest(unittest.TestCase):
             self.assertIn("筛选令牌", text)
             self.assertIn('id="group-filter"', text)
             self.assertIn("筛选分组", text)
+            self.assertIn('data-column-toggle="tier_name" checked>档位', text)
+            self.assertIn('<th data-column="tier_name">档位</th>', text)
             self.assertIn('data-preset="current-month">本月', text)
             self.assertIn('data-settings-tab="balance"', text)
             self.assertIn('data-settings-tab="notification"', text)
@@ -284,14 +610,15 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(ws["B2"].value, "显示名")
         self.assertEqual(ws["B3"].value, "测试显示名")
         self.assertEqual(ws["C2"].value, "消费请求数")
-        self.assertEqual(ws["J2"].value, "倍率")
+        self.assertEqual(ws["K2"].value, "倍率")
+        self.assertEqual(ws["E2"].value, "档位")
         self.assertEqual(ws["D3"].data_type, "s")
-        self.assertEqual(ws["O3"].data_type, "n")
-        self.assertEqual(ws["O5"].value, "=SUM(O3:O4)")
-        for col in "CEFGHIO":
+        self.assertEqual(ws["P3"].data_type, "n")
+        self.assertEqual(ws["P5"].value, "=SUM(P3:P4)")
+        for col in "CFGHIJP":
             self.assertEqual(ws[f"{col}3"].data_type, "n")
             self.assertEqual(ws[f"{col}5"].value, f"=SUM({col}3:{col}4)")
-        self.assertEqual(ws.max_column, 15)
+        self.assertEqual(ws.max_column, 16)
         self.assertNotIn("计价非缓存输入Token", [c.value for c in ws[2]])
         self.assertNotIn("折算状态", [c.value for c in ws[2]])
 
@@ -325,12 +652,12 @@ class ReportTest(unittest.TestCase):
             rankings([row])["user_tokens"][0]["total_tokens"], row["total_tokens"]
         )
         ws = load_workbook(export_excel([row], "2026-09-01", "2026-09-01")).active
-        self.assertAlmostEqual(ws["E3"].value, float(row["total_tokens"]))
-        self.assertAlmostEqual(ws["H3"].value, float(row["cache_read_tokens"]))
-        self.assertEqual(ws["E3"].number_format, "#,##0")
-        self.assertEqual(ws["H3"].number_format, "#,##0")
-        self.assertEqual(ws["E2"].value, "总Token")
-        self.assertAlmostEqual(ws["O3"].value, float(row["amount"]))
+        self.assertAlmostEqual(ws["F3"].value, float(row["total_tokens"]))
+        self.assertAlmostEqual(ws["I3"].value, float(row["cache_read_tokens"]))
+        self.assertEqual(ws["F3"].number_format, "#,##0")
+        self.assertEqual(ws["I3"].number_format, "#,##0")
+        self.assertEqual(ws["F2"].value, "总Token")
+        self.assertAlmostEqual(ws["P3"].value, float(row["amount"]))
         self.assertNotIn("折算总Token", [c.value for c in ws[2]])
         for count in (1, 3):
             fallback = decorate([dict(original, ratio_count=count)], options)[0]
@@ -396,15 +723,15 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(wb["用户消费"]["C3"].data_type, "s")
         self.assertEqual(wb["用户消费"]["D4"].value, "=SUM(D3:D3)")
         summary = wb["区间汇总"]
-        self.assertEqual(summary["B4"].value, "='用户模型用量'!E5")
+        self.assertEqual(summary["B4"].value, "='用户模型用量'!F5")
         self.assertEqual(summary["B9"].value, "='用户模型用量'!C5")
         self.assertEqual(summary["B11"].value, "=B4/B10")
         self.assertEqual(summary["B12"].value, "=B9/B10")
 
     def test_empty_excel_no_circular_formula(self):
         ws = load_workbook(export_excel([], "2026-07-26", "2026-08-25")).active
-        self.assertEqual(ws["E3"].value, 0)
-        self.assertEqual(ws["O3"].value, 0)
+        self.assertEqual(ws["F3"].value, 0)
+        self.assertEqual(ws["P3"].value, 0)
 
     def test_developer_mode_does_not_change_excel(self):
         with (
@@ -419,7 +746,7 @@ class ReportTest(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 200)
                 wb = load_workbook(BytesIO(response.data))
-                self.assertEqual(wb.active.max_column, 15)
+                self.assertEqual(wb.active.max_column, 16)
                 books.append([[list(row) for row in ws.values] for ws in wb.worksheets])
             self.assertEqual(books[0], books[1])
             self.assertEqual(books[0], books[2])

@@ -3,6 +3,7 @@ let balanceData=null,balanceVersion=null;
 let channelVersion=null,channelDirty=false,channelBusy=false;
 let historyPreview=null;
 const balanceMoney=value=>value===null||value===undefined?'—':'¥ '+number(value,2);
+const balanceTableMoney=value=>value===null||value===undefined?'—':'¥ '+Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const balanceTime=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';
 async function balanceRequest(path,options={}){
   const root=!path||path.startsWith('?')?'/statistics/api/balance/status':'/statistics/api/balance';
@@ -38,7 +39,7 @@ function renderBalance(){
     div.append(title,detail,time);
     $('balance-alert-list').append(div);
   }
-  for(const m of data.months){const tr=document.createElement('tr');cell(tr,m.month.slice(0,7));cell(tr,balanceMoney(m.amount));$('balance-months').append(tr);}
+  for(const m of data.months){const tr=document.createElement('tr');cell(tr,m.month.slice(0,7));cell(tr,balanceTableMoney(m.amount));$('balance-months').append(tr);}
   if(!data.months.length){const tr=document.createElement('tr');cell(tr,'暂无月度归档').colSpan=2;$('balance-months').append(tr);}
 }
 async function refreshBalance(live=false){
@@ -135,7 +136,7 @@ $('balance-recalculate').addEventListener('click',async()=>{
     $('balance-history-preview-rows').replaceChildren();
     for(const row of result.rows){
       const tr=document.createElement('tr');
-      cell(tr,row.month);cell(tr,balanceMoney(row.before));cell(tr,balanceMoney(row.after));cell(tr,balanceMoney(Number(row.after)-Number(row.before)));
+      cell(tr,row.month);cell(tr,balanceTableMoney(row.before));cell(tr,balanceTableMoney(row.after));cell(tr,balanceTableMoney(Number(row.after)-Number(row.before)));
       $('balance-history-preview-rows').append(tr);
     }
     $('balance-history-preview-status').textContent='';

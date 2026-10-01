@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 用户配额</title>
+  <link rel="stylesheet" href="/quota/static/quota.css">
+  <script defer src="/quota/static/quota.js"></script>
+  <script defer src="/quota/static/quota-schedule.js"></script>
+</head>
+<body>
+  <header><div class="brand">{{ site_name }} <span>用户配额</span></div><div class="header-actions"><a href="/statistics/">返回用量统计</a><button id="quota-settings" type="button" aria-label="定时额度设置" title="定时额度设置"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9.5 3 9 5.2l-2 .9-2-.7-2 3.5 1.6 1.5v2.3L3 14.2l2 3.5 2-.7 2 .9.5 2.1h4l.5-2.1 2-.9 2 .7 2-3.5-1.6-1.5v-2.3L20 8.9l-2-3.5-2 .7-2-.9-.5-2.2Z"/><circle cx="11.5" cy="11.5" r="3"/></svg></button></div></header>
+  <main>
+    <div class="intro"><h1>用户配额</h1><p>选择用户后，按现有剩余额度增加或减少。不会覆盖原额度；实际变更由 New API 官方接口完成。</p></div>
+    <section class="toolbar" aria-label="筛选与批量操作">
+      <label>搜索用户或显示名<input id="search" type="search" placeholder="输入关键词" autocomplete="off"></label>
+      <label>操作<select id="mode"><option value="add">增加额度</option><option value="subtract">减少额度</option></select></label>
+      <label>每人金额（元）<input id="amount" type="number" min="0.01" max="1000000000" step="0.01" placeholder="例如 380.00"></label>
+      <button id="preview" type="button">预览变更</button>
+    </section>
+    <section class="group-toolbar" aria-label="按用户组批量选择">
+      <details id="status-picker" class="user-picker">
+        <summary id="status-summary">启用用户</summary>
+        <div class="picker-options" role="group" aria-label="用户状态">
+          <label><input id="status-enabled" type="checkbox" checked autocomplete="off">启用</label>
+          <label><input id="status-disabled" type="checkbox" autocomplete="off">禁用</label>
+        </div>
+      </details>
+      <details id="group-picker" class="user-picker">
+        <summary id="group-summary">选择用户组</summary>
+        <div id="group-options" class="picker-options" role="group" aria-label="用户组"></div>
+      </details>
+      <button id="select-groups" type="button" disabled>选中所选组的用户</button>
+      <button id="deselect-groups" type="button" disabled>取消所选组的用户</button>
+      <button id="clear-selection" type="button">清空已选用户</button>
+      <span class="group-hint">按组选择遵循用户状态筛选，不受搜索框影响；仅改变勾选，不会调整额度。</span>
+    </section>
+    <p id="status" role="status" aria-live="polite">正在读取用户…</p>
+    <p class="hint">已选 <strong id="selected-count">0</strong> 人。减少额度允许产生负余额，请仔细核对。每组最多 5 人并发；本组全部返回后再发下一组。失败时停止后续组，已成功的额度不会自动回滚。</p>
+    <div class="table-wrap"><table><thead><tr><th><input id="select-all" type="checkbox" aria-label="选择当前筛选结果中的全部用户"></th><th>ID</th><th>用户名 / 显示名</th><th>用户组</th><th>状态</th><th>剩余额度（元）</th><th>已用额度（元）</th></tr></thead><tbody id="users"></tbody></table></div>
+  </main>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <h2 id="confirm-title">确认额度变更</h2>
+    <p id="confirm-summary"></p>
+    <p id="execution-progress" role="status" aria-live="polite"></p>
+    <div class="preview-wrap"><table><thead><tr><th>用户</th><th>当前剩余（元）</th><th>预计变更后（元）</th><th>执行结果</th></tr></thead><tbody id="preview-rows"></tbody></table></div>
+    <p class="warning">预览仅供核对；最终按提交时的实际余额增减，不会覆盖余额。确认后请勿重复提交。</p>
+    <div class="dialog-actions"><button id="cancel" type="button">取消</button><button id="apply" type="button">确认执行</button></div>
+  </dialog>
+  <dialog id="quota-settings-dialog" class="schedule-dialog" aria-labelledby="quota-settings-title">
+    <div class="schedule-heading"><h2 id="quota-settings-title">定时额度设置</h2><button id="schedule-close" type="button">关闭</button></div>
+    <div class="schedule-tabs" role="tablist" aria-label="定时额度设置">
+      <button id="schedule-rules-tab" role="tab" aria-selected="true" aria-controls="schedule-rules-panel" type="button">定时额度修改</button>
+      <button id="schedule-runs-tab" role="tab" aria-selected="false" aria-controls="schedule-runs-panel" tabindex="-1" type="button">执行记录</button>
+    </div>
+    <p id="schedule-status" role="status" aria-live="polite"></p>
+    <section id="schedule-rules-panel" role="tabpanel" aria-labelledby="schedule-rules-tab">
+      <p class="hint">北京时间：每天 00:00、每周一 00:00、每月1日 00:00。按执行时组内启用且未删除的用户，每人增加或减少；保存后不立即执行。</p>
+      <div class="schedule-actions"><button id="schedule-new" type="button">新增规则</button><button id="schedule-refresh" type="button">刷新规则和用户组</button></div>
+      <div class="table-wrap"><table class="schedule-table"><thead><tr><th>状态</th><th>用户组</th><th>周期</th><th>操作</th><th>每人金额（元）</th><th>执行管理员</th><th>下次执行（北京时间）</th><th>最近结果</th><th>管理</th></tr></thead><tbody id="schedule-rules"></tbody></table></div>
+      <form id="schedule-form" hidden>
+        <h3 id="schedule-form-title">新增规则</h3>
+        <fieldset><legend>用户组（多选）</legend><div id="schedule-groups" class="schedule-groups"></div></fieldset>
+        <div class="schedule-fields">
+          <label>周期<select id="schedule-period"><option value="daily">每天 00:00</option><option value="weekly">每周一 00:00</option><option value="monthly">每月1日 00:00</option></select></label>
+          <label>操作<select id="schedule-operation"><option value="add">增加额度</option><option value="subtract">减少额度</option></select></label>
+          <label>每位用户金额（元）<input id="schedule-amount" type="number" min="0.01" max="1000000000" step="0.01" required placeholder="例如 100.00"></label>
+          <label class="schedule-enabled"><input id="schedule-enabled" type="checkbox">启用规则</label>
+        </div>
+        <p id="schedule-executor" class="hint"></p>
+        <p class="warning">减少额度允许负余额。不同规则命中同一用户会分别执行，额度累计增减。错过执行窗口不自动补发；结果不明确时不自动重试。</p>
+        <div class="dialog-actions"><button id="schedule-edit-cancel" type="button">取消编辑</button><button id="schedule-save" type="submit">确认保存</button></div>
+      </form>
+    </section>
+    <section id="schedule-runs-panel" role="tabpanel" aria-labelledby="schedule-runs-tab" hidden>
+      <button id="schedule-runs-refresh" type="button">刷新执行记录</button>
+      <div class="table-wrap"><table class="schedule-table"><thead><tr><th>规则ID</th><th>计划时间（北京时间）</th><th>用户组</th><th>操作</th><th>每人金额（元）</th><th>状态</th><th>成功 / 失败 / 不明确 / 未发起</th><th>详情</th></tr></thead><tbody id="schedule-runs"></tbody></table></div>
+      <button id="schedule-runs-more" type="button" hidden>加载更早记录</button>
+    </section>
+  </dialog>
+  <dialog id="schedule-run-dialog" class="schedule-dialog" aria-labelledby="schedule-run-title">
+    <div class="schedule-heading"><h2 id="schedule-run-title">执行详情</h2><button id="schedule-run-close" type="button">关闭</button></div>
+    <p id="schedule-run-summary"></p><p id="schedule-run-status" role="status"></p>
+    <div class="table-wrap"><table class="schedule-table"><thead><tr><th>用户名 / 显示名</th><th>执行时用户组</th><th>操作</th><th>每人金额（元）</th><th>结果</th><th>说明</th></tr></thead><tbody id="schedule-run-items"></tbody></table></div>
+    <button id="schedule-run-more" type="button" hidden>加载更多用户</button>
+  </dialog>
+</body>
+</html>

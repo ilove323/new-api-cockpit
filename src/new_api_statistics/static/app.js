@@ -9,14 +9,19 @@ let detailMode = 'summary';
 let modelMode = 'model';
 let ranking = 'model_amount';
 const tokenFields = ['total_tokens','input_tokens','output_tokens','cache_read_tokens','cache_write_tokens'];
-const detailColumns = ['username','request_count','model_name',...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount'];
+const detailColumns = ['username','request_count','model_name','tier_name',...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount'];
 const modelSummaryColumns = ['group_ratio','input_price','output_price','cache_price','write_price'];
-const columnStorageKey = 'new-api-statistics.visible-columns';
+const columnStorageKey = 'new-api-statistics.visible-columns.v2';
 let modelColumnSelection = null;
 const developerLevel = Number(new URLSearchParams(window.location.search).get('dev')||0);
 const developerMode = developerLevel>=1;
 const failureMode = developerLevel>=2;
 const number = (n, digits=6) => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{maximumFractionDigits:digits});
+// Presentation only: never round the source values used by calculations or tooltips.
+const tableMoney = n => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+function priceDisplay(row,key){
+  return !row.pricing_buckets&&row.pricing_mode==='expression'&&!row.price_tiers?.length?'无法拆分':tableMoney(row[key]);
+}
 const cell = (tr, value, cls='', column='') => {const td=document.createElement('td');td.textContent=value;td.className=cls;if(column)td.dataset.column=column;tr.append(td);return td;};
 const userCell = (tr,row) => {
   const td=cell(tr,row.username,'username','username');
@@ -57,7 +62,7 @@ function saveVisibleColumns(){
 }
 function applyColumnVisibility(){
   const visible=visibleColumns();
-  const hiddenByMode=new Set(modelMode==='summary'?['model_name',...modelSummaryColumns]:[]);
+  const hiddenByMode=new Set(modelMode==='summary'?['model_name','tier_name',...modelSummaryColumns]:[]);
   document.querySelectorAll('#usage-table [data-column]').forEach(element=>{
     if(detailColumns.includes(element.dataset.column))element.hidden=!visible.has(element.dataset.column)||hiddenByMode.has(element.dataset.column);
   });
@@ -67,7 +72,13 @@ function applyColumnVisibility(){
 }
 function loadVisibleColumns(){
   let saved;
-  try{saved=JSON.parse(localStorage.getItem(columnStorageKey));}catch{}
+  try{
+    saved=JSON.parse(localStorage.getItem(columnStorageKey));
+    if(!Array.isArray(saved)){
+      saved=JSON.parse(localStorage.getItem('new-api-statistics.visible-columns'));
+      if(Array.isArray(saved))saved=[...saved,'tier_name'];
+    }
+  }catch{}
   if(!Array.isArray(saved)||!saved.length)return;
   document.querySelectorAll('[data-column-toggle]').forEach(input=>input.checked=saved.includes(input.dataset.columnToggle));
 }
@@ -138,7 +149,7 @@ function developerCells(tr,row){
   const read=Number(row.cache_read_tokens),denominator=Number(row.input_tokens)+read;
   cell(tr,denominator>0?number(read/denominator*100,2)+'%':'—','','cache_hit_rate');
   const tokens=Number(row.total_tokens);
-  cell(tr,tokens>0?number(Number(row.amount)/tokens*1000000,6):'—','','amount_per_million');
+  cell(tr,tokens>0?tableMoney(Number(row.amount)/tokens*1000000):'—','','amount_per_million');
 }
 function failureCell(tr,row){
   if(!failureMode)return;
@@ -175,19 +186,20 @@ function renderDetails() {
       userCell(tr,r).rowSpan=end-i;
     }
     if(detailMode==='token')cell(tr,r.token_name||'未知令牌','token-name');
-    cell(tr,number(r.request_count,0),'','request_count');cell(tr,r.model_name,'model','model_name');
+    cell(tr,number(r.request_count,0),'','request_count');cell(tr,r.model_name,'model','model_name');cell(tr,r.tier_name||'-','','tier_name');
     for(const key of [...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount']){
-      const td=cell(tr,number(r[key],tokenFields.includes(key)?0:6),'',key);
+      const price=['input_price','output_price','cache_price','write_price'].includes(key);
+      const td=cell(tr,price?priceDisplay(r,key):key==='amount'?tableMoney(r[key]):number(r[key],tokenFields.includes(key)?0:6),price?'price-breakdown':'',key);
       if(key==='amount')bindMoneyTooltip(td,()=>modelMode==='summary'?totalMoneyFormula(r._sourceRows,r.amount):rowMoneyFormula(r));
     }
     developerCells(tr,r);
     failureCell(tr,r);
     $('rows').append(tr);
   }
-  if(!data.length){const hidden=modelMode==='summary'?new Set(['model_name',...modelSummaryColumns]):new Set(),tr=document.createElement('tr');cell(tr,'该时间范围内暂无消费或失败请求','empty').colSpan=[...visibleColumns()].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0)+(developerMode?2:0)+(failureMode?1:0);$('rows').append(tr);}
-  const tr=document.createElement('tr');cell(tr,'总计','','username');if(detailMode==='token')cell(tr,'','token-name');cell(tr,number(total.request_count,0),'','request_count');cell(tr,'','','model_name');tokenFields.forEach(k=>cell(tr,number(total[k],0),'',k));
+  if(!data.length){const hidden=modelMode==='summary'?new Set(['model_name','tier_name',...modelSummaryColumns]):new Set(),tr=document.createElement('tr');cell(tr,'该时间范围内暂无消费或失败请求','empty').colSpan=[...visibleColumns()].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0)+(developerMode?2:0)+(failureMode?1:0);$('rows').append(tr);}
+  const tr=document.createElement('tr');cell(tr,'总计','','username');if(detailMode==='token')cell(tr,'','token-name');cell(tr,number(total.request_count,0),'','request_count');cell(tr,'','','model_name');cell(tr,'','','tier_name');tokenFields.forEach(k=>cell(tr,number(total[k],0),'',k));
   for(const key of ['group_ratio','input_price','output_price','cache_price','write_price'])cell(tr,'','',key);
-  bindMoneyTooltip(cell(tr,number(total.amount),'','amount'),()=>totalMoneyFormula(data,total.amount));
+  bindMoneyTooltip(cell(tr,tableMoney(total.amount),'','amount'),()=>totalMoneyFormula(data,total.amount));
   developerCells(tr,total);
   failureCell(tr,total);
   $('totals').append(tr);
@@ -214,7 +226,9 @@ function updateReportStatus(){
   const label=modelMode==='summary'?(detailMode==='token'?'用户令牌汇总':'用户汇总'):(detailMode==='token'?'用户令牌模型汇总':'用户模型汇总');
   $('status').className='';
   $('status').textContent=`${snapshot.start.replace('T',' ')} 至 ${snapshot.end.replace('T',' ')} · ${rows.length} 条${label}`;
-  if(modelMode==='model'&&snapshot.rows.some(r=>['input_price','output_price','cache_price','write_price'].some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
+  if(modelMode==='model'&&snapshot.rows.some(r=>r.pricing_buckets&&r.input_price===null))$('status').textContent+=' · 部分请求的历史价格无法还原，显示为 —';
+  else if(modelMode==='model'&&snapshot.rows.some(r=>!r.pricing_buckets&&r.pricing_mode==='expression'&&!r.price_tiers?.length))$('status').textContent+=' · 部分表达式无法拆分价格';
+  else if(modelMode==='model'&&snapshot.rows.some(r=>!r.pricing_buckets&&r.pricing_mode!=='expression'&&['input_price','output_price','cache_price','write_price'].some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
 }
 async function loadTokenDetails(){
   const ticket=Scope.epoch;

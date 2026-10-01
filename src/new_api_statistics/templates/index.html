@@ -15,7 +15,7 @@
 </head>
 <body>
   <header><span class="brand">{{ site_name }} <span>用量统计</span></span>
-    <div class="header-actions"><span id="updated">北京时间</span>
+    <div class="header-actions"><a class="quota-nav" href="/quota/">用户配额</a><span id="updated">北京时间</span>
       <button id="balance-bell" class="icon-button" type="button" title="余额警报" aria-label="余额警报">
         <img src="{{ url_for('static', filename='bell.svg') }}" alt="" width="20" height="20">
       </button>
@@ -82,6 +82,7 @@
         <label><input type="checkbox" data-column-toggle="username" checked>用户名</label>
         <label><input type="checkbox" data-column-toggle="request_count" checked>消费请求数</label>
         <label><input type="checkbox" data-column-toggle="model_name" checked>模型</label>
+        <label><input type="checkbox" data-column-toggle="tier_name" checked>档位</label>
         <label><input type="checkbox" data-column-toggle="total_tokens" checked>总 Token</label>
         <label><input type="checkbox" data-column-toggle="input_tokens" checked>输入 Token</label>
         <label><input type="checkbox" data-column-toggle="output_tokens" checked>输出 Token</label>
@@ -97,7 +98,7 @@
       </div></details>
     </div></div>
       <div class="table-wrap" tabindex="0" aria-label="用户模型用量表，可横向滚动">
-        <table id="usage-table"><thead><tr><th data-column="username">用户名</th><th data-token-column hidden>令牌</th><th data-column="request_count">消费请求数</th><th data-column="model_name">模型</th><th data-column="total_tokens">总 Token</th><th data-column="input_tokens">输入 Token</th><th data-column="output_tokens">输出 Token</th><th data-column="cache_read_tokens">缓存读取 Token</th><th data-column="cache_write_tokens">缓存写入 Token</th><th data-column="group_ratio">倍率</th><th data-column="input_price">输入价格</th><th data-column="output_price">输出价格</th><th data-column="cache_price">缓存读价格</th><th data-column="write_price">缓存写价格</th><th data-column="amount">消费金额</th></tr></thead><tbody id="rows"></tbody><tfoot id="totals"></tfoot></table>
+        <table id="usage-table"><thead><tr><th data-column="username">用户名</th><th data-token-column hidden>令牌</th><th data-column="request_count">消费请求数</th><th data-column="model_name">模型</th><th data-column="tier_name">档位</th><th data-column="total_tokens">总 Token</th><th data-column="input_tokens">输入 Token</th><th data-column="output_tokens">输出 Token</th><th data-column="cache_read_tokens">缓存读取 Token</th><th data-column="cache_write_tokens">缓存写入 Token</th><th data-column="group_ratio">倍率</th><th data-column="input_price">输入价格</th><th data-column="output_price">输出价格</th><th data-column="cache_price">缓存读价格</th><th data-column="write_price">缓存写价格</th><th data-column="amount">消费金额</th></tr></thead><tbody id="rows"></tbody><tfoot id="totals"></tfoot></table>
       </div>
     </section>
   </main>

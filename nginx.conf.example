@@ -1,9 +1,21 @@
 # Include inside the existing HTTPS server used by New API.
 # Keep the /statistics prefix when forwarding to Flask.
 location = /statistics {
-    return 302 /statistics/;
+    absolute_redirect off;
+    return 302 /statistics/$is_args$args;
 }
 location ^~ /statistics/ {
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 90s;
+}
+location = /quota {
+    absolute_redirect off;
+    return 302 /quota/$is_args$args;
+}
+location ^~ /quota/ {
     proxy_pass http://127.0.0.1:8091;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;

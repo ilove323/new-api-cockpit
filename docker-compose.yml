@@ -39,6 +39,24 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+  quota-worker:
+    image: new-api-statistics:local
+    command: [python, -m, new_api_statistics.quota_worker]
+    profiles: [quota-schedules]
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      statistics:
+        condition: service_healthy
+    networks:
+      - new-api
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
 networks:
   new-api:
     external: true

@@ -11,3 +11,7 @@ td.username,td.model,td.token-name,th:first-child,th[data-column=model_name],th[
 .scope-tabs{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid #dde4e0;padding-bottom:12px;margin-bottom:12px}
 .scope-tabs button[aria-selected=true]{background:#156b59;color:#fff;border-color:#156b59}
 #scope-status{color:#64716b;font-size:12px}.usage-channel-options .channel-row{display:flex;gap:8px;align-items:center;padding:6px 0}
+
+.price-breakdown{white-space:pre-line;line-height:1.5}
+td[data-column="tier_name"],th[data-column="tier_name"]{text-align:left}
+.quota-nav{color:#156b59;text-decoration:none;font-weight:650;padding:7px 10px;border:1px solid #cbd5cf;border-radius:5px;background:#fff}.quota-nav:hover{background:#eaf4ef}

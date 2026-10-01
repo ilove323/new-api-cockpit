@@ -8,12 +8,22 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 
-from flask import Flask, g, jsonify, render_template, request, send_file
+from flask import (
+    Flask,
+    g,
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    send_from_directory,
+)
 from flask.json.provider import DefaultJSONProvider
 import psycopg
 from new_api_statistics import balance
 from new_api_statistics import scopes as scope_backend
 from new_api_statistics import notifications
+from new_api_statistics import quota as quota_backend
+from new_api_statistics import quota_schedule
 
 from new_api_statistics.report import (
     TZ,
@@ -110,6 +120,121 @@ def index():
         ),
         end=now.strftime("%Y-%m-%dT%H:%M:%S"),
     )
+
+
+@app.get("/quota")
+@app.get("/quota/")
+def quota_page():
+    return render_template("quota.html", site_name=load_site_name())
+
+
+@app.get("/quota/static/<path:filename>")
+def quota_static(filename):
+    if filename not in {"quota.css", "quota.js", "quota-schedule.js"}:
+        return "Not Found", 404
+    return send_from_directory(app.static_folder, filename)
+
+
+@app.get("/quota/api/users")
+def quota_users():
+    return jsonify(rows=quota_backend.list_users())
+
+
+@app.post("/quota/api/preview")
+def quota_preview():
+    if request.headers.get("X-Quota-Action") != "preview":
+        return jsonify(error="请求来源无效。"), 403
+    return jsonify(
+        quota_backend.preview(
+            request.authorization.username, request.get_json(silent=True)
+        )
+    )
+
+
+@app.post("/quota/api/apply")
+def quota_apply():
+    if request.headers.get("X-Quota-Action") != "confirm":
+        return jsonify(error="请先确认额度调整。"), 403
+    return jsonify(
+        quota_backend.apply(
+            request.authorization.username, request.get_json(silent=True)
+        )
+    )
+
+
+def quota_schedule_write_allowed():
+    return (
+        request.headers.get("X-Quota-Action") == "schedule"
+        and request.is_json
+        and request.headers.get("Sec-Fetch-Site") != "cross-site"
+    )
+
+
+@app.get("/quota/api/schedules")
+def quota_schedules_list():
+    return jsonify(quota_schedule.list_rules(request.authorization.username))
+
+
+@app.post("/quota/api/schedules")
+def quota_schedule_create():
+    if not quota_schedule_write_allowed():
+        return jsonify(error="不允许的定时规则请求。"), 403
+    return jsonify(
+        quota_schedule.save_rule(
+            request.authorization.username, request.get_json(silent=True)
+        )
+    ), 201
+
+
+@app.route("/quota/api/schedules/<int:rule_id>", methods=["PUT", "PATCH", "DELETE"])
+def quota_schedule_change(rule_id):
+    if not quota_schedule_write_allowed():
+        return jsonify(error="不允许的定时规则请求。"), 403
+    body = request.get_json(silent=True)
+    if request.method == "DELETE":
+        quota_schedule.delete_rule(request.authorization.username, rule_id, body)
+        return jsonify(deleted=True)
+    if request.method == "PATCH":
+        return jsonify(
+            quota_schedule.set_enabled(request.authorization.username, rule_id, body)
+        )
+    return jsonify(
+        quota_schedule.save_rule(request.authorization.username, body, rule_id)
+    )
+
+
+@app.get("/quota/api/schedule-runs")
+def quota_schedule_runs():
+    before = request.args.get("before")
+    try:
+        before = int(before) if before is not None else None
+    except ValueError:
+        raise ValueError("执行记录分页参数无效。") from None
+    return jsonify(quota_schedule.list_runs(before))
+
+
+@app.get("/quota/api/schedule-runs/<int:run_id>")
+def quota_schedule_run_detail(run_id):
+    try:
+        after = int(request.args.get("after", "0"))
+    except ValueError:
+        raise ValueError("用户记录分页参数无效。") from None
+    return jsonify(quota_schedule.run_detail(run_id, after))
+
+
+@app.errorhandler(quota_schedule.ScheduleConflict)
+def quota_schedule_conflict(exc):
+    return jsonify(error=str(exc)), 409
+
+
+@app.errorhandler(quota_schedule.ScheduleForbidden)
+def quota_schedule_forbidden(exc):
+    return jsonify(error=str(exc)), 403
+
+
+@app.errorhandler(quota_schedule.ScheduleUnavailable)
+def quota_schedule_unavailable(exc):
+    return jsonify(error=str(exc)), 503
 
 
 def scope_context():
@@ -473,6 +598,11 @@ def database_error(exc):
     if isinstance(exc, psycopg.errors.QueryCanceled):
         return jsonify(error="查询超过 60 秒，请缩小时间范围后重试。"), 504
     return jsonify(error="数据库查询失败，请检查连接配置与数据库日志。"), 503
+
+
+@app.errorhandler(quota_backend.QuotaError)
+def quota_error(exc):
+    return jsonify(error=str(exc)), 400
 
 
 if __name__ == "__main__":
