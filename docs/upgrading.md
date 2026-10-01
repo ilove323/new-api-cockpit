@@ -1,5 +1,14 @@
 # 升级与备份
 
+## 未发布：定时用户配额
+
+新增 `007_quota_schedules.sql`，使用现有监控库增量创建四张定时配额表。
+无需清空数据库，也不修改 New API 数据库结构。网页与 `quota-worker` 必须使用包含本功能的同版镜像。
+`quota-worker` 为可选服务，需要显式启用 `quota-schedules` profile；未启用时只保存规则，不会执行增减。
+具体步骤、管理员 PAT 与不自动补发/重试的边界见[用户配额](quota.md#定时额度修改)。
+
+## 通用升级与备份步骤
+
 升级前记录应用版本或镜像 digest，并分别备份 New API 数据库、监控数据库、
 部署 .env 以及 NOTIFICATION_ENCRYPTION_KEY。备份应存放在仓库外。
 

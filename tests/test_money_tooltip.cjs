@@ -43,4 +43,6 @@ test('historical-price tooltip displays one tier and separate ratio calculations
   assert.equal(rows.filter(line => line.startsWith('当前倍率 ')).length, 1);
   assert.equal(rows.filter(line => line.startsWith('历史倍率 ')).length, 1);
   assert(rows.some(line => line.includes('实际消费金额')));
+  assert(rows.some(line => line.includes('实际消费金额：¥ 0.00048')));
+  assert(rows.some(line => line.includes('试算合计：¥ 0.00048028')));
 });

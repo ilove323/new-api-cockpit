@@ -25,6 +25,8 @@
 
 程序通过 `schema_migrations` 自动顺序执行未应用的迁移。`005_balance_scopes.sql`
 增加账本和逐账本设置；`006_scope_visibility.sql` 增加标签可见性状态。
+`007_quota_schedules.sql` 为可选的[定时用户配额](quota.md#定时额度修改)增加四张规则及执行记录表，
+与余额检查分开运行，不改变余额归档或每天 10:00 的告警时间。
 首次同步渠道标签后建立账本；查询历史账本金额时使用保存的逐渠道费用与当前渠道归属。
 无需清空数据库。上线前备份监控库，勿把迁移 SQL 执行到 New API 原库。
 
@@ -78,7 +80,7 @@ docker compose logs --tail=50 balance-worker
 
 首次启动后，应用会自动创建监控表。可使用 PostgreSQL 管理员验证，正常应能看到
 `balance_*`、`notification_settings`、`notification_feishu_settings` 和
-`notification_dingtalk_webhook_settings` 等表：
+`notification_dingtalk_webhook_settings` 等表；应用 `007` 后还会出现四张 `quota_schedule_*` 表：
 
 ```bash
 docker exec <PostgreSQL容器名> sh -lc \

@@ -12,7 +12,12 @@ from .expression_prices import extract_prices
 
 
 PRICE_FIELDS = ("input_price", "output_price", "cache_price", "write_price")
-USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+)
 
 
 def number(value):
@@ -69,20 +74,21 @@ def price_key(prices):
 
 def matching_current_price(prices, candidates, usage):
     """Match only unique tariffs; unused cache categories may be unspecified."""
-    if prices is None or prices["input_price"] is None or prices["output_price"] is None:
+    if (
+        prices is None
+        or prices["input_price"] is None
+        or prices["output_price"] is None
+    ):
         return None
     matches = []
     for candidate in candidates:
-        if any(
-            prices[field] != candidate.get(field)
-            for field in PRICE_FIELDS[:2]
-        ):
+        if any(prices[field] != candidate.get(field) for field in PRICE_FIELDS[:2]):
             continue
         for field, token in zip(PRICE_FIELDS[2:], USAGE_FIELDS[2:]):
             historical, current = prices[field], candidate.get(field)
             if historical != current and (
-                int(usage.get(token, 0)) > 0 or
-                (historical is not None and current is not None)
+                int(usage.get(token, 0)) > 0
+                or (historical is not None and current is not None)
             ):
                 break
         else:

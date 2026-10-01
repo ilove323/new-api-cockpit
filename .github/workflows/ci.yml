@@ -50,6 +50,7 @@ jobs:
       - run: python tests/check_balance_database.py
       - run: python tests/check_migrations.py
       - run: for file in src/new_api_statistics/static/*.js; do node --check "$file"; done
+      - run: node --test tests/*.cjs
       - run: python -m build
 
   container:

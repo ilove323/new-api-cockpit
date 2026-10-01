@@ -34,7 +34,9 @@ class FakeConn:
 
 class QuotaTest(unittest.TestCase):
     def setUp(self):
-        self.operator = dict(id=1, username="admin", role=100, status=1, access_token="secret-pat")
+        self.operator = dict(
+            id=1, username="admin", role=100, status=1, access_token="secret-pat"
+        )
         self.targets = [
             dict(id=2, username="alice", role=1, quota=580000),
             dict(id=3, username="bob", role=1, quota=1160000),
@@ -44,9 +46,12 @@ class QuotaTest(unittest.TestCase):
     def test_validate_only_increment_or_decrement_and_exact_units(self):
         self.assertEqual(quota.validate_request(self.body)[2], 190000000)
         for change in (
-            dict(mode="override"), dict(amount_yuan="0"),
-            dict(amount_yuan="0.000001"), dict(user_ids=[2, 2]),
-            dict(user_ids=[True]), dict(user_ids=[]),
+            dict(mode="override"),
+            dict(amount_yuan="0"),
+            dict(amount_yuan="0.000001"),
+            dict(user_ids=[2, 2]),
+            dict(user_ids=[True]),
+            dict(user_ids=[]),
         ):
             with self.subTest(change=change), self.assertRaises(quota.QuotaError):
                 quota.validate_request({**self.body, **change})
@@ -59,8 +64,10 @@ class QuotaTest(unittest.TestCase):
         self.assertEqual(quota.validate_request(body)[0], ids)
         with patch.object(quota, "connect", return_value=conn):
             self.assertEqual(len(quota.preview("admin", body)["users"]), 201)
-        with (patch.object(quota, "connect", return_value=conn),
-              patch.object(quota, "_call_manage") as call):
+        with (
+            patch.object(quota, "connect", return_value=conn),
+            patch.object(quota, "_call_manage") as call,
+        ):
             result = quota.apply("admin", body)
         self.assertTrue(result["completed"])
         self.assertEqual(call.call_count, 201)
@@ -72,25 +79,43 @@ class QuotaTest(unittest.TestCase):
             result = quota.preview("admin", self.body)
         self.assertEqual(result["users"][0]["before_yuan"], "1.16")
         self.assertEqual(result["users"][0]["estimated_after_yuan"], "381.16")
-        self.assertTrue(all("SELECT" in query and "UPDATE" not in query for query, _ in conn.sql))
+        self.assertTrue(
+            all("SELECT" in query and "UPDATE" not in query for query, _ in conn.sql)
+        )
 
     def test_user_list_includes_new_api_group(self):
-        conn = FakeConn({"targets": [
-            dict(id=2, username="alice", display_name="Alice", user_group="team-a",
-                 role=1, status=1, quota=580000, used_quota=500000),
-        ]})
+        conn = FakeConn(
+            {
+                "targets": [
+                    dict(
+                        id=2,
+                        username="alice",
+                        display_name="Alice",
+                        user_group="team-a",
+                        role=1,
+                        status=1,
+                        quota=580000,
+                        used_quota=500000,
+                    ),
+                ]
+            }
+        )
         with patch.object(quota, "connect", return_value=conn):
             rows = quota.list_users()
         self.assertEqual(rows[0]["user_group"], "team-a")
-        self.assertIn('COALESCE("group",\'\') AS user_group', conn.sql[0][0])
+        self.assertIn("COALESCE(\"group\",'') AS user_group", conn.sql[0][0])
 
     def test_apply_calls_new_api_atomic_add_and_stops_after_failure(self):
         conn = FakeConn({"operator": self.operator, "targets": self.targets})
+
         def mutate(_operator, user_id, _mode, _units):
             if user_id == 3:
                 raise quota.QuotaError("失败")
-        with (patch.object(quota, "connect", return_value=conn),
-              patch.object(quota, "_call_manage", side_effect=mutate) as call):
+
+        with (
+            patch.object(quota, "connect", return_value=conn),
+            patch.object(quota, "_call_manage", side_effect=mutate) as call,
+        ):
             result = quota.apply("admin", self.body)
         self.assertFalse(result["completed"])
         self.assertEqual([row["ok"] for row in result["results"]], [True, False])
@@ -106,6 +131,7 @@ class QuotaTest(unittest.TestCase):
         barrier = threading.Barrier(5)
         active = maximum = 0
         finished = []
+
         def mutate(_operator, user_id, _mode, _units):
             nonlocal active, maximum
             with lock:
@@ -120,8 +146,11 @@ class QuotaTest(unittest.TestCase):
             with lock:
                 active -= 1
                 finished.append(user_id)
-        with (patch.object(quota, "connect", return_value=conn),
-              patch.object(quota, "_call_manage", side_effect=mutate) as call):
+
+        with (
+            patch.object(quota, "connect", return_value=conn),
+            patch.object(quota, "_call_manage", side_effect=mutate) as call,
+        ):
             result = quota.apply("admin", {**self.body, "user_ids": ids})
         self.assertTrue(result["completed"])
         self.assertEqual(maximum, 5)
@@ -132,11 +161,15 @@ class QuotaTest(unittest.TestCase):
         ids = list(range(2, 13))
         targets = [dict(id=i, username=str(i), role=1, quota=1) for i in ids]
         conn = FakeConn({"operator": self.operator, "targets": targets})
+
         def mutate(_operator, user_id, _mode, _units):
             if user_id == 3:
                 raise quota.QuotaError("失败")
-        with (patch.object(quota, "connect", return_value=conn),
-              patch.object(quota, "_call_manage", side_effect=mutate) as call):
+
+        with (
+            patch.object(quota, "connect", return_value=conn),
+            patch.object(quota, "_call_manage", side_effect=mutate) as call,
+        ):
             result = quota.apply("admin", {**self.body, "user_ids": ids})
         self.assertFalse(result["completed"])
         self.assertEqual(call.call_count, 5)
@@ -155,27 +188,47 @@ class QuotaTest(unittest.TestCase):
             def read(self):
                 return b'{"success":true}'
 
-        with patch.object(quota.urllib.request, "urlopen", return_value=Response()) as urlopen:
+        with patch.object(
+            quota.urllib.request, "urlopen", return_value=Response()
+        ) as urlopen:
             quota._call_manage(self.operator, 2, "subtract", 500000)
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_method(), "POST")
-        self.assertEqual(json.loads(request.data),
-                         {"id": 2, "action": "add_quota", "mode": "subtract", "value": 500000})
+        self.assertEqual(
+            json.loads(request.data),
+            {"id": 2, "action": "add_quota", "mode": "subtract", "value": 500000},
+        )
         self.assertEqual(request.get_header("Authorization"), "Bearer secret-pat")
 
     def test_page_auth_and_mutation_header(self):
         client = app.test_client()
         self.assertEqual(client.get("/quota/").status_code, 401)
-        with (patch("new_api_statistics.app.verify_admin", return_value=True),
-              patch("new_api_statistics.app.load_site_name", return_value="Test"),
-              patch.object(quota, "preview", return_value={"users": []}) as preview):
-            self.assertEqual(client.get("/quota/", auth=("admin", "password")).status_code, 200)
-            self.assertIn("用户组", client.get("/quota/", auth=("admin", "password")).get_data(as_text=True))
-            self.assertEqual(client.post("/quota/api/preview", json=self.body,
-                                         auth=("admin", "password")).status_code, 403)
-            response = client.post("/quota/api/preview", json=self.body,
-                                   headers={"X-Quota-Action": "preview"},
-                                   auth=("admin", "password"))
+        with (
+            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_statistics.app.load_site_name", return_value="Test"),
+            patch.object(quota, "preview", return_value={"users": []}) as preview,
+        ):
+            self.assertEqual(
+                client.get("/quota/", auth=("admin", "password")).status_code, 200
+            )
+            self.assertIn(
+                "用户组",
+                client.get("/quota/", auth=("admin", "password")).get_data(
+                    as_text=True
+                ),
+            )
+            self.assertEqual(
+                client.post(
+                    "/quota/api/preview", json=self.body, auth=("admin", "password")
+                ).status_code,
+                403,
+            )
+            response = client.post(
+                "/quota/api/preview",
+                json=self.body,
+                headers={"X-Quota-Action": "preview"},
+                auth=("admin", "password"),
+            )
             self.assertEqual(response.status_code, 200)
             preview.assert_called_once()
 

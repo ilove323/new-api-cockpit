@@ -128,6 +128,27 @@ test('disabling and saving monitor retains selected ledger and all navigation',a
   assert.equal(h.elements.get('balance-gear').disabled,false);
   await h.elements.get('balance-bell').fire('click');
   assert.ok(!h.calls.some(c=>c.url.includes('/check')));
+  assert.equal(h.elements.get('balance-months').children[0].children[1].textContent,'¥ 60.00');
+});
+test('monthly archive tables format money without changing source values or non-table formatter',()=>{
+  const h=harness();h.balance();
+  h.run(`balanceData=${JSON.stringify({...state(),months:[{month:'2026-08',amount:1234.567891},{month:'2026-07',amount:0.0049}]})};renderBalance()`);
+  const rows=h.elements.get('balance-months').children;
+  assert.equal(rows[0].children[1].textContent,'¥ 1,234.57');
+  assert.equal(rows[1].children[1].textContent,'¥ 0.00');
+  assert.equal(h.run('balanceData.months[0].amount'),1234.567891);
+  assert.equal(h.run('balanceMoney(1234.567891)'),'¥ 1234.567891');
+});
+test('history comparison table formats before, after and difference without rounding preview data',async()=>{
+  const h=harness();h.balance();await h.scope.init();await settle();
+  const row={month:'2026-08',before:1234.567891,after:1240.123456};
+  h.ctx.confirm=()=>true;
+  h.ctx.fetch=async()=>({ok:true,json:async()=>({rows:[row]})});
+  await h.elements.get('balance-recalculate').fire('click');
+  const cells=h.elements.get('balance-history-preview-rows').children[0].children;
+  assert.deepEqual(cells.map(c=>c.textContent),['2026-08','¥ 1,234.57','¥ 1,240.12','¥ 5.56']);
+  assert.equal(h.run('historyPreview.rows[0].before'),row.before);
+  assert.equal(h.run('historyPreview.rows[0].after'),row.after);
 });
 test('delayed old balance read cannot overwrite new ledger monthly data',async()=>{
   const h=harness();h.balance();await h.scope.init();await settle();

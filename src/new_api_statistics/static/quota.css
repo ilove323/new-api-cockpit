@@ -27,3 +27,20 @@
 .preview-wrap td:nth-child(2),.preview-wrap th:nth-child(2),.preview-wrap td:nth-child(3),.preview-wrap th:nth-child(3){text-align:right;font-variant-numeric:tabular-nums}
 .preview-wrap td:last-child,.preview-wrap th:last-child{text-align:left;white-space:normal}
 @media(max-width:700px){.group-toolbar details{width:100%}.group-hint{width:100%}}
+
+.header-actions,.schedule-heading,.schedule-actions,.schedule-tabs{display:flex;align-items:center;gap:12px}
+.schedule-heading{justify-content:space-between}.schedule-heading h2{margin:0}
+#quota-settings{display:flex;align-items:center;justify-content:center;padding:8px;min-width:38px}
+.schedule-dialog{max-width:min(1180px,96vw);max-height:90vh;overflow:auto}
+.schedule-tabs{margin:18px 0 10px;border-bottom:1px solid #d8e1dc;padding-bottom:10px}
+.schedule-tabs [aria-selected=true],#schedule-save{background:#156b59;color:white;border-color:#156b59}
+.schedule-actions{margin-bottom:12px}.schedule-table{min-width:840px}
+.schedule-table th,.schedule-table td{text-align:left;font-variant-numeric:tabular-nums}
+.schedule-table button{margin:2px;font-size:12px;white-space:nowrap}
+#schedule-form{margin-top:20px;border-top:1px solid #d8e1dc;padding-top:10px}
+.schedule-groups{display:flex;flex-wrap:wrap;gap:12px}.schedule-groups label,.schedule-enabled{display:flex;align-items:center;gap:6px}
+.schedule-fields{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px}
+.schedule-fields>label:not(.schedule-enabled){display:grid;gap:6px}
+.schedule-fields input[type=number]{max-width:200px}.schedule-danger{color:#af3535}
+#schedule-runs-panel .table-wrap{margin-top:12px}
+#schedule-status,#schedule-run-status{min-height:20px}

@@ -25,6 +25,10 @@ class QuotaError(ValueError):
     pass
 
 
+class QuotaRequestUncertain(QuotaError):
+    """A sent mutation may have committed; never automatically retry it."""
+
+
 def connect():
     return psycopg.connect(
         connect_timeout=8,
@@ -63,7 +67,9 @@ def validate_request(body):
     ids = body.get("user_ids")
     if not isinstance(ids, list) or not ids:
         raise QuotaError("请至少选择一个用户。")
-    if any(type(value) is not int or value <= 0 for value in ids) or len(set(ids)) != len(ids):
+    if any(type(value) is not int or value <= 0 for value in ids) or len(
+        set(ids)
+    ) != len(ids):
         raise QuotaError("用户 ID 必须是互不重复的正整数。")
     mode = body.get("mode")
     if mode not in ("add", "subtract"):
@@ -73,7 +79,12 @@ def validate_request(body):
     except (InvalidOperation, ValueError):
         raise QuotaError("请输入有效金额。") from None
     units = amount * QUOTA_PER_YUAN
-    if not amount.is_finite() or amount <= 0 or amount > MAX_AMOUNT or units != units.to_integral_value():
+    if (
+        not amount.is_finite()
+        or amount <= 0
+        or amount > MAX_AMOUNT
+        or units != units.to_integral_value()
+    ):
         raise QuotaError("金额必须大于 0、最多十亿元，且能精确换算为整数额度单位。")
     return ids, mode, int(units), amount
 
@@ -151,11 +162,19 @@ def _call_manage(operator, user_id, mode, units):
         with urllib.request.urlopen(request, timeout=15) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
-        raise QuotaError(f"New API 返回 HTTP {exc.code}；该用户的操作结果需人工核对。") from None
+        raise QuotaRequestUncertain(
+            f"New API 返回 HTTP {exc.code}；该用户的操作结果需人工核对。"
+        ) from None
     except (urllib.error.URLError, TimeoutError, ValueError):
-        raise QuotaError("New API 请求结果不明确；不要重试该用户，先核对实际额度和审计日志。") from None
-    if not isinstance(result, dict) or not result.get("success"):
-        message = result.get("message", "未知错误") if isinstance(result, dict) else "无效响应"
+        raise QuotaRequestUncertain(
+            "New API 请求结果不明确；不要重试该用户，先核对实际额度和审计日志。"
+        ) from None
+    if not isinstance(result, dict) or type(result.get("success")) is not bool:
+        raise QuotaRequestUncertain(
+            "New API 响应无效，操作结果不明确，请先核对额度和审计日志。"
+        )
+    if not result["success"]:
+        message = result.get("message", "未知错误")
         raise QuotaError(f"New API 拒绝了调整：{str(message)[:180]}")
 
 
@@ -164,23 +183,35 @@ def apply(username, body):
     with connect() as conn:
         operator = _operator(conn, username)
         targets = _targets(conn, ids, operator)
+
     def attempt(user_id):
         try:
             _call_manage(operator, user_id, mode, units)
         except QuotaError as exc:
-            return {"id": user_id, "username": targets[user_id]["username"], "ok": False, "message": str(exc)}
+            return {
+                "id": user_id,
+                "username": targets[user_id]["username"],
+                "ok": False,
+                "message": str(exc),
+            }
         except Exception as exc:
             # Do not leak request credentials or imply that a failed response
             # means the upstream mutation did not happen.
-            logging.getLogger(__name__).error("Quota request error for user %s (%s)", user_id, type(exc).__name__)
-            return {"id": user_id, "username": targets[user_id]["username"], "ok": False,
-                    "message": "请求结果不明确，请先核对实际额度和审计日志，不要直接重试。"}
+            logging.getLogger(__name__).error(
+                "Quota request error for user %s (%s)", user_id, type(exc).__name__
+            )
+            return {
+                "id": user_id,
+                "username": targets[user_id]["username"],
+                "ok": False,
+                "message": "请求结果不明确，请先核对实际额度和审计日志，不要直接重试。",
+            }
         return {"id": user_id, "username": targets[user_id]["username"], "ok": True}
 
     results = []
     with ThreadPoolExecutor(max_workers=CONCURRENT_REQUESTS) as pool:
         for offset in range(0, len(ids), CONCURRENT_REQUESTS):
-            wave = list(pool.map(attempt, ids[offset:offset + CONCURRENT_REQUESTS]))
+            wave = list(pool.map(attempt, ids[offset : offset + CONCURRENT_REQUESTS]))
             results.extend(wave)
             if any(not row["ok"] for row in wave):
                 break  # Account for all in-flight requests, but never start another wave.
@@ -189,5 +220,5 @@ def apply(username, body):
         "amount_yuan": str(amount),
         "results": results,
         "completed": len(results) == len(ids) and all(row["ok"] for row in results),
-        "remaining_user_ids": ids[len(results):],
+        "remaining_user_ids": ids[len(results) :],
     }

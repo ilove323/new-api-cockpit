@@ -17,8 +17,10 @@ const developerLevel = Number(new URLSearchParams(window.location.search).get('d
 const developerMode = developerLevel>=1;
 const failureMode = developerLevel>=2;
 const number = (n, digits=6) => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{maximumFractionDigits:digits});
+// Presentation only: never round the source values used by calculations or tooltips.
+const tableMoney = n => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 function priceDisplay(row,key){
-  return !row.pricing_buckets&&row.pricing_mode==='expression'&&!row.price_tiers?.length?'无法拆分':number(row[key]);
+  return !row.pricing_buckets&&row.pricing_mode==='expression'&&!row.price_tiers?.length?'无法拆分':tableMoney(row[key]);
 }
 const cell = (tr, value, cls='', column='') => {const td=document.createElement('td');td.textContent=value;td.className=cls;if(column)td.dataset.column=column;tr.append(td);return td;};
 const userCell = (tr,row) => {
@@ -147,7 +149,7 @@ function developerCells(tr,row){
   const read=Number(row.cache_read_tokens),denominator=Number(row.input_tokens)+read;
   cell(tr,denominator>0?number(read/denominator*100,2)+'%':'—','','cache_hit_rate');
   const tokens=Number(row.total_tokens);
-  cell(tr,tokens>0?number(Number(row.amount)/tokens*1000000,6):'—','','amount_per_million');
+  cell(tr,tokens>0?tableMoney(Number(row.amount)/tokens*1000000):'—','','amount_per_million');
 }
 function failureCell(tr,row){
   if(!failureMode)return;
@@ -187,7 +189,7 @@ function renderDetails() {
     cell(tr,number(r.request_count,0),'','request_count');cell(tr,r.model_name,'model','model_name');cell(tr,r.tier_name||'-','','tier_name');
     for(const key of [...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount']){
       const price=['input_price','output_price','cache_price','write_price'].includes(key);
-      const td=cell(tr,price?priceDisplay(r,key):number(r[key],tokenFields.includes(key)?0:6),price?'price-breakdown':'',key);
+      const td=cell(tr,price?priceDisplay(r,key):key==='amount'?tableMoney(r[key]):number(r[key],tokenFields.includes(key)?0:6),price?'price-breakdown':'',key);
       if(key==='amount')bindMoneyTooltip(td,()=>modelMode==='summary'?totalMoneyFormula(r._sourceRows,r.amount):rowMoneyFormula(r));
     }
     developerCells(tr,r);
@@ -197,7 +199,7 @@ function renderDetails() {
   if(!data.length){const hidden=modelMode==='summary'?new Set(['model_name','tier_name',...modelSummaryColumns]):new Set(),tr=document.createElement('tr');cell(tr,'该时间范围内暂无消费或失败请求','empty').colSpan=[...visibleColumns()].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0)+(developerMode?2:0)+(failureMode?1:0);$('rows').append(tr);}
   const tr=document.createElement('tr');cell(tr,'总计','','username');if(detailMode==='token')cell(tr,'','token-name');cell(tr,number(total.request_count,0),'','request_count');cell(tr,'','','model_name');cell(tr,'','','tier_name');tokenFields.forEach(k=>cell(tr,number(total[k],0),'',k));
   for(const key of ['group_ratio','input_price','output_price','cache_price','write_price'])cell(tr,'','',key);
-  bindMoneyTooltip(cell(tr,number(total.amount),'','amount'),()=>totalMoneyFormula(data,total.amount));
+  bindMoneyTooltip(cell(tr,tableMoney(total.amount),'','amount'),()=>totalMoneyFormula(data,total.amount));
   developerCells(tr,total);
   failureCell(tr,total);
   $('totals').append(tr);

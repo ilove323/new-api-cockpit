@@ -9,6 +9,8 @@ let executing = false;
 let resultCells = new Map();
 const CONCURRENT_REQUESTS = 5;
 const money = value => Number(value).toLocaleString('zh-CN', {maximumFractionDigits: 6});
+// Table cells only; preview messages, API payloads and source amounts retain precision.
+const tableMoney = value => value === null || value === undefined ? '—' : Number(value).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 function status(message, error=false){byId('status').textContent=message;byId('status').classList.toggle('error',error);}
 async function api(path, options={}){
   const response=await fetch(path,{cache:'no-store',...options});
@@ -27,6 +29,7 @@ function visibleUsers(){
   return eligibleUsers().filter(user=>!keyword||String(user.id).includes(keyword)||user.username.toLowerCase().includes(keyword)||user.display_name.toLowerCase().includes(keyword));
 }
 function render(){
+  byId('quota-settings').disabled=executing;
   const list=visibleUsers(), tbody=byId('users');tbody.replaceChildren();
   for(const user of list){
     const row=document.createElement('tr'),check=document.createElement('input');
@@ -38,7 +41,7 @@ function render(){
     if(user.display_name){const display=document.createElement('span');display.className='display-name';display.textContent=user.display_name;name.append(display);}row.append(name);
     const group=document.createElement('td');group.textContent=user.user_group||'未分组';row.append(group);
     const state=document.createElement('td');state.textContent=user.status===1?'启用':'禁用';row.append(state);
-    for(const value of [user.quota_yuan,user.used_quota_yuan]){const cell=document.createElement('td');cell.textContent=money(value);row.append(cell);}
+    for(const value of [user.quota_yuan,user.used_quota_yuan]){const cell=document.createElement('td');cell.textContent=tableMoney(value);row.append(cell);}
     tbody.append(row);
   }
   byId('selected-count').textContent=selected.size;
@@ -114,7 +117,7 @@ byId('preview').addEventListener('click',async()=>{
     if(filterVersion!==statusFilterVersion){status('状态筛选已改变，请按新的范围重新预览。');return;}
     pending=body;byId('confirm-summary').textContent=`将为 ${result.users.length} 人每人${result.mode==='add'?'增加':'减少'} ¥${money(result.amount_yuan)}。`;
     const rows=byId('preview-rows');rows.replaceChildren();resultCells=new Map();
-    for(const user of result.users){const tr=document.createElement('tr');for(const value of [user.username,money(user.before_yuan),money(user.estimated_after_yuan)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}const state=document.createElement('td');state.textContent='待执行';tr.append(state);resultCells.set(user.id,state);rows.append(tr);}
+    for(const user of result.users){const tr=document.createElement('tr');for(const value of [user.username,tableMoney(user.before_yuan),tableMoney(user.estimated_after_yuan)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}const state=document.createElement('td');state.textContent='待执行';tr.append(state);resultCells.set(user.id,state);rows.append(tr);}
     byId('execution-progress').textContent='确认后每组最多 5 人并发，当前组全部返回后再发下一组。';
     byId('apply').disabled=false;byId('cancel').disabled=false;byId('cancel').textContent='取消';
     byId('confirm-dialog').showModal();status('请核对预览，再确认执行。');

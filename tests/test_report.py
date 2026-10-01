@@ -230,18 +230,42 @@ class ReportTest(unittest.TestCase):
             },
         }
         source = dict(
-            user_id=1, username="tester", display_name="", model_name="gpt-6-astra",
-            token_id=0, token_name="", request_count=1, raw_input_tokens=4402,
-            pricing_input_tokens=434, input_tokens=434, output_tokens=53,
-            cache_read_tokens=3968, cache_write_tokens=0, total_tokens=4455,
-            ratio_count=1, group_ratio=Decimal("3.4"), amount=Decimal("0.037258"),
-            tier_usage=[dict(
-                matched_tier="base", group_ratio="3.4", amount="0.037258",
-                request_count=1, raw_input_tokens=4402, pricing_input_tokens=434,
-                input_tokens=434, output_tokens=53, cache_read_tokens=3968,
-                cache_write_tokens=0, total_tokens=4455, latest_at=1, latest_id=1,
-            )],
-            failure_codes={}, failure_count=0,
+            user_id=1,
+            username="tester",
+            display_name="",
+            model_name="gpt-6-astra",
+            token_id=0,
+            token_name="",
+            request_count=1,
+            raw_input_tokens=4402,
+            pricing_input_tokens=434,
+            input_tokens=434,
+            output_tokens=53,
+            cache_read_tokens=3968,
+            cache_write_tokens=0,
+            total_tokens=4455,
+            ratio_count=1,
+            group_ratio=Decimal("3.4"),
+            amount=Decimal("0.037258"),
+            tier_usage=[
+                dict(
+                    matched_tier="base",
+                    group_ratio="3.4",
+                    amount="0.037258",
+                    request_count=1,
+                    raw_input_tokens=4402,
+                    pricing_input_tokens=434,
+                    input_tokens=434,
+                    output_tokens=53,
+                    cache_read_tokens=3968,
+                    cache_write_tokens=0,
+                    total_tokens=4455,
+                    latest_at=1,
+                    latest_id=1,
+                )
+            ],
+            failure_codes={},
+            failure_count=0,
         )
         row = decorate([source], options)[0]
         self.assertEqual(row["tier_name"], "0_272k")
@@ -262,14 +286,38 @@ class ReportTest(unittest.TestCase):
         original = source["tier_usage"][0]
         merged_source["tier_usage"] = [
             original,
-            {**original, "matched_tier": "0_272k", "group_ratio": "3.4",
-             "amount": "0.04", "latest_at": 2, "latest_id": 2},
-            {**original, "matched_tier": "0_272k", "group_ratio": "2",
-             "amount": "0.05", "latest_at": 3, "latest_id": 3},
-            {**original, "matched_tier": "272k_plus", "group_ratio": "1",
-             "amount": "0.08", "latest_at": 4, "latest_id": 4},
-            {**original, "matched_tier": "", "group_ratio": "1",
-             "amount": "0.01", "latest_at": 5, "latest_id": 5},
+            {
+                **original,
+                "matched_tier": "0_272k",
+                "group_ratio": "3.4",
+                "amount": "0.04",
+                "latest_at": 2,
+                "latest_id": 2,
+            },
+            {
+                **original,
+                "matched_tier": "0_272k",
+                "group_ratio": "2",
+                "amount": "0.05",
+                "latest_at": 3,
+                "latest_id": 3,
+            },
+            {
+                **original,
+                "matched_tier": "272k_plus",
+                "group_ratio": "1",
+                "amount": "0.08",
+                "latest_at": 4,
+                "latest_id": 4,
+            },
+            {
+                **original,
+                "matched_tier": "",
+                "group_ratio": "1",
+                "amount": "0.01",
+                "latest_at": 5,
+                "latest_id": 5,
+            },
         ]
         merged_source["request_count"] = 5
         merged_source["amount"] = Decimal("0.217258")
@@ -292,8 +340,12 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(sum(r["request_count"] for r in rows), 5)
         self.assertEqual(totals(rows)["amount"], Decimal("0.217258"))
         self.assertEqual(sum(r["failure_count"] for r in rows), 1)
-        ws = load_workbook(export_excel(rows, "2026-09-01", "2026-09-23"))["用户模型用量"]
-        self.assertEqual([ws[f"E{n}"].value for n in (3, 4, 5)], ["0_272k", "272k_plus", "-"])
+        ws = load_workbook(export_excel(rows, "2026-09-01", "2026-09-23"))[
+            "用户模型用量"
+        ]
+        self.assertEqual(
+            [ws[f"E{n}"].value for n in (3, 4, 5)], ["0_272k", "272k_plus", "-"]
+        )
         self.assertEqual(ws["C3"].value, 3)
         self.assertEqual(ws["P3"].value, float(Decimal("0.127258")))
 

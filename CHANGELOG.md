@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add opt-in group-based quota schedules at Beijing midnight (daily, Monday weekly, first-of-month monthly), a settings dialog and paginated execution history.
+- Add migration 007 and a single-leader quota worker with frozen rules, live enabled-user selection, durable per-user request states, five-user concurrent waves and no replay of missed or uncertain adjustments.
+- Include the opt-in quota worker in source and release Compose templates; document schema, administrator ownership, deployment, management APIs and non-destructive rollback.
+- Display monetary values and unit prices in all page tables with exactly two decimal places; preserve calculation, API, Excel and hover-detail precision.
+
 - Add a separate administrator quota page backed by New API's atomic add/subtract API, with preview and five-user concurrent waves without a selection-count cap; show per-user outcomes and stop future waves after an error.
 - Show each user's New API group and support selecting or deselecting users from multiple groups before a quota operation.
 - Default the quota user list to enabled accounts; status multi-select also limits select-all and group selection, and removes hidden statuses from the operation selection.

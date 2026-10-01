@@ -62,6 +62,21 @@ test('default enabled status filters rows, group counts and batch selection',asy
   await h.elements.get('select-groups').fire('click');
   assert.deepEqual(h.ids(),[1]);
 });
+test('quota list and preview table show two decimals without rounding messages or request amounts',async()=>{
+  const h=await harness();
+  h.setRows([{...sample[0],quota_yuan:'1234.567891',used_quota_yuan:'0.0049'}]);await h.run('load()');
+  const cells=h.elements.get('users').children[0].children;
+  assert.equal(cells[5].textContent,'1,234.57');assert.equal(cells[6].textContent,'0.00');
+  assert.equal(h.run('users[0].quota_yuan'),'1234.567891');
+  h.run('selected.add(1)');h.elements.get('amount').value='1.123456';h.elements.get('mode').value='add';
+  let payload;
+  h.ctx.fetch=async(url,options)=>{payload=JSON.parse(options.body);return {ok:true,json:async()=>({mode:'add',amount_yuan:'1.123456',users:[{id:1,username:'alice',before_yuan:'1234.567891',estimated_after_yuan:'1235.691347'}]})};};
+  await h.elements.get('preview').fire('click');
+  const preview=h.elements.get('preview-rows').children[0].children;
+  assert.equal(preview[1].textContent,'1,234.57');assert.equal(preview[2].textContent,'1,235.69');
+  assert.equal(payload.amount_yuan,'1.123456');
+  assert.ok(h.elements.get('confirm-summary').textContent.includes('1.123456'));
+});
 test('disabled users require explicit status opt-in and are removed on opt-out',async()=>{
   const h=await harness();await h.change('status-disabled',true);
   assert.equal(h.elements.get('users').children.length,3);

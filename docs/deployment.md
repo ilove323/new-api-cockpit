@@ -24,8 +24,8 @@
 | `PYTHON_IMAGE` | 构建使用的 Python 镜像，默认 `python:3.12-slim` |
 | `PIP_INDEX_URL` | 可选 Python 包索引地址 |
 | `NEW_API_NETWORK` | 已有 New API Docker 网络名，默认 `new-api-network` |
-| `NEW_API_INTERNAL_URL` | New API 在共享 Docker 网络中的内部地址，默认 `http://new-api:3000`；仅用户配额页面执行增减时使用 |
-| `MONITOR_DATABASE_URL` | 独立监控库连接串；用于保存额度、月度归档、报警及通知渠道配置 |
+| `NEW_API_INTERNAL_URL` | New API 在共享 Docker 网络中的内部地址，默认 `http://new-api:3000`；用于手工和定时用户配额增减 |
+| `MONITOR_DATABASE_URL` | 独立监控库连接串；保存预算、月度归档、报警、通知配置及定时配额规则与执行记录 |
 | `NOTIFICATION_ENCRYPTION_KEY` | 通知渠道 Secret 的 Fernet 加密密钥；生成一次后必须持久保存 |
 
 用户配额操作还要求当前登录管理员在 New API 中已有 PAT，并且统计容器能通过
@@ -54,6 +54,8 @@ docker compose logs --tail 100 balance-worker
 把 `../nginx.conf.example` 中 `/statistics`、`/statistics/`、`/quota`、`/quota/` 四个 location 加入现有站点的 HTTPS `server` 块，
 保留 New API 原来的 `/` 转发配置。前两者是用量统计，后两者是用户配额；其他路径继续访问 New API。
 `proxy_pass` 不要额外添加末尾斜杠，以保留应用需要的 `/statistics/` 路径前缀。
+`/quota/` 的定时额度修改需要 `MONITOR_DATABASE_URL` 和显式启动 `quota-worker`，
+启动步骤与失败边界见[用户配额](quota.md#定时额度修改)。不改变余额检查时间或现有 Nginx 路由。
 页面互跳使用 `/statistics/` 和 `/quota/`，不写死域名。入口缺少末尾斜杠时，
 示例配置使用 `absolute_redirect off` 返回相对路径，并保留查询参数；浏览器会
 沿用当前协议、域名和端口，避免在代理或非标准端口访问时跳到别的地址。
@@ -117,4 +119,5 @@ curl -H 'Authorization: Bearer <管理员PAT>' \
 且未软删除的账号；每次请求重新检查，禁用、降权和修改密码立即生效。
 不配置独立网页登录账号。统计查询不会修改 New API 数据；管理员在 `/quota/`
 确认配额增减时，服务才会通过 New API 官方管理接口修改所选用户额度，详情见
-[用户配额](quota.md)。
+[用户配额](quota.md)。启用定时配额规则后，独立 `quota-worker` 会在对应周期按执行管理员权限调用同一接口；
+不会由网页访问或 Gunicorn 启动触发额度调整。
