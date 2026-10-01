@@ -12,8 +12,9 @@ from unittest.mock import patch
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
+from cryptography.fernet import Fernet
 
-from new_api_statistics import balance, quota
+from new_api_statistics import balance, locks, notifications, quota
 from new_api_statistics import quota_worker
 from new_api_statistics import (
     quota_schedule as schedules,
@@ -288,7 +289,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
             executor.execute(run_id, lambda: None)
             call.assert_not_called()
 
-    def test_two_session_leader_lock_and_distinct_balance_lock(self):
+    def test_two_session_leader_lock_and_distinct_transaction_locks(self):
         with self.connect() as first, self.connect() as second:
             self.assertTrue(
                 first.execute(
@@ -300,11 +301,88 @@ class ScheduleDatabaseTest(unittest.TestCase):
                     "SELECT pg_try_advisory_lock(%s) AS ok", (schedules.LEADER_LOCK,)
                 ).fetchone()["ok"]
             )
+            for lock in (locks.BALANCE_LOCK, locks.NOTIFICATION_LOCK):
+                self.assertTrue(
+                    second.execute(
+                        "SELECT pg_try_advisory_xact_lock(%s) AS ok", (lock,)
+                    ).fetchone()["ok"]
+                )
+
+    def test_both_notification_channels_send_while_quota_leader_lock_is_held(self):
+        with self.connect() as conn:
+            conn.execute("DELETE FROM balance_alerts")
+            conn.execute("UPDATE balance_settings SET enabled=true WHERE scope_id=1")
+            conn.execute(
+                """INSERT INTO balance_alerts(scope_id,remaining,threshold,spent,budget)
+                VALUES (1,5,10,95,100)"""
+            )
+
+        def delivery_connect():
+            conn = self.connect()
+            # A regression must fail quickly instead of hanging on the session lock.
+            conn.execute("SET lock_timeout='250ms'")
+            return conn
+
+        configs = {
+            "feishu_app": {
+                "app_id": "cli_fixture",
+                "app_secret": "fixture-secret",
+                "receive_id_type": "chat_id",
+                "receive_id": "oc_fixture",
+            },
+            "dingtalk_webhook": {
+                "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=fixture-token",
+                "signing_enabled": False,
+                "signing_secret": "",
+            },
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {"NOTIFICATION_ENCRYPTION_KEY": Fernet.generate_key().decode()},
+            ),
+            patch.object(
+                notifications, "load_site_name", return_value="Fixture Gateway"
+            ),
+            self.connect() as leader,
+        ):
+            leader.autocommit = True
             self.assertTrue(
-                second.execute(
-                    "SELECT pg_try_advisory_lock(90216321) AS ok"
+                leader.execute(
+                    "SELECT pg_try_advisory_lock(%s) AS ok", (schedules.LEADER_LOCK,)
                 ).fetchone()["ok"]
             )
+            for name, config in configs.items():
+                with self.subTest(channel=name):
+                    notifications.save(
+                        {
+                            "enabled": True,
+                            "channel": name,
+                            "version": notifications.snapshot()["version"],
+                            **config,
+                        },
+                        "admin",
+                    )
+                    version = notifications.snapshot()["version"]
+                    with (
+                        patch.object(balance, "connect", delivery_connect),
+                        patch.object(notifications.CHANNELS[name], "send") as send,
+                    ):
+                        notifications.deliver(test=True, expected_version=version)
+                        notifications.deliver(scope_id=1)
+                    self.assertEqual(send.call_count, 2)
+                    self.assertIn("余额监控测试", send.call_args_list[0].args[2])
+                    self.assertIn("余额不足报警", send.call_args_list[1].args[2])
+                    state = notifications.snapshot()
+                    self.assertIsNotNone(state["last_success_at"])
+                    self.assertIsNone(state["last_error"])
+            with self.connect() as other:
+                self.assertFalse(
+                    other.execute(
+                        "SELECT pg_try_advisory_lock(%s) AS ok",
+                        (schedules.LEADER_LOCK,),
+                    ).fetchone()["ok"]
+                )
 
     def test_worker_executes_once_and_is_woken_via_notify(self):
         self.rule()

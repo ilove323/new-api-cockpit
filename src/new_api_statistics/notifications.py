@@ -6,6 +6,7 @@ import os
 from cryptography.fernet import Fernet, InvalidToken
 
 from new_api_statistics import balance, scopes
+from new_api_statistics.locks import NOTIFICATION_LOCK
 from new_api_statistics.notification_channels import CHANNELS
 from new_api_statistics.notification_channels.base import DeliveryError
 from new_api_statistics.report import load_site_name
@@ -237,7 +238,7 @@ def deliver(test=False, expected_version=None, scope_id=1):
     """Send after the balance transaction commits. Failures cannot roll it back."""
     with balance.connect() as conn:
         # Serialize deliveries/settings; no job or minute polling is introduced.
-        conn.execute("SELECT pg_advisory_xact_lock(90216322)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (NOTIFICATION_LOCK,))
         common = conn.execute(
             "SELECT * FROM notification_settings WHERE id=1 FOR UPDATE"
         ).fetchone()

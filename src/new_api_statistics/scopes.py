@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from new_api_statistics import balance
+from new_api_statistics.locks import BALANCE_LOCK
 
 ALL = 1
 UNGROUPED = 2
@@ -40,7 +41,7 @@ def ensure_settings(conn):
 def refresh_scopes():
     live = balance.source_channels()
     with balance.connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         balance.sync_channel_inventory(conn, live)
         tags = sorted(
             {

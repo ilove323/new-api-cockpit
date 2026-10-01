@@ -7,10 +7,11 @@ from decimal import Decimal
 from psycopg.types.json import Jsonb
 
 from new_api_statistics import balance, quota
+from new_api_statistics.locks import QUOTA_SCHEDULER_LOCK
 from new_api_statistics.report import TZ
 
 NOTIFY_CHANNEL = "quota_schedule_changed"
-LEADER_LOCK = 90216322  # Separate from balance's migration/check lock.
+LEADER_LOCK = QUOTA_SCHEDULER_LOCK
 START_WINDOW = timedelta(minutes=5)
 
 

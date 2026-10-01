@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix advisory-lock collision between the quota scheduler and notification delivery; centralize distinct lock IDs and add real PostgreSQL cross-channel regression coverage.
+
 ## 0.1.3 - 2026-10-01
 
 - Recover request-time prices from legacy ratio and supported expression billing logs; merge equal-price requests and split changed prices into separate rows, matching current tiers only when uniquely identifiable.

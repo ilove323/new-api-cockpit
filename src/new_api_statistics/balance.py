@@ -9,6 +9,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from new_api_statistics.report import TZ
+from new_api_statistics.locks import BALANCE_LOCK
 
 
 def configured():
@@ -28,7 +29,7 @@ def connect():
 
 def initialize():
     with connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         conn.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
             version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
         )""")
@@ -279,7 +280,7 @@ def save_settings(body, username, scope_id=1):
     values = validate_settings(body)
     values.pop("excluded_channel_ids")
     with connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         row = update_settings(conn, values, username, scope_id)
         audit_settings(conn, row, username)
         if not row["enabled"]:
@@ -351,7 +352,7 @@ def history_preview(body, now=None, scope_id=1):
     scope_id = scopes.get_scope(scope_id)["id"]
     now = (now or datetime.now(TZ)).astimezone(TZ)
     with connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         values, _, months, archived, _, amounts = history_calculation(
             conn, body, now, scope_id
         )
@@ -405,7 +406,7 @@ def recalculate_history(body, preview_rows, username, now=None, scope_id=1):
     scope_id = scopes.get_scope(scope_id)["id"]
     now = (now or datetime.now(TZ)).astimezone(TZ)
     with connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         values, excluded, months, archived, details, amounts = history_calculation(
             conn, body, now, scope_id
         )
@@ -538,7 +539,7 @@ def rebuild_channel_archives(now=None):
     now = (now or datetime.now(TZ)).astimezone(TZ)
     current = now.date().replace(day=1)
     with connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         settings = conn.execute(
             "SELECT start_month FROM balance_settings WHERE id=1"
         ).fetchone()
@@ -696,7 +697,7 @@ def check_once(now=None, source=None, daily=True, scope_id=1):
     current = now.date().replace(day=1)
     with connect() as conn:
         if not conn.execute(
-            "SELECT pg_try_advisory_xact_lock(90216321) AS locked"
+            "SELECT pg_try_advisory_xact_lock(%s) AS locked", (BALANCE_LOCK,)
         ).fetchone()["locked"]:
             if not daily:
                 raise CheckBusy()
@@ -865,7 +866,7 @@ def snapshot(live=False, scope_id=1):
             "SELECT * FROM balance_alerts WHERE scope_id=%s", (scope_id,)
         ).fetchall()
         if live:
-            conn.execute("SELECT pg_advisory_xact_lock(90216321)")
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
             archive_missing(conn, settings["start_month"], now)
             months = archived_month_rows(
                 conn, settings["start_month"], current, scope_id=scope_id
