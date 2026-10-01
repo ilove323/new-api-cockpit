@@ -1,6 +1,7 @@
 """No test in this module makes a real quota mutation."""
 
 import json
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -50,6 +51,21 @@ class QuotaTest(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(quota.QuotaError):
                 quota.validate_request({**self.body, **change})
 
+    def test_more_than_100_users_can_be_validated_and_previewed(self):
+        ids = list(range(2, 203))
+        targets = [dict(id=i, username=f"user-{i}", role=1, quota=500000) for i in ids]
+        conn = FakeConn({"operator": self.operator, "targets": targets})
+        body = {**self.body, "user_ids": ids}
+        self.assertEqual(quota.validate_request(body)[0], ids)
+        with patch.object(quota, "connect", return_value=conn):
+            self.assertEqual(len(quota.preview("admin", body)["users"]), 201)
+        with (patch.object(quota, "connect", return_value=conn),
+              patch.object(quota, "_call_manage") as call):
+            result = quota.apply("admin", body)
+        self.assertTrue(result["completed"])
+        self.assertEqual(call.call_count, 201)
+        self.assertEqual(len(result["results"]), 201)
+
     def test_preview_is_read_only_and_does_not_overwrite(self):
         conn = FakeConn({"operator": self.operator, "targets": self.targets})
         with patch.object(quota, "connect", return_value=conn):
@@ -70,14 +86,63 @@ class QuotaTest(unittest.TestCase):
 
     def test_apply_calls_new_api_atomic_add_and_stops_after_failure(self):
         conn = FakeConn({"operator": self.operator, "targets": self.targets})
+        def mutate(_operator, user_id, _mode, _units):
+            if user_id == 3:
+                raise quota.QuotaError("失败")
         with (patch.object(quota, "connect", return_value=conn),
-              patch.object(quota, "_call_manage", side_effect=[None, quota.QuotaError("失败")]) as call):
+              patch.object(quota, "_call_manage", side_effect=mutate) as call):
             result = quota.apply("admin", self.body)
         self.assertFalse(result["completed"])
         self.assertEqual([row["ok"] for row in result["results"]], [True, False])
         self.assertEqual(call.call_count, 2)
         self.assertEqual(call.call_args_list[0].args[2:], ("add", 190000000))
         self.assertTrue(all("UPDATE" not in query for query, _ in conn.sql))
+
+    def test_apply_sends_five_concurrently_and_waits_before_next_wave(self):
+        ids = list(range(2, 13))
+        targets = [dict(id=i, username=str(i), role=1, quota=1) for i in ids]
+        conn = FakeConn({"operator": self.operator, "targets": targets})
+        lock = threading.Lock()
+        barrier = threading.Barrier(5)
+        active = maximum = 0
+        finished = []
+        def mutate(_operator, user_id, _mode, _units):
+            nonlocal active, maximum
+            with lock:
+                if user_id >= 7:
+                    self.assertTrue(set(range(2, 7)).issubset(finished))
+                if user_id == 12:
+                    self.assertTrue(set(range(2, 12)).issubset(finished))
+                active += 1
+                maximum = max(maximum, active)
+            if user_id != 12:
+                barrier.wait(timeout=3)
+            with lock:
+                active -= 1
+                finished.append(user_id)
+        with (patch.object(quota, "connect", return_value=conn),
+              patch.object(quota, "_call_manage", side_effect=mutate) as call):
+            result = quota.apply("admin", {**self.body, "user_ids": ids})
+        self.assertTrue(result["completed"])
+        self.assertEqual(maximum, 5)
+        self.assertEqual(call.call_count, 11)
+        self.assertEqual([r["id"] for r in result["results"]], ids)
+
+    def test_failed_wave_reports_all_five_and_never_starts_next_wave(self):
+        ids = list(range(2, 13))
+        targets = [dict(id=i, username=str(i), role=1, quota=1) for i in ids]
+        conn = FakeConn({"operator": self.operator, "targets": targets})
+        def mutate(_operator, user_id, _mode, _units):
+            if user_id == 3:
+                raise quota.QuotaError("失败")
+        with (patch.object(quota, "connect", return_value=conn),
+              patch.object(quota, "_call_manage", side_effect=mutate) as call):
+            result = quota.apply("admin", {**self.body, "user_ids": ids})
+        self.assertFalse(result["completed"])
+        self.assertEqual(call.call_count, 5)
+        self.assertEqual([r["id"] for r in result["results"]], ids[:5])
+        self.assertEqual(result["remaining_user_ids"], ids[5:])
+        self.assertEqual(sum(r["ok"] for r in result["results"]), 4)
 
     def test_manage_http_request_never_uses_override(self):
         class Response:

@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Add a separate administrator quota page backed by New API's atomic add/subtract API, with preview and a 100-user batch limit.
+- Add a separate administrator quota page backed by New API's atomic add/subtract API, with preview and five-user concurrent waves without a selection-count cap; show per-user outcomes and stop future waves after an error.
 - Show each user's New API group and support selecting or deselecting users from multiple groups before a quota operation.
+- Default the quota user list to enabled accounts; status multi-select also limits select-all and group selection, and removes hidden statuses from the operation selection.
 - Document the `/quota/` Nginx route, administrator PAT requirement and read-only database boundary.
+- Keep statistics/quota navigation on the current origin, including nonstandard ports, using canonical path-only links and relative Nginx entry redirects.
 
 ## 0.1.2 - 2026-09-23
 

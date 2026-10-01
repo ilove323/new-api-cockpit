@@ -17,23 +17,31 @@
       <button id="preview" type="button">预览变更</button>
     </section>
     <section class="group-toolbar" aria-label="按用户组批量选择">
-      <details id="group-picker">
+      <details id="status-picker" class="user-picker">
+        <summary id="status-summary">启用用户</summary>
+        <div class="picker-options" role="group" aria-label="用户状态">
+          <label><input id="status-enabled" type="checkbox" checked autocomplete="off">启用</label>
+          <label><input id="status-disabled" type="checkbox" autocomplete="off">禁用</label>
+        </div>
+      </details>
+      <details id="group-picker" class="user-picker">
         <summary id="group-summary">选择用户组</summary>
-        <div id="group-options" role="group" aria-label="用户组"></div>
+        <div id="group-options" class="picker-options" role="group" aria-label="用户组"></div>
       </details>
       <button id="select-groups" type="button" disabled>选中所选组的用户</button>
       <button id="deselect-groups" type="button" disabled>取消所选组的用户</button>
       <button id="clear-selection" type="button">清空已选用户</button>
-      <span class="group-hint">按组选择不受搜索框影响；仅改变勾选，不会调整额度。</span>
+      <span class="group-hint">按组选择遵循用户状态筛选，不受搜索框影响；仅改变勾选，不会调整额度。</span>
     </section>
     <p id="status" role="status" aria-live="polite">正在读取用户…</p>
-    <p class="hint">已选 <strong id="selected-count">0</strong> 人。减少额度允许产生负余额，请仔细核对。批量操作逐人执行；若中途失败，已经成功的用户不会自动回滚。</p>
+    <p class="hint">已选 <strong id="selected-count">0</strong> 人。减少额度允许产生负余额，请仔细核对。每组最多 5 人并发；本组全部返回后再发下一组。失败时停止后续组，已成功的额度不会自动回滚。</p>
     <div class="table-wrap"><table><thead><tr><th><input id="select-all" type="checkbox" aria-label="选择当前筛选结果中的全部用户"></th><th>ID</th><th>用户名 / 显示名</th><th>用户组</th><th>状态</th><th>剩余额度（元）</th><th>已用额度（元）</th></tr></thead><tbody id="users"></tbody></table></div>
   </main>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title">
     <h2 id="confirm-title">确认额度变更</h2>
     <p id="confirm-summary"></p>
-    <div class="preview-wrap"><table><thead><tr><th>用户</th><th>当前剩余（元）</th><th>预计变更后（元）</th></tr></thead><tbody id="preview-rows"></tbody></table></div>
+    <p id="execution-progress" role="status" aria-live="polite"></p>
+    <div class="preview-wrap"><table><thead><tr><th>用户</th><th>当前剩余（元）</th><th>预计变更后（元）</th><th>执行结果</th></tr></thead><tbody id="preview-rows"></tbody></table></div>
     <p class="warning">预览仅供核对；最终按提交时的实际余额增减，不会覆盖余额。确认后请勿重复提交。</p>
     <div class="dialog-actions"><button id="cancel" type="button">取消</button><button id="apply" type="button">确认执行</button></div>
   </dialog>

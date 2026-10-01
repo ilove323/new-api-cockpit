@@ -5,17 +5,19 @@ changes are never implemented by overwriting users.quota in this process.
 """
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 from psycopg.rows import dict_row
 
 
 QUOTA_PER_YUAN = Decimal("500000")
-MAX_BATCH = 100
+CONCURRENT_REQUESTS = 5
 MAX_AMOUNT = Decimal("1000000000")
 
 
@@ -59,8 +61,8 @@ def validate_request(body):
     if not isinstance(body, dict):
         raise QuotaError("请求体必须是对象。")
     ids = body.get("user_ids")
-    if not isinstance(ids, list) or not ids or len(ids) > MAX_BATCH:
-        raise QuotaError(f"每次请选择 1～{MAX_BATCH} 个用户。")
+    if not isinstance(ids, list) or not ids:
+        raise QuotaError("请至少选择一个用户。")
     if any(type(value) is not int or value <= 0 for value in ids) or len(set(ids)) != len(ids):
         raise QuotaError("用户 ID 必须是互不重复的正整数。")
     mode = body.get("mode")
@@ -162,14 +164,26 @@ def apply(username, body):
     with connect() as conn:
         operator = _operator(conn, username)
         targets = _targets(conn, ids, operator)
-    results = []
-    for user_id in ids:
+    def attempt(user_id):
         try:
             _call_manage(operator, user_id, mode, units)
         except QuotaError as exc:
-            results.append({"id": user_id, "username": targets[user_id]["username"], "ok": False, "message": str(exc)})
-            break  # Never retry or continue after an ambiguous/failed mutation.
-        results.append({"id": user_id, "username": targets[user_id]["username"], "ok": True})
+            return {"id": user_id, "username": targets[user_id]["username"], "ok": False, "message": str(exc)}
+        except Exception as exc:
+            # Do not leak request credentials or imply that a failed response
+            # means the upstream mutation did not happen.
+            logging.getLogger(__name__).error("Quota request error for user %s (%s)", user_id, type(exc).__name__)
+            return {"id": user_id, "username": targets[user_id]["username"], "ok": False,
+                    "message": "请求结果不明确，请先核对实际额度和审计日志，不要直接重试。"}
+        return {"id": user_id, "username": targets[user_id]["username"], "ok": True}
+
+    results = []
+    with ThreadPoolExecutor(max_workers=CONCURRENT_REQUESTS) as pool:
+        for offset in range(0, len(ids), CONCURRENT_REQUESTS):
+            wave = list(pool.map(attempt, ids[offset:offset + CONCURRENT_REQUESTS]))
+            results.extend(wave)
+            if any(not row["ok"] for row in wave):
+                break  # Account for all in-flight requests, but never start another wave.
     return {
         "mode": mode,
         "amount_yuan": str(amount),

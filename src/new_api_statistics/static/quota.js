@@ -2,7 +2,12 @@ const byId = id => document.getElementById(id);
 let users = [];
 let selected = new Set();
 let selectedGroups = new Set();
+let selectedStatuses = new Set(['enabled']);
+let statusFilterVersion = 0;
 let pending = null;
+let executing = false;
+let resultCells = new Map();
+const CONCURRENT_REQUESTS = 5;
 const money = value => Number(value).toLocaleString('zh-CN', {maximumFractionDigits: 6});
 function status(message, error=false){byId('status').textContent=message;byId('status').classList.toggle('error',error);}
 async function api(path, options={}){
@@ -11,9 +16,15 @@ async function api(path, options={}){
   if(!response.ok)throw new Error(body.error||`请求失败（HTTP ${response.status}）`);
   return body;
 }
+const userStatus = user => user.status===1?'enabled':'disabled';
+function eligibleUsers(){return users.filter(user=>selectedStatuses.has(userStatus(user)));}
+function pruneSelection(){
+  const allowed=new Set(eligibleUsers().map(user=>user.id));
+  selected=new Set([...selected].filter(id=>allowed.has(id)));
+}
 function visibleUsers(){
   const keyword=byId('search').value.trim().toLowerCase();
-  return users.filter(user=>!keyword||String(user.id).includes(keyword)||user.username.toLowerCase().includes(keyword)||user.display_name.toLowerCase().includes(keyword));
+  return eligibleUsers().filter(user=>!keyword||String(user.id).includes(keyword)||user.username.toLowerCase().includes(keyword)||user.display_name.toLowerCase().includes(keyword));
 }
 function render(){
   const list=visibleUsers(), tbody=byId('users');tbody.replaceChildren();
@@ -33,12 +44,12 @@ function render(){
   byId('selected-count').textContent=selected.size;
   byId('select-all').checked=list.length>0&&list.every(user=>selected.has(user.id));
   byId('select-all').indeterminate=list.some(user=>selected.has(user.id))&&!byId('select-all').checked;
-  byId('preview').disabled=selected.size===0||selected.size>100;
+  byId('preview').disabled=selected.size===0||executing;
   byId('clear-selection').disabled=selected.size===0;
 }
 function renderGroups(){
   const counts=new Map();
-  for(const user of users)counts.set(user.user_group,(counts.get(user.user_group)||0)+1);
+  for(const user of eligibleUsers())counts.set(user.user_group,(counts.get(user.user_group)||0)+1);
   selectedGroups=new Set([...selectedGroups].filter(group=>counts.has(group)));
   const options=byId('group-options');options.replaceChildren();
   for(const group of [...counts.keys()].sort((a,b)=>a.localeCompare(b,'zh-CN'))){
@@ -60,49 +71,94 @@ function updateGroupControls(){
 }
 async function load(){
   status('正在读取用户…');
-  try{users=(await api('/quota/api/users')).rows;selected=new Set([...selected].filter(id=>users.some(user=>user.id===id)));renderGroups();render();status(`共 ${users.length} 个用户。`);}
+  try{users=(await api('/quota/api/users')).rows;pruneSelection();renderGroups();render();status(`当前状态范围 ${eligibleUsers().length} 人，共 ${users.length} 个用户。`);}
   catch(error){status(error.message,true);}
 }
 byId('search').addEventListener('input',render);
+function changeStatusFilter(){
+  if(executing)return;
+  selectedStatuses=new Set();
+  if(byId('status-enabled').checked)selectedStatuses.add('enabled');
+  if(byId('status-disabled').checked)selectedStatuses.add('disabled');
+  statusFilterVersion++;pending=null;
+  byId('confirm-dialog').close();
+  byId('status-summary').textContent=selectedStatuses.size===2?'启用、禁用用户':selectedStatuses.has('enabled')?'启用用户':selectedStatuses.has('disabled')?'禁用用户':'未选择状态';
+  pruneSelection();renderGroups();render();
+  status(`当前状态范围 ${eligibleUsers().length} 人，已选 ${selected.size} 人。`);
+}
+byId('status-enabled').checked=true;
+byId('status-disabled').checked=false;
+byId('status-enabled').addEventListener('change',changeStatusFilter);
+byId('status-disabled').addEventListener('change',changeStatusFilter);
 byId('select-all').addEventListener('change',event=>{
   for(const user of visibleUsers()){if(event.target.checked)selected.add(user.id);else selected.delete(user.id);}render();
 });
 byId('select-groups').addEventListener('click',()=>{
-  for(const user of users)if(selectedGroups.has(user.user_group))selected.add(user.id);
-  render();status(selected.size>100?'已选超过 100 人；单次最多操作 100 人，请缩小选择范围。':`已选 ${selected.size} 人，请核对名单。`,selected.size>100);
+  for(const user of eligibleUsers())if(selectedGroups.has(user.user_group))selected.add(user.id);
+  render();status(`已选 ${selected.size} 人，请核对名单。`);
 });
 byId('deselect-groups').addEventListener('click',()=>{
-  for(const user of users)if(selectedGroups.has(user.user_group))selected.delete(user.id);
+  for(const user of eligibleUsers())if(selectedGroups.has(user.user_group))selected.delete(user.id);
   render();status(`已选 ${selected.size} 人。`);
 });
 byId('clear-selection').addEventListener('click',()=>{selected.clear();render();status('已清空所选用户。');});
 byId('preview').addEventListener('click',async()=>{
+  if(executing||selected.size===0)return;
   const amount=byId('amount').value.trim();
   if(!amount||!byId('amount').checkValidity()){status('请输入有效的每人金额。',true);return;}
   const body={user_ids:[...selected].sort((a,b)=>a-b),mode:byId('mode').value,amount_yuan:amount};
+  const filterVersion=statusFilterVersion;
   byId('preview').disabled=true;
   try{
     const result=await api('/quota/api/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'preview'},body:JSON.stringify(body)});
+    if(filterVersion!==statusFilterVersion){status('状态筛选已改变，请按新的范围重新预览。');return;}
     pending=body;byId('confirm-summary').textContent=`将为 ${result.users.length} 人每人${result.mode==='add'?'增加':'减少'} ¥${money(result.amount_yuan)}。`;
-    const rows=byId('preview-rows');rows.replaceChildren();
-    for(const user of result.users){const tr=document.createElement('tr');for(const value of [user.username,money(user.before_yuan),money(user.estimated_after_yuan)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}rows.append(tr);}
+    const rows=byId('preview-rows');rows.replaceChildren();resultCells=new Map();
+    for(const user of result.users){const tr=document.createElement('tr');for(const value of [user.username,money(user.before_yuan),money(user.estimated_after_yuan)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}const state=document.createElement('td');state.textContent='待执行';tr.append(state);resultCells.set(user.id,state);rows.append(tr);}
+    byId('execution-progress').textContent='确认后每组最多 5 人并发，当前组全部返回后再发下一组。';
+    byId('apply').disabled=false;byId('cancel').disabled=false;byId('cancel').textContent='取消';
     byId('confirm-dialog').showModal();status('请核对预览，再确认执行。');
   }catch(error){pending=null;status(error.message,true);}
-  finally{byId('preview').disabled=false;}
+  finally{render();}
 });
-byId('cancel').addEventListener('click',()=>{pending=null;byId('confirm-dialog').close();});
+byId('cancel').addEventListener('click',()=>{if(executing)return;pending=null;byId('confirm-dialog').close();});
+byId('confirm-dialog').addEventListener('cancel',event=>{if(executing)event.preventDefault();else pending=null;});
+globalThis.addEventListener?.('beforeunload',event=>{if(executing){event.preventDefault();event.returnValue='';}});
+function setResult(userId,message){const cell=resultCells.get(userId);if(cell)cell.textContent=message;}
 byId('apply').addEventListener('click',async()=>{
-  if(!pending)return;
-  const body=pending;pending=null;byId('apply').disabled=true;byId('cancel').disabled=true;
+  if(!pending||executing)return;
+  const body=pending;pending=null;executing=true;byId('apply').disabled=true;byId('cancel').disabled=true;render();
+  let succeeded=0,attempted=0,failedMessage='';
   try{
-    const result=await api('/quota/api/apply',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'confirm'},body:JSON.stringify(body)});
-    byId('confirm-dialog').close();selected.clear();
-    const succeeded=result.results.filter(row=>row.ok).length;
-    if(result.completed)status(`完成：${succeeded} 人已${result.mode==='add'?'增加':'减少'} ¥${money(result.amount_yuan)}。`);
-    else status(`仅完成 ${succeeded} 人；${result.results.find(row=>!row.ok)?.message||'操作未全部完成'}。不要直接重试，请先核对。`,true);
-    const message=byId('status').textContent;const failed=byId('status').classList.contains('error');
-    await load();status(message,failed);
-  }catch(error){byId('confirm-dialog').close();status(`${error.message} 请勿直接重试，先核对实际额度。`,true);}
-  finally{byId('apply').disabled=false;byId('cancel').disabled=false;}
+    for(let offset=0;offset<body.user_ids.length;offset+=CONCURRENT_REQUESTS){
+      const wave=body.user_ids.slice(offset,offset+CONCURRENT_REQUESTS);
+      attempted+=wave.length;
+      for(const id of wave)setResult(id,'处理中');
+      byId('execution-progress').textContent=`正在处理第 ${offset+1}～${offset+wave.length} 人 / 共 ${body.user_ids.length} 人；已确认成功 ${succeeded} 人。请勿刷新或关闭页面。`;
+      let result;
+      try{
+        result=await api('/quota/api/apply',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'confirm'},body:JSON.stringify({...body,user_ids:wave})});
+        const rows=result.results;
+        if(!Array.isArray(rows)||rows.length!==wave.length||new Set(rows.map(row=>row.id)).size!==wave.length||rows.some(row=>!wave.includes(row.id)||typeof row.ok!=='boolean'))throw new Error('接口返回的执行结果不完整');
+      }catch(error){
+        for(const id of wave)setResult(id,'结果待核对：'+error.message);
+        failedMessage=`${error.message}；本组 ${wave.length} 人的结果需核对`;
+        break;
+      }
+      for(const row of result.results){if(row.ok)succeeded++;setResult(row.id,row.ok?'成功':`失败 / 待核对：${row.message||'未知错误'}`);}
+      if(!result.completed||result.results.some(row=>!row.ok)){
+        failedMessage=result.results.find(row=>!row.ok)?.message||'本组未全部完成';break;
+      }
+    }
+  }catch(error){failedMessage=`${error.message}；请核对正在处理的用户`;
+  }finally{
+    for(const id of body.user_ids.slice(attempted))setResult(id,'未发起');
+    const remaining=body.user_ids.length-attempted;
+    const message=failedMessage?`已确认成功 ${succeeded} 人，后续 ${remaining} 人未发起；${failedMessage}。不要直接重试，请先核对结果。`:`完成：${succeeded} 人已${body.mode==='add'?'增加':'减少'} ¥${money(body.amount_yuan)}。`;
+    byId('execution-progress').textContent=message;status(message,!!failedMessage);
+    executing=false;selected.clear();byId('cancel').disabled=false;byId('cancel').textContent='关闭';
+    // Keep per-user results visible; the consumed confirmation cannot be replayed.
+    await load();status(message,!!failedMessage);
+  }
 });
 load();

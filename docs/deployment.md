@@ -54,6 +54,9 @@ docker compose logs --tail 100 balance-worker
 把 `../nginx.conf.example` 中 `/statistics`、`/statistics/`、`/quota`、`/quota/` 四个 location 加入现有站点的 HTTPS `server` 块，
 保留 New API 原来的 `/` 转发配置。前两者是用量统计，后两者是用户配额；其他路径继续访问 New API。
 `proxy_pass` 不要额外添加末尾斜杠，以保留应用需要的 `/statistics/` 路径前缀。
+页面互跳使用 `/statistics/` 和 `/quota/`，不写死域名。入口缺少末尾斜杠时，
+示例配置使用 `absolute_redirect off` 返回相对路径，并保留查询参数；浏览器会
+沿用当前协议、域名和端口，避免在代理或非标准端口访问时跳到别的地址。
 
 ```bash
 nginx -t
