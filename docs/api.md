@@ -61,12 +61,11 @@ checked_at、timezone，金额为数字，时间为带时区 ISO 8601。
 并发检查冲突返回 409，数据库失败返回 503，查询超时返回 504。
 认证失败返回 401。对外接口不接受 Basic Auth。
 
-## 升级与网页兼容
+## 网页内部接口与权限
 
-旧的 `/statistics/api/balance/alert` 已移至 `/statistics/api/alert`；
-调用方需同时把管理员 Basic Auth 改为 New API 管理员 PAT。
-原余额页面数据移至内部 `/statistics/api/balance/status`。
-网页及其内部管理接口仍使用管理员登录，不向普通令牌开放管理权限。
+`/statistics/api/balance/status` 用于余额窗口的状态、报警和月度归档展示。
+网页及其内部管理接口使用管理员 Basic Auth，不向普通令牌开放管理权限；
+上述 `/statistics/api/balance` 与 `/statistics/api/alert` 对外接口仅使用管理员 PAT Bearer。
 现有 /statistics/ Nginx 转发即可覆盖新接口。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
 
 数据库只读账号需要 users 表（包含 access_token）的 SELECT 权限；

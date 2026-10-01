@@ -94,7 +94,7 @@ docker compose ps
 ```
 
 配置监控库后，容器启动入口会先执行幂等增量迁移；正常页面请求不执行迁移。
-旧、新定时调度器不能混用，更新前请阅读[升级说明](docs/upgrading.md)。
+已有部署更新前请阅读[升级说明](docs/upgrading.md)。
 
 配置 `MONITOR_DATABASE_URL` 后，同一个 `statistics` 容器会自动运行余额和配额定时器，
 不需要单独启动 worker 或启用 Compose profile。余额仍每天北京时间 10:00 检查；
@@ -103,9 +103,9 @@ docker compose ps
 定时器会随服务重启自动恢复，无需保持浏览器页面打开。配置了监控库的部署可通过
 `/healthz` 确认两个内置定时器都已就绪，见[运行状态检查](docs/deployment.md#运行状态检查)。
 
-**单容器调度属于当前未发布改动**。请用当前源码构建，或使用包含此功能的匹配发布镜像；
-已发布的 `0.1.3` 镜像仍采用旧 worker 架构，不能只套用新 Compose 模板。
-旧部署切换前必须停止全部旧后台容器，具体见[升级说明](docs/upgrading.md)。
+本文对应当前仓库源码。预构建镜像必须包含相同实现并使用配套配置；
+若当前分支的实现尚未发布为正式镜像，请从源码构建。
+运行拓扑、模块和数据库职责见[架构说明](docs/architecture.md)。
 
 ### 4. 配置入口
 
@@ -121,12 +121,13 @@ https://<你的域名>/quota/
 
 没有 Nginx 时，可按[直接端口访问说明](docs/deployment.md#无-nginx-直接访问)配置宿主机端口。
 镜像部署应下载与目标版本匹配的发布配置文件，并设置对应 `IMAGE_TAG`；
-当前未发布的单容器模板不能配旧 `0.1.3` 镜像，详情见[发版说明](docs/releasing.md)。
+不要混用不同实现的镜像与当前配置，详情见[发版说明](docs/releasing.md)。
 
 ## 文档
 
 | 主题 | 内容 |
 | --- | --- |
+| [当前架构](docs/architecture.md) | 单容器运行、模块职责、数据流、数据库及权限边界 |
 | [部署](docs/deployment.md) | 环境变量、网络、Nginx、直接端口访问及认证 |
 | [统计口径](docs/calculation.md) | 缓存包含关系、金额、倍率及数学折算 |
 | [兼容范围](docs/compatibility.md) | New API 数据库字段与运行环境 |
@@ -135,6 +136,7 @@ https://<你的域名>/quota/
 | [通知渠道](docs/notifications.md) | 飞书与钉钉配置及通知行为 |
 | [报警 API](docs/api.md) | 认证方式、请求示例与返回值 |
 | [升级与备份](docs/upgrading.md) | 数据库迁移、备份和回退 |
+| [性能机制](docs/performance.md) | 渠道同步、当月汇总复用、详情快照和验证方法 |
 | [发版](docs/releasing.md) | GitHub Actions、版本标签及 GHCR 镜像 |
 
 ## 帮助与贡献
@@ -143,7 +145,7 @@ https://<你的域名>/quota/
 
 - 问题反馈与功能建议：[GitHub Issues](https://github.com/ilove323/new-api-statistics/issues)
 - 开发与贡献：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 版本变化：[CHANGELOG.md](CHANGELOG.md)
+- 版本变化：[GitHub Releases](https://github.com/ilove323/new-api-statistics/releases)
 - 安全问题：[SECURITY.md](SECURITY.md)
 
 反馈时请提供版本、复现步骤和脱敏日志，不要提交管理员密码、API Key 或客户数据。

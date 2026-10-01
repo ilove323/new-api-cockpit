@@ -72,9 +72,9 @@ New API 增减接口不提供本功能所需的请求幂等键。因此不能承
 
 ### 部署与数据库
 
-使用现有独立监控数据库 `MONITOR_DATABASE_URL`，新增 `007_quota_schedules.sql`：
+使用独立监控数据库 `MONITOR_DATABASE_URL`，定时规则及执行记录由 `007_quota_schedules.sql` 定义：
 `quota_schedule_rules`、`quota_schedule_rule_groups`、`quota_schedule_runs`、`quota_schedule_run_items`。
-沿用 `schema_migrations` 增量执行，旧月度归档、余额设置和用户数据不清空。
+由 `schema_migrations` 增量应用，月度归档、余额设置和用户数据不清空。
 
 | 表 | 存储内容 |
 |---|---|
@@ -83,7 +83,7 @@ New API 增减接口不提供本功能所需的请求幂等键。因此不能承
 | `quota_schedule_runs` | 每次计划执行的规则快照、状态、结果计数与时间；规则 ID 和计划时间联合唯一 |
 | `quota_schedule_run_items` | 执行时的用户与组快照、整数额度单位、逐用户请求状态及时间；执行 ID 和用户 ID 联合唯一 |
 
-原有余额、渠道及月度归档表无需改列。规则金额以整数额度单位保存，表格两位小数只是展示格式。
+规则金额以整数额度单位保存，表格两位小数只是展示格式。
 四张表均不存管理员密码或 PAT；执行记录仅保留脱敏结果，不保存远端原始响应。
 
 ```bash
@@ -116,10 +116,9 @@ python -m new_api_statistics.runtime gunicorn --bind 127.0.0.1:8000 new_api_stat
 `post_worker_init`、`worker_exit` 和 `graceful_timeout`，不得遗漏启动/退出钩子。
 `python -m new_api_statistics.app` 的直接启动也会管理定时器，但不建议将 Flask 开发服务器用于生产。
 
-使用发布镜像时，Compose 与镜像必须来自同一版本。当前单容器改动尚未发布，
-不能用新模板启动不包含定时器生命周期的旧 `0.1.3` 镜像。
-旧部署切换前停止旧 `balance-worker`、`quota-worker` 并确认退出，见[升级说明](upgrading.md)。
-所有页面、静态资源和管理 API 的认证及请求来源检查保持原样，无新增端口或 Nginx location。
+使用发布镜像时，Compose 与镜像必须来自同一版本，且包含本文描述的实现。
+已有部署切换前须避免多个调度器并行，操作要求统一见[升级说明](upgrading.md)。
+所有页面、静态资源和管理 API 均要求管理员认证；调度器不需要额外端口或 Nginx location。
 
 ### 管理接口
 
@@ -149,4 +148,4 @@ docker compose stop statistics
 
 停止不清空数据，也不能撤销已经发出的额度请求。重启不重发中断或错过周期的请求。
 回退时先停止新应用，再恢复旧镜像及与该版本配套的 Compose，确认不留下新旧调度器并行。
-`007`、`008` 均为新增表，可保留规则、执行记录和归档；不要为了回退清空或重建监控库。
+回退不自动降级数据库；应保留规则、执行记录和归档，不要为了回退清空或重建监控库。

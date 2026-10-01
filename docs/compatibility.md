@@ -14,7 +14,9 @@ CI 配置覆盖 PostgreSQL 15/16，其他版本需自行验证。尚无按 New A
 | channels | id, name, status, tag |
 
 消费日志为 `type=2`，`quota / 500000` 为消费金额；`?dev=2` 的失败请求统计读取
-`type=5`，并要求 `other` 为 JSON 且包含 `status_code`。认证要求 bcrypt 密码、
+`type=5`，从 `other.status_code` 读取错误码；元数据损坏或缺少可解析错误码时保留失败次数，显示“未知”。
+消费日志元数据损坏时保留消费金额，无法确认的用量为 `null`，详见[异常日志](calculation.md#异常日志与展示详情)。
+认证要求 bcrypt 密码、
 role >= 10、status=1 且 deleted_at 为空。请求发生时的 Token 单价从消费日志 `other`
 中的 `model_ratio`、`completion_ratio`、`cache_ratio`、`cache_creation_ratio_5m`
 （或 `cache_creation_ratio`）还原；表达式计费依赖 `expr_b64` 和 `matched_tier`。

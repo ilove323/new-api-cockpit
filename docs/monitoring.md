@@ -21,14 +21,12 @@
 - 查询失败保留旧结果并显示失败状态，不显示为零消费。月度归档取决于原日志保留情况，无法恢复已经删除且从未归档的数据。
 - 余额设置、警报、月度归档不混入用量 Excel 导出。导出仅包含当前账本的用量数据。
 
-### 升级说明
+### 表结构与初始化
 
-程序启动入口通过 `schema_migrations` 自动顺序执行未应用的迁移；正常 API 请求不执行迁移。`005_balance_scopes.sql`
-增加账本和逐账本设置；`006_scope_visibility.sql` 增加标签可见性状态。
-`007_quota_schedules.sql` 为可选的[定时用户配额](quota.md#定时额度修改)增加四张规则及执行记录表，
-与余额检查分开运行，不改变余额归档或每天 10:00 的告警时间。
-`008_runtime_optimizations.sql` 新增渠道发现完成标记及两张限时展示快照表，
-不覆盖费用、配置或历史执行数据；详情与回退说明见[升级文档](upgrading.md)。
+程序启动入口通过 `schema_migrations` 自动顺序应用未执行的迁移；正常 API 请求不执行迁移。
+监控库保存账本和渠道库存、各账本预算/审计/检查状态、逐渠道月度费用、通知配置、
+定时配额规则与执行记录，以及限时展示快照。完整表职责见[架构说明](architecture.md#数据库职责)。
+余额与配额定时器独立调度，但同属一个应用容器；余额检查时间为每天 10:00。
 首次同步渠道标签后建立账本；查询历史账本金额时使用保存的逐渠道费用与当前渠道归属。
 无需清空数据库。上线前备份监控库，勿把迁移 SQL 执行到 New API 原库。
 
@@ -82,7 +80,7 @@ docker compose logs --tail=50 statistics
 
 首次启动后，应用会自动创建监控表。可使用 PostgreSQL 管理员验证，正常应能看到
 `balance_*`、`notification_settings`、`notification_feishu_settings` 和
-`notification_dingtalk_webhook_settings` 等表；应用 `007` 后还会出现四张 `quota_schedule_*` 表，应用 `008` 后增加
+`notification_dingtalk_webhook_settings`、四张 `quota_schedule_*` 表，以及
 `channel_catalog_sync_state`、`report_snapshots`、`report_snapshot_rows`：
 
 ```bash

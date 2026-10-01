@@ -1,47 +1,48 @@
-# 发版
+# 发版与镜像
 
-维护者：ilove323。版本唯一来源为 pyproject.toml。
-依赖范围继续使用 requirements.txt，不生成依赖锁文件。
+维护者：ilove323。版本唯一来源为 `pyproject.toml`。
+依赖范围使用 `requirements.txt`，不生成依赖锁文件。
+历史发布说明统一放在 [GitHub Releases](https://github.com/ilove323/new-api-statistics/releases)，
+仓库文档只描述当前代码与操作方法。
 
-## 首次设置
+## 仓库权限
 
-GitHub Actions 需获准运行，发布任务通过 GITHUB_TOKEN 获得 packages:write 和
-contents:write。首次发布后检查 GHCR 包的可见性；公开仓库不保证首次创建的包
-自动公开。希望用户匿名拉取时，在包设置里将可见性设为 public。
+GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packages:write` 和
+`contents:write`。GHCR 包需设为 public 才能匿名拉取，公开仓库不保证包自动公开。
 
-建议 main 禁止强制推送，并要求 CI 通过。当前只有一个维护者，
-不强制要求另一个人的 PR 审批。这些仓库设置需维护者在 GitHub 设置页启用。
-私密漏洞报告同样需要在 Security 设置中开启。
+建议 `main` 禁止强制推送，并要求 CI 通过；当前只有一个维护者，
+不强制要求另一人的 PR 审批。权限、分支保护与私密漏洞报告在 GitHub 设置页启用。
 
-## 发布步骤
+## 发布流程
 
-1. 更新 pyproject.toml 版本和 CHANGELOG.md，提交 PR 并通过 CI。
-2. 合并到 main 后创建对应标签，如 v0.1.3，并推送标签。
-3. release.yml 会复用 CI；版本与标签不一致时拒绝发布。
-4. 构建 AMD64/ARM64 镜像，发布到 ghcr.io/ilove323/new-api-statistics。
-5. 创建 GitHub Release，附带 Compose、环境变量及 Nginx 示例和校验和。
+1. 确认当前源码、文档、Compose 与数据库迁移一致，更新 `pyproject.toml` 正式版本。
+2. 通过 PR 合并到 `main` 并通过 CI；准备发布说明，列明功能、升级要求和安全边界。
+3. 创建与版本完全匹配的 `vX.Y.Z` 标签并推送该标签。
+4. `release.yml` 复用 CI，校验版本与标签后构建 AMD64/ARM64 镜像，发布到 GHCR。
+5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、校验和及自动生成的变更列表。
+6. 在 GitHub Release 正文补充必要的升级、数据库与配置说明，不在当前文档目录积累按版本命名的历史文件。
 
-目前只支持 vX.Y.Z 正式标签，预发布标签会被拒绝。
-发布镜像标签包括精确版本和 latest；生产部署固定精确版本或 digest。
-工作流发布制品，不自动部署服务器。
+目前只支持 `vX.Y.Z` 正式标签，预发布标签会被拒绝。
+镜像标签包括精确版本与 `latest`；生产部署应固定精确版本或 digest。
+工作流只发布制品，不部署服务器。
 
-## 使用镜像
+开发提交推送到 `develop` 不触发普通 push CI 或正式发版；PR、`main` push、
+手动运行和发版流程按 `.github/workflows/` 中的触发条件执行。
 
-首次 Release 成功发布后，下载该版本的 compose.release.yml、.env.example、
-nginx.conf.example，按部署文档配置 .env 并创建监控库。设置：
+## 使用预构建镜像
+
+从目标 Release 下载 `compose.release.yml`、`.env.example`、`nginx.conf.example`，
+配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
 
 ```ini
-IMAGE_TAG=<与配置模板对应的已发布版本>
+IMAGE_TAG=<与配置模板对应的正式版本>
 ```
 
 ```bash
-docker compose -f compose.release.yml up -d
+docker compose -f compose.release.yml up -d statistics
 ```
 
-新版本单容器内置余额与配额定时器；配置监控库即可随应用运行，无需另启 worker。
-Compose 模板必须与镜像同版：目前单容器改动尚未发布，现有 `0.1.3` 镜像仍是旧架构，
-不能把新模板和旧镜像混用。测试当前改动请从源码构建，正式发版后再填对应 `IMAGE_TAG`。
-从旧部署迁移前须停止旧后台服务并清理私有 override 的 worker 配置，见[升级说明](upgrading.md)。
-
-Release 说明按 PR 标签分类生成；有数据库或配置变化时，
-维护者必须补充升级说明，不能只依赖自动生成的提交列表。
+当前架构是一个 `statistics` 容器，余额和配额定时器随应用启动。
+镜像、配置和操作文档必须匹配；若当前分支的实现尚未包含在正式镜像中，应按[部署文档](deployment.md)从源码构建，
+不要将当前分支的 Compose 与不含对应实现的发布镜像混用。
+升级与回退遵循[升级说明](upgrading.md)，不会通过发版自动清空监控库。
