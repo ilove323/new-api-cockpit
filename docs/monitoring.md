@@ -41,20 +41,20 @@ docker exec -it <PostgreSQL容器名> sh -lc 'psql -U "$POSTGRES_USER" -d postgr
 进入 `psql` 后执行以下 SQL。将 `<random-password>` 替换为强随机密码；不要使用示例占位符：
 
 ```sql
-CREATE ROLE statistics_monitor LOGIN PASSWORD '<random-password>' NOSUPERUSER NOCREATEDB NOCREATEROLE;
-CREATE DATABASE new_api_statistics OWNER statistics_monitor;
-REVOKE CONNECT ON DATABASE new_api_statistics FROM PUBLIC;
-GRANT CONNECT ON DATABASE new_api_statistics TO statistics_monitor;
+CREATE ROLE cockpit_monitor LOGIN PASSWORD '<random-password>' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+CREATE DATABASE new_api_cockpit OWNER cockpit_monitor;
+REVOKE CONNECT ON DATABASE new_api_cockpit FROM PUBLIC;
+GRANT CONNECT ON DATABASE new_api_cockpit TO cockpit_monitor;
 ```
 
 `CREATE DATABASE` 必须在 `postgres` 等其他数据库中执行，不能先连接尚未创建的
-`new_api_statistics`。上述 SQL 用于首次创建；如果角色或数据库已经存在，不要重复执行
+`new_api_cockpit`。上述 SQL 用于首次创建；如果角色或数据库已经存在，不要重复执行
 `CREATE ROLE` 或 `CREATE DATABASE`，应核对现有 owner 和密码。
 
 在 `.env` 添加监控库连接串。连接串中的密码含 `@`、`:`、`/`、`#` 等特殊字符时必须 URL 编码：
 
 ```ini
-MONITOR_DATABASE_URL=postgresql://statistics_monitor:<random-password>@postgres:5432/new_api_statistics
+MONITOR_DATABASE_URL=postgresql://cockpit_monitor:<random-password>@postgres:5432/new_api_cockpit
 ```
 
 生成一次通知凭据加密密钥，并把命令输出写入同一个 `.env`。不要把密钥提交到 Git：
@@ -84,7 +84,7 @@ docker compose logs --tail=50 statistics
 
 ```bash
 docker exec <PostgreSQL容器名> sh -lc \
-  'psql -U "$POSTGRES_USER" -d new_api_statistics -c "\\dt"'
+  'psql -U "$POSTGRES_USER" -d new_api_cockpit -c "\\dt"'
 ```
 
 Nginx 统一转发 `/cockpit/`，监控不需要新端口。未配置连接串时原统计功能照常使用，监控不可用。请将独立库与 New API 库分别纳入数据库备份。

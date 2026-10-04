@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from new_api_statistics import locks, notifications, quota_schedule
+from new_api_cockpit import locks, notifications, quota_schedule
 
 
 class AdvisoryLockTest(unittest.TestCase):

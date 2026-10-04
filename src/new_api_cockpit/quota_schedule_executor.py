@@ -2,8 +2,8 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
-from new_api_statistics import balance, quota
-from new_api_statistics import quota_schedule as schedules
+from new_api_cockpit import balance, quota
+from new_api_cockpit import quota_schedule as schedules
 
 
 def _targets(groups, admin):

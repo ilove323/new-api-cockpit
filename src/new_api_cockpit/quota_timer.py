@@ -4,10 +4,10 @@ import logging
 import os
 from datetime import datetime
 
-from new_api_statistics import balance
-from new_api_statistics import quota_schedule as schedules
-from new_api_statistics import quota_schedule_executor as executor
-from new_api_statistics.report import TZ
+from new_api_cockpit import balance
+from new_api_cockpit import quota_schedule as schedules
+from new_api_cockpit import quota_schedule_executor as executor
+from new_api_cockpit.report import TZ
 
 LOG = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def serve(stopped):
             return
         leader.execute(
             "SELECT set_config('application_name',%s,false)",
-            (f"statistics-quota-timer:{os.getpid()}",),
+            (f"cockpit-quota-timer:{os.getpid()}",),
         )
         LOG.info("Quota timer leadership acquired.")
         leader.execute("LISTEN " + schedules.NOTIFY_CHANNEL)

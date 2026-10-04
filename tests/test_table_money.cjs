@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
-const root=path.join(__dirname,'../src/new_api_statistics/static');
+const root=path.join(__dirname,'../src/new_api_cockpit/static');
 class Element{
   constructor(){this.children=[];this.dataset={};this.style={setProperty(){}};this.classList={toggle(){},add(){}};}
   append(...items){this.children.push(...items);}

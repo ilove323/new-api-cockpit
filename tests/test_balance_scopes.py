@@ -11,7 +11,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from new_api_statistics import balance, scopes
+from new_api_cockpit import balance, scopes
 
 
 class ScopeUnitTest(unittest.TestCase):
@@ -74,7 +74,7 @@ class ScopeDatabaseTest(unittest.TestCase):
                 balance, "source_channels", side_effect=lambda **kwargs: self.catalog
             )
         )
-        self.enterContext(patch("new_api_statistics.notifications.notify_safely"))
+        self.enterContext(patch("new_api_cockpit.notifications.notify_safely"))
         balance.initialize()
         scopes.refresh_scopes()
         self.ids = {

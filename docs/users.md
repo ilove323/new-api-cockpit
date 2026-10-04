@@ -1,6 +1,6 @@
 # 用户、令牌管理与操作记录
 
-`newapi-cockpit` 在统一 `/cockpit/` 前缀下提供四个页面，以相对路径侧边栏切换。
+`new-api-cockpit` 在统一 `/cockpit/` 前缀下提供四个页面，以相对路径侧边栏切换。
 
 | 页面 | 职责 |
 |---|---|
@@ -50,8 +50,8 @@
 再仅授予现有源库查询角色函数执行权限：
 
 ```sql
-GRANT SELECT ON TABLE public.users, public.tokens, public.logs, public.options, public.channels TO statistics_reader;
-GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) TO statistics_reader;
+GRANT SELECT ON TABLE public.users, public.tokens, public.logs, public.options, public.channels TO cockpit_reader;
+GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) TO cockpit_reader;
 ```
 
 角色名仅为通用示例；不要给查询角色授予 `UPDATE users` 或 `UPDATE tokens`。
@@ -105,3 +105,12 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 我们的审计额外保存实际管理员身份；不存密码、PAT、完整 KEY 或原始远端响应。
 新建对象的官方接口不返回对象 ID 时，记录以创建操作及资料摘要标识，目标 ID 为 0。
 没有监控库时只支持查询，拒绝没有审计的写操作。升级不清空用户、KEY、账本、归档及定时规则。
+
+### 操作记录接口
+
+网页管理员 Basic Auth：`GET /cockpit/operations/api/records`。
+可选 `kind=user|token|quota|schedule`，后续页传回响应中的 `next_before` 作为 `before`；
+游标同时包含时间、来源和记录 ID，不使用单一时间戳翻页。
+明细为 `GET /cockpit/operations/api/records/<source>/<record_id>?after=<target_id>`，
+`source` 为 `management` 或 `schedule`，下一页使用 `next_after`。
+这些接口只读，不触发原操作再次执行。

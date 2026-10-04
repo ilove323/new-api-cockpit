@@ -15,7 +15,7 @@ function formulaLines(row) {
   };
   vm.createContext(context);
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, '../src/new_api_statistics/static/money-tooltip.js'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '../src/new_api_cockpit/static/money-tooltip.js'), 'utf8'),
     context,
   );
   return context.rowMoneyFormula(row);
@@ -56,7 +56,7 @@ function tooltipHarness(){
   const events={};
   function element(){return {children:[],style:{},classList:{add(){}},attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},replaceChildren(...c){this.children=c;},contains(){return false;},getBoundingClientRect(){return {top:100,bottom:150,right:200,left:0,width:200,height:100};}};}
   const context={innerWidth:800,innerHeight:800,clearTimeout,setTimeout,document:{createElement:element,body:{append(){}},addEventListener(name,fn){events[name]=fn;}},window:{addEventListener(){}},Scope:{request(){throw new Error('unexpected request');}}};
-  vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/new_api_statistics/static/money-tooltip.js'),'utf8'),context);
+  vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/new_api_cockpit/static/money-tooltip.js'),'utf8'),context);
   return {context,anchor:element(),run:code=>vm.runInContext(code,context)};
 }
 test('lazy hover fetches the existing snapshot exactly once without recomputation',async()=>{

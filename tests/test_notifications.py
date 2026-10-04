@@ -9,13 +9,13 @@ from urllib.error import HTTPError
 from unittest.mock import patch, MagicMock
 
 from cryptography.fernet import Fernet
-from new_api_statistics import notifications
-from new_api_statistics import balance
-from new_api_statistics.notification_channels import feishu_app as feishu
-from new_api_statistics.notification_channels import dingtalk_webhook as dingtalk
-from new_api_statistics.notification_channels.base import DeliveryError
-from new_api_statistics.app import app
-from new_api_statistics.report import TZ
+from new_api_cockpit import notifications
+from new_api_cockpit import balance
+from new_api_cockpit.notification_channels import feishu_app as feishu
+from new_api_cockpit.notification_channels import dingtalk_webhook as dingtalk
+from new_api_cockpit.notification_channels.base import DeliveryError
+from new_api_cockpit.app import app
+from new_api_cockpit.report import TZ
 
 
 class NotificationsTest(unittest.TestCase):
@@ -225,12 +225,12 @@ class NotificationsTest(unittest.TestCase):
         client = app.test_client()
         base = "/cockpit/statistics/api/balance/channel"
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.notifications.save") as save,
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.notifications.save") as save,
             patch(
-                "new_api_statistics.notifications.snapshot", return_value={"version": 2}
+                "new_api_cockpit.notifications.snapshot", return_value={"version": 2}
             ),
-            patch("new_api_statistics.notifications.deliver") as send,
+            patch("new_api_cockpit.notifications.deliver") as send,
         ):
             args = dict(auth=("fixture_admin", "fixture"), json={"version": 2})
             self.assertEqual(client.put(base, **args).status_code, 403)
@@ -250,7 +250,7 @@ class NotificationsTest(unittest.TestCase):
 
     def test_notification_failure_is_nonfatal(self):
         with patch(
-            "new_api_statistics.notifications.deliver",
+            "new_api_cockpit.notifications.deliver",
             side_effect=RuntimeError("private"),
         ):
             with self.assertLogs(level="ERROR") as logs:
@@ -277,12 +277,12 @@ class NotificationsTest(unittest.TestCase):
         url = "/cockpit/statistics/api/alert"
         with (
             patch(
-                "new_api_statistics.app.verify_api_key",
+                "new_api_cockpit.app.verify_api_key",
                 side_effect=lambda token: token == "sk-fixture",
             ),
-            patch("new_api_statistics.balance.check_once", return_value=True) as check,
+            patch("new_api_cockpit.balance.check_once", return_value=True) as check,
             patch(
-                "new_api_statistics.notifications.current_alert_record",
+                "new_api_cockpit.notifications.current_alert_record",
                 return_value={"site_name": "示例网关"},
             ) as load,
         ):
@@ -324,13 +324,13 @@ class NotificationsTest(unittest.TestCase):
             alert
         )
         with (
-            patch("new_api_statistics.balance.connect", return_value=connection),
+            patch("new_api_cockpit.balance.connect", return_value=connection),
             patch(
-                "new_api_statistics.scopes.get_scope",
+                "new_api_cockpit.scopes.get_scope",
                 return_value={"id": 1, "kind": "all", "tag_value": ""},
             ),
             patch(
-                "new_api_statistics.notifications.load_site_name",
+                "new_api_cockpit.notifications.load_site_name",
                 return_value="示例网关",
             ),
         ):

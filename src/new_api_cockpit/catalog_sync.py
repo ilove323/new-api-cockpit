@@ -1,7 +1,7 @@
 """Explicit catalog synchronization; --full rediscovers deleted log channel IDs."""
 
 import argparse
-from new_api_statistics import balance, scopes
+from new_api_cockpit import balance, scopes
 
 
 def main():

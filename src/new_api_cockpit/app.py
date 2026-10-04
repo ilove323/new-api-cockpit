@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Usage: PGHOST=... PGPASSWORD=... python -m new_api_statistics.app
+# Usage: PGHOST=... PGPASSWORD=... python -m new_api_cockpit.app
 # Production: docker compose up -d --build (Gunicorn serves /cockpit/).
 """Single-container statistics, quota and user management with protected APIs."""
 
@@ -19,11 +19,11 @@ from flask import (
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg
-from new_api_statistics import balance
-from new_api_statistics import scopes as scope_backend
-from new_api_statistics import notifications
-from new_api_statistics import quota as quota_backend
-from new_api_statistics import (
+from new_api_cockpit import balance
+from new_api_cockpit import scopes as scope_backend
+from new_api_cockpit import notifications
+from new_api_cockpit import quota as quota_backend
+from new_api_cockpit import (
     quota_schedule,
     report_snapshots,
     timers,
@@ -31,7 +31,7 @@ from new_api_statistics import (
     operation_records,
 )
 
-from new_api_statistics.report import (
+from new_api_cockpit.report import (
     TZ,
     export_excel,
     load_group_options,
@@ -42,7 +42,7 @@ from new_api_statistics.report import (
     rankings,
     load_site_name,
 )
-from new_api_statistics.auth import verify_admin, verify_api_key
+from new_api_cockpit.auth import verify_admin, verify_api_key
 
 app = Flask(__name__, static_url_path="/cockpit/static")
 
@@ -85,7 +85,7 @@ def authenticate():
         return (
             "请使用 New API 管理员用户名和密码登录。",
             401,
-            {"WWW-Authenticate": 'Basic realm="newapi-cockpit", charset="UTF-8"'},
+            {"WWW-Authenticate": 'Basic realm="new-api-cockpit", charset="UTF-8"'},
         )
 
 
@@ -122,7 +122,7 @@ def health():
 
 @app.get("/cockpit")
 @app.get("/cockpit/")
-def ops_home():
+def cockpit_home():
     return redirect("/cockpit/statistics/", 302)
 
 

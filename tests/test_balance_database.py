@@ -5,7 +5,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from database import MonitorTestCase
-from new_api_statistics import balance
+from new_api_cockpit import balance
 
 CHANNEL_SOURCE = balance.source_channel_amounts
 

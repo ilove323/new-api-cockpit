@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import psycopg
 from psycopg.rows import dict_row
 
-from new_api_statistics import operation_records
+from new_api_cockpit import operation_records
 
 
 QUOTA_PER_YUAN = Decimal("500000")

@@ -7,9 +7,9 @@ from unittest.mock import patch
 from cryptography.fernet import Fernet
 
 from database import MonitorTestCase
-from new_api_statistics import balance, notifications
-from new_api_statistics.notification_channels import feishu_app, dingtalk_webhook
-from new_api_statistics.notification_channels.base import DeliveryError
+from new_api_cockpit import balance, notifications
+from new_api_cockpit.notification_channels import feishu_app, dingtalk_webhook
+from new_api_cockpit.notification_channels.base import DeliveryError
 
 NOTIFY = notifications.notify_safely
 

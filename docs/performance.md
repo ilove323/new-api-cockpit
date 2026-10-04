@@ -14,8 +14,8 @@
 需要重新完整发现时，在统计项目目录执行：
 
 ```bash
-docker compose exec statistics python -m new_api_statistics.catalog_sync --full
-# 非 Docker：python -m new_api_statistics.catalog_sync --full
+docker compose exec statistics python -m new_api_cockpit.catalog_sync --full
+# 非 Docker：python -m new_api_cockpit.catalog_sync --full
 ```
 
 此命令同步目录，不重新计费或覆盖月度金额。

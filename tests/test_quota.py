@@ -5,8 +5,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from new_api_statistics import quota
-from new_api_statistics.app import app
+from new_api_cockpit import quota
+from new_api_cockpit.app import app
 
 
 class FakeConn:
@@ -208,8 +208,8 @@ class QuotaTest(unittest.TestCase):
         client = app.test_client()
         self.assertEqual(client.get("/cockpit/users/").status_code, 401)
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.app.load_site_name", return_value="Test"),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_site_name", return_value="Test"),
             patch.object(quota, "preview", return_value={"users": []}) as preview,
         ):
             self.assertEqual(

@@ -8,7 +8,7 @@ import os
 import unittest
 import psycopg
 from psycopg.rows import dict_row
-from new_api_statistics.report import FAILURE_SQL, SQL
+from new_api_cockpit.report import FAILURE_SQL, SQL
 
 
 @unittest.skipUnless(os.environ.get("PGHOST"), "PostgreSQL integration requires PGHOST")

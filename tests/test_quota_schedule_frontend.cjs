@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
-const root=path.join(__dirname,'../src/new_api_statistics');
+const root=path.join(__dirname,'../src/new_api_cockpit');
 const html=fs.readFileSync(path.join(root,'templates/users.html'),'utf8');
 class Element{
   constructor(){this.children=[];this.events={};this.attrs={};this.value='';this.checked=false;this.textContent='';this.hidden=false;this.disabled=false;}

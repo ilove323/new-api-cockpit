@@ -6,9 +6,9 @@ from threading import Event
 import unittest
 from unittest.mock import MagicMock, patch
 
-from new_api_statistics import quota, quota_schedule as schedules, quota_timer
-from new_api_statistics.app import app
-from new_api_statistics.report import TZ
+from new_api_cockpit import quota, quota_schedule as schedules, quota_timer
+from new_api_cockpit.app import app
+from new_api_cockpit.report import TZ
 
 
 class ScheduleTest(unittest.TestCase):
@@ -104,7 +104,7 @@ class ScheduleTest(unittest.TestCase):
 
     def test_write_headers_and_error_status_codes(self):
         client = app.test_client()
-        with patch("new_api_statistics.app.verify_admin", return_value=True):
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
             for method, path in [
                 ("POST", "/cockpit/users/api/schedules"),
                 ("PUT", "/cockpit/users/api/schedules/1"),
@@ -156,7 +156,7 @@ class ScheduleTest(unittest.TestCase):
     def test_creating_rule_does_not_execute_or_expose_pat(self):
         client = app.test_client()
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch.object(
                 schedules,
                 "save_rule",

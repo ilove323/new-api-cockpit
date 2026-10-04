@@ -7,7 +7,7 @@ from unittest.mock import patch
 import psycopg
 from psycopg.rows import dict_row
 
-from new_api_statistics import balance
+from new_api_cockpit import balance
 
 
 @unittest.skipUnless(

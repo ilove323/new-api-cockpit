@@ -1,14 +1,14 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const helpers=require('../src/new_api_statistics/static/keys.js');
+const helpers=require('../src/new_api_cockpit/static/keys.js');
 const vm=require('node:vm');
 test('money cells always use two decimal places',()=>{assert.equal(helpers.money('1.234567'),'1.23');assert.equal(helpers.money(0),'0.00');assert.equal(helpers.money(null),'—');});
 test('group semantics stay separate from channel tags',()=>{assert.equal(helpers.groupName(''),'跟随用户组');assert.equal(helpers.groupName('auto'),'自动分组');assert.equal(helpers.groupName('team-a'),'team-a');});
 test('option search is literal, not fuzzy wildcard or regex',()=>{assert.equal(helpers.keywordMatch('ask_copy','sk'),true);assert.equal(helpers.keywordMatch('ask_copy','a.*'),false);assert.equal(helpers.keywordMatch('ask_copy','%'),false);});
 test('group patch does not include balance or status values',()=>{assert.deepEqual(helpers.groupChange('b'),{group:'b'});});
 test('history never displays credential fields',()=>{assert.deepEqual(helpers.safeHistory({password:'fixture',key:'fixture',access_token:'fixture',group:'b'}),{group:'b'});});
-test('secret search uses POST and dialogs erase credentials',()=>{const source=fs.readFileSync(require.resolve('../src/new_api_statistics/static/keys.js'),'utf8');assert.match(source,/api\('search-key',\{key:input.value\}\)/);assert.match(source,/input.value=''/);assert.match(source,/revealed-key'\).value=''/);assert.doesNotMatch(source,/innerHTML\s*=/);});
+test('secret search uses POST and dialogs erase credentials',()=>{const source=fs.readFileSync(require.resolve('../src/new_api_cockpit/static/keys.js'),'utf8');assert.match(source,/api\('search-key',\{key:input.value\}\)/);assert.match(source,/input.value=''/);assert.match(source,/revealed-key'\).value=''/);assert.doesNotMatch(source,/innerHTML\s*=/);});
 
 /* DOM-only interaction fixtures: no browser and no live mutations. */
 class Element {
@@ -28,7 +28,7 @@ class Element {
 }
 const settle=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
 async function harness(){
-  const html=fs.readFileSync(require.resolve('../src/new_api_statistics/templates/keys.html'),'utf8');
+  const html=fs.readFileSync(require.resolve('../src/new_api_cockpit/templates/keys.html'),'utf8');
   const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],new Element()]));
   const tabs=[...html.matchAll(/data-tab="([^"]+)"/g)].map(m=>{const node=new Element('button');node.dataset.tab=m[1];return node;});
   for(const [id,values] of [['user-status-options',[1,2]],['token-status-options',[1,2,3,4]]])for(const value of values){const input=new Element('input');input.type='checkbox';input.value=String(value);input.checked=id==='token-status-options'||value===1;elements.get(id).append(input);}
@@ -36,7 +36,7 @@ async function harness(){
   const row={id:10,user_id:2,username:'alice',display_name:'Alice',user_group:'a',name:'ask_copy',masked_key:'abcd********wxyz',token_group:'a',status:1,effective_status:1,quota_yuan:'1.2345',remain_quota_yuan:'2.3456',used_quota_yuan:'0',token_count:1,expired_time:-1};
   const user={id:2,username:'alice',display_name:'Alice',user_group:'a',status:1,quota_yuan:'1.2345',used_quota_yuan:'0',token_count:1,remark:'',tokens:[row]};
   const context={document:{getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment'),querySelectorAll:selector=>selector==='[data-tab]'?tabs:[]},confirm:()=>true,console,Date,Number,Promise,URLSearchParams,window:{addEventListener(){}},navigator:{clipboard:{writeText:async()=>{}}},fetch:async(url,init={})=>{const call={url,init,body:init.body?JSON.parse(init.body):undefined};calls.push(call);let data=await handler(call);if(data===undefined)data=url.endsWith('/options')?{groups:['a','b'],persistence:true}:url.includes('/query/')?{rows:[user],total:1,total_keys:1}:{rows:[]};return {ok:true,json:async()=>data};}};
-  vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../src/new_api_statistics/static/keys.js'),'utf8'),context);await settle();
+  vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../src/new_api_cockpit/static/keys.js'),'utf8'),context);await settle();
   return {elements,tabs,calls,context,row,user,setHandler(fn){handler=fn;}};
 }
 test('combined list loads read-only, uses enabled users and all KEY states, formats money',async()=>{const h=await harness();assert.equal(h.calls.length,2);assert.equal(h.calls[1].url,'/cockpit/keys/api/query/grouped');assert.deepEqual(h.tabs.map(n=>n.dataset.tab),[]);assert.deepEqual(h.calls[1].body.user_statuses,[1]);assert.deepEqual(h.calls[1].body.token_statuses,[1,2,3,4]);const tr=h.elements.get('management-rows').firstChild;assert.ok(!tr.firstChild.children.some(n=>n.className==='user-meta user-money'));assert.equal(tr.children[7].textContent,'2.35');assert.match(h.elements.get('page-info').textContent,/1 个用户 \/ 1 个 KEY/);});

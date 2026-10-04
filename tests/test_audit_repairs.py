@@ -14,11 +14,11 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from openpyxl import load_workbook
 
-from new_api_statistics import balance, scopes, quota, quota_schedule, report_snapshots
-from new_api_statistics.app import app
-from new_api_statistics import metadata_fallback as fallback
-from new_api_statistics import runtime
-from new_api_statistics import report
+from new_api_cockpit import balance, scopes, quota, quota_schedule, report_snapshots
+from new_api_cockpit.app import app
+from new_api_cockpit import metadata_fallback as fallback
+from new_api_cockpit import runtime
+from new_api_cockpit import report
 
 
 def log(index=1, **changes):
@@ -67,7 +67,7 @@ class RepairUnitTest(unittest.TestCase):
         ):
             with (
                 self.subTest(value=value),
-                patch("new_api_statistics.app.verify_admin", return_value=True),
+                patch("new_api_cockpit.app.verify_admin", return_value=True),
                 patch.object(quota, "connect") as connect,
             ):
                 response = app.test_client().post(
@@ -197,7 +197,7 @@ class RepairUnitTest(unittest.TestCase):
             [
                 "gunicorn",
                 "--config",
-                "python:new_api_statistics.gunicorn_conf",
+                "python:new_api_cockpit.gunicorn_conf",
                 "module:app",
             ],
         )
@@ -233,7 +233,7 @@ class PerformanceDatabaseTest(unittest.TestCase):
         self.source = self.enterContext(
             patch.object(balance, "source_channels", return_value=self.catalog)
         )
-        self.enterContext(patch("new_api_statistics.notifications.notify_safely"))
+        self.enterContext(patch("new_api_cockpit.notifications.notify_safely"))
 
     def connect(self):
         return psycopg.connect(
@@ -375,8 +375,8 @@ class PerformanceDatabaseTest(unittest.TestCase):
         rows = report.decorate(fallback.aggregate([log()], False), {})
         client = app.test_client()
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.app.load_report", return_value=rows),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_report", return_value=rows),
         ):
             url = "/cockpit/statistics/api/usage?start=2026-09-01&end=2026-09-01"
             normal = client.get(url, auth=("alice", "fixture"))

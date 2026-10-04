@@ -11,7 +11,7 @@ let ranking = 'model_amount';
 const tokenFields = ['total_tokens','input_tokens','output_tokens','cache_read_tokens','cache_write_tokens'];
 const detailColumns = ['username','request_count','model_name','tier_name',...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount'];
 const modelSummaryColumns = ['group_ratio','input_price','output_price','cache_price','write_price'];
-const columnStorageKey = 'new-api-statistics.visible-columns.v2';
+const columnStorageKey = 'new-api-cockpit.visible-columns.v2';
 let modelColumnSelection = null;
 const developerLevel = Number(new URLSearchParams(window.location.search).get('dev')||0);
 const developerMode = developerLevel>=1;

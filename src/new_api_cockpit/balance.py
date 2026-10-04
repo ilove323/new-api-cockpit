@@ -8,8 +8,8 @@ from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 
-from new_api_statistics.report import TZ
-from new_api_statistics.locks import BALANCE_LOCK
+from new_api_cockpit.report import TZ
+from new_api_cockpit.locks import BALANCE_LOCK
 
 
 def configured():
@@ -164,14 +164,14 @@ def sync_channel_inventory(conn, live_channels):
             "UPDATE balance_month_channels SET channel_name=%s WHERE channel_id=%s AND channel_name IS DISTINCT FROM %s",
             (row["channel_name"], row["channel_id"], row["channel_name"]),
         )
-    from new_api_statistics.scopes import ensure_settings
+    from new_api_cockpit.scopes import ensure_settings
 
     ensure_settings(conn)
 
 
 def usage_channels_snapshot(scope_id=1):
     """Refresh the channel inventory and mark channels absent from New API as deleted."""
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
 
     catalog = scopes.refresh_scopes()
     scope_id = scopes.get_scope(scope_id)["id"]
@@ -282,7 +282,7 @@ def audit_settings(conn, row, username):
 
 
 def save_settings(body, username, scope_id=1):
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
 
     scopes.refresh_scopes()
     scope_id = scopes.get_scope(scope_id)["id"]
@@ -353,7 +353,7 @@ def history_calculation(conn, body, now, scope_id=1):
 
 def history_preview(body, now=None, scope_id=1):
     """Return the complete monthly comparison that an administrator must confirm."""
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
 
     scopes.refresh_scopes()
     scope_id = scopes.get_scope(scope_id)["id"]
@@ -407,7 +407,7 @@ def validate_history_preview(rows):
 def recalculate_history(body, preview_rows, username, now=None, scope_id=1):
     """Replace history with complete per-channel data after exact monthly review."""
     expected = validate_history_preview(preview_rows)
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
 
     scopes.refresh_scopes()
     scope_id = scopes.get_scope(scope_id)["id"]
@@ -650,7 +650,7 @@ class CurrentMonthBatch:
 
 def check_once(now=None, source=None, daily=True, scope_id=1, _batch=None):
     """Check exactly one ledger; commit alert before global-channel delivery."""
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
 
     if _batch is None:
         scopes.refresh_scopes()
@@ -773,7 +773,7 @@ def check_once(now=None, source=None, daily=True, scope_id=1, _batch=None):
                 "INSERT INTO balance_daily_runs(scope_id,day) VALUES (%s,%s) ON CONFLICT DO NOTHING",
                 (scope_id, now.date()),
             )
-    from new_api_statistics.notifications import notify_safely
+    from new_api_cockpit.notifications import notify_safely
 
     notify_safely(scope_id=scope_id)
     return True
@@ -781,7 +781,7 @@ def check_once(now=None, source=None, daily=True, scope_id=1, _batch=None):
 
 def check_all_enabled(now=None, _stopped=None):
     """Daily worker: one failed ledger must not prevent the remaining checks."""
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
     import logging
 
     results = {}
@@ -820,7 +820,7 @@ def record_failure(scope_id=1):
 def snapshot(live=False, scope_id=1):
     if not configured():
         return dict(configured=False)
-    from new_api_statistics import scopes
+    from new_api_cockpit import scopes
 
     scopes.refresh_scopes()
     now = datetime.now(TZ)

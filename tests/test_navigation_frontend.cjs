@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const code = fs.readFileSync(path.join(__dirname, '../src/new_api_statistics/static/navigation.js'), 'utf8');
+const code = fs.readFileSync(path.join(__dirname, '../src/new_api_cockpit/static/navigation.js'), 'utf8');
 
 function navigation({small = false, saved = '0', blockedStorage = false} = {}) {
   const classes = new Set(), writes = [], events = {};

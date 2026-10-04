@@ -5,8 +5,8 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from new_api_statistics import user_management as manage
-from new_api_statistics.app import app
+from new_api_cockpit import user_management as manage
+from new_api_cockpit.app import app
 
 
 class UserManagementTest(unittest.TestCase):
@@ -198,7 +198,7 @@ class UserManagementTest(unittest.TestCase):
         ):
             self.assertEqual(client.get(path).status_code, 401)
         auth = {"Authorization": "Basic YWRtaW46Zml4dHVyZQ=="}
-        with patch("new_api_statistics.app.verify_admin", return_value=True):
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
             response = client.post(
                 "/cockpit/keys/api/search-key", json={"key": "fixture"}, headers=auth
             )
@@ -216,10 +216,8 @@ class UserManagementTest(unittest.TestCase):
 
     def test_three_pages_share_relative_sidebar_and_no_old_switch_buttons(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch(
-                "new_api_statistics.app.load_site_name", return_value="Fixture Gateway"
-            ),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_site_name", return_value="Fixture Gateway"),
         ):
             for path in ("/cockpit/statistics/", "/cockpit/users/", "/cockpit/keys/"):
                 response = app.test_client().get(

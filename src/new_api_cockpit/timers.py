@@ -12,8 +12,8 @@ from threading import Event, Lock, Thread
 
 import psycopg
 
-from new_api_statistics import balance, quota_timer
-from new_api_statistics.locks import BALANCE_SCHEDULER_LOCK, QUOTA_SCHEDULER_LOCK
+from new_api_cockpit import balance, quota_timer
+from new_api_cockpit.locks import BALANCE_SCHEDULER_LOCK, QUOTA_SCHEDULER_LOCK
 
 LOG = logging.getLogger(__name__)
 _guard = Lock()
@@ -56,7 +56,7 @@ def run_balance(stopped):
                     continue
                 leader.execute(
                     "SELECT set_config('application_name',%s,false)",
-                    (f"statistics-balance-timer:{os.getpid()}",),
+                    (f"cockpit-balance-timer:{os.getpid()}",),
                 )
                 LOG.info("Balance timer leadership acquired.")
                 while not stopped.is_set():

@@ -7,9 +7,9 @@ import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from new_api_statistics import balance, gunicorn_conf, quota_timer, runtime, timers
-from new_api_statistics.app import app
-from new_api_statistics.report import TZ
+from new_api_cockpit import balance, gunicorn_conf, quota_timer, runtime, timers
+from new_api_cockpit.app import app
+from new_api_cockpit.report import TZ
 
 
 class InternalTimerTest(unittest.TestCase):
@@ -209,7 +209,7 @@ class GunicornTimerIntegrationTest(unittest.TestCase):
         from psycopg import sql
         from psycopg.conninfo import make_conninfo
         import psycopg
-        from new_api_statistics.locks import (
+        from new_api_cockpit.locks import (
             BALANCE_SCHEDULER_LOCK,
             QUOTA_SCHEDULER_LOCK,
         )
@@ -240,7 +240,7 @@ class GunicornTimerIntegrationTest(unittest.TestCase):
                     [
                         sys.executable,
                         "-m",
-                        "new_api_statistics.runtime",
+                        "new_api_cockpit.runtime",
                         "gunicorn",
                         "--bind",
                         f"127.0.0.1:{port}",
@@ -248,7 +248,7 @@ class GunicornTimerIntegrationTest(unittest.TestCase):
                         "2",
                         "--threads",
                         "2",
-                        "new_api_statistics.app:app",
+                        "new_api_cockpit.app:app",
                     ],
                     cwd=root,
                     env=env,

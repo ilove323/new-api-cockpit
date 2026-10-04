@@ -7,9 +7,9 @@ from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
-from new_api_statistics import balance
-from new_api_statistics.report import TZ
-from new_api_statistics.locks import REPORT_SNAPSHOT_NAMESPACE
+from new_api_cockpit import balance
+from new_api_cockpit.report import TZ
+from new_api_cockpit.locks import REPORT_SNAPSHOT_NAMESPACE
 
 TTL = timedelta(minutes=15)
 MAX_REPORTS_PER_OWNER = 10

@@ -1,10 +1,10 @@
 <div align="center">
 
-# newapi-cockpit
+# new-api-cockpit
 
 **扩展 New API 的用量统计、账本监控、用户、令牌与配额管理**
 
-[![CI](https://github.com/ilove323/new-api-statistics/actions/workflows/ci.yml/badge.svg)](https://github.com/ilove323/new-api-statistics/actions/workflows/ci.yml)
+[![CI](https://github.com/ilove323/new-api-cockpit/actions/workflows/ci.yml/badge.svg)](https://github.com/ilove323/new-api-cockpit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue)](pyproject.toml)
 [![Requires New API](https://img.shields.io/badge/requires-New%20API-green)](https://github.com/QuantumNous/new-api)
@@ -15,7 +15,7 @@
 
 ## 项目说明
 
-newapi-cockpit 是配合 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)
+new-api-cockpit 是配合 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)
 使用的自托管扩展管理控制台，提供用量与成本分析、预算报警、用户与 KEY 管理及定时配额。
 
 > [!IMPORTANT]
@@ -69,8 +69,8 @@ SQLite 和 MySQL 后端目前不支持。不同 New API fork 的字段、配额�
 ### 1. 获取项目
 
 ```bash
-git clone https://github.com/ilove323/new-api-statistics.git newapi-cockpit
-cd newapi-cockpit
+git clone https://github.com/ilove323/new-api-cockpit.git new-api-cockpit
+cd new-api-cockpit
 cp .env.example .env
 ```
 
@@ -144,9 +144,9 @@ https://<你的域名>/cockpit/operations/
 
 维护者与当前贡献者：[@ilove323](https://github.com/ilove323)。
 
-- 问题反馈与功能建议：[GitHub Issues](https://github.com/ilove323/new-api-statistics/issues)
+- 问题反馈与功能建议：[GitHub Issues](https://github.com/ilove323/new-api-cockpit/issues)
 - 开发与贡献：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 版本变化：[GitHub Releases](https://github.com/ilove323/new-api-statistics/releases)
+- 版本变化：[GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)
 - 安全问题：[SECURITY.md](SECURITY.md)
 
 反馈时请提供版本、复现步骤和脱敏日志，不要提交管理员密码、API Key 或客户数据。
@@ -158,4 +158,4 @@ https://<你的域名>/cockpit/operations/
 
 Copyright 2026 ilove323。采用 [Apache-2.0](LICENSE)，允许商业使用。
 New API 及其他依赖各自遵循其许可证。
-第三方字体与图标许可见 [NOTICE](NOTICE)、[Lucide 许可](src/new_api_statistics/static/LUCIDE-LICENSE)和 [Public Sans 许可](src/new_api_statistics/static/fonts/OFL-LICENSE.txt)。
+第三方字体与图标许可见 [NOTICE](NOTICE)、[Lucide 许可](src/new_api_cockpit/static/LUCIDE-LICENSE)和 [Public Sans 许可](src/new_api_cockpit/static/fonts/OFL-LICENSE.txt)。

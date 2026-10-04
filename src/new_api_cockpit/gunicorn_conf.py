@@ -2,7 +2,7 @@
 
 import signal
 
-from new_api_statistics import timers
+from new_api_cockpit import timers
 
 # Give a current five-user wave time to finish before process/container shutdown.
 graceful_timeout = 75

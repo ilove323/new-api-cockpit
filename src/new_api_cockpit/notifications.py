@@ -5,11 +5,11 @@ import os
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from new_api_statistics import balance, scopes
-from new_api_statistics.locks import NOTIFICATION_LOCK
-from new_api_statistics.notification_channels import CHANNELS
-from new_api_statistics.notification_channels.base import DeliveryError
-from new_api_statistics.report import load_site_name
+from new_api_cockpit import balance, scopes
+from new_api_cockpit.locks import NOTIFICATION_LOCK
+from new_api_cockpit.notification_channels import CHANNELS
+from new_api_cockpit.notification_channels.base import DeliveryError
+from new_api_cockpit.report import load_site_name
 
 
 def format_alert_message(alert, site_name):

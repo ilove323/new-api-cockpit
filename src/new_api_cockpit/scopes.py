@@ -1,8 +1,8 @@
 """Channel-tag ledgers. Only the monitoring database is ever modified."""
 
 from datetime import datetime
-from new_api_statistics import balance
-from new_api_statistics.locks import BALANCE_LOCK
+from new_api_cockpit import balance
+from new_api_cockpit.locks import BALANCE_LOCK
 
 ALL = 1
 UNGROUPED = 2

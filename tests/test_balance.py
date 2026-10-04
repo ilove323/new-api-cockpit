@@ -5,9 +5,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
-from new_api_statistics import balance
-from new_api_statistics import timers
-from new_api_statistics.app import app
+from new_api_cockpit import balance
+from new_api_cockpit import timers
+from new_api_cockpit.app import app
 
 
 class BalanceTest(unittest.TestCase):
@@ -24,10 +24,10 @@ class BalanceTest(unittest.TestCase):
             },
         }
         with (
-            patch("new_api_statistics.app.verify_api_key", return_value=True) as verify,
-            patch("new_api_statistics.balance.snapshot", return_value=snapshot) as load,
-            patch("new_api_statistics.app.load_site_name", return_value="三生AI网关"),
-            patch("new_api_statistics.balance.check_once") as check,
+            patch("new_api_cockpit.app.verify_api_key", return_value=True) as verify,
+            patch("new_api_cockpit.balance.snapshot", return_value=snapshot) as load,
+            patch("new_api_cockpit.app.load_site_name", return_value="三生AI网关"),
+            patch("new_api_cockpit.balance.check_once") as check,
         ):
             response = app.test_client().get(
                 "/cockpit/statistics/api/balance",
@@ -56,16 +56,16 @@ class BalanceTest(unittest.TestCase):
 
     def test_external_balance_api_rejects_basic_and_unavailable_data(self):
         client = app.test_client()
-        with patch("new_api_statistics.app.verify_admin", return_value=True):
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
             response = client.get(
                 "/cockpit/statistics/api/balance", auth=("test_admin", "test")
             )
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
         with (
-            patch("new_api_statistics.app.verify_api_key", return_value=True),
+            patch("new_api_cockpit.app.verify_api_key", return_value=True),
             patch(
-                "new_api_statistics.balance.snapshot",
+                "new_api_cockpit.balance.snapshot",
                 return_value={"configured": True, "valid": False},
             ),
         ):
@@ -89,11 +89,11 @@ class BalanceTest(unittest.TestCase):
             },
         }
         with (
-            patch("new_api_statistics.app.verify_api_key", return_value=True),
-            patch("new_api_statistics.balance.snapshot", return_value=fixture) as load,
-            patch("new_api_statistics.app.load_site_name", return_value="fixture"),
-            patch("new_api_statistics.balance.check_once") as check,
-            patch("new_api_statistics.notifications.notify_safely") as notify,
+            patch("new_api_cockpit.app.verify_api_key", return_value=True),
+            patch("new_api_cockpit.balance.snapshot", return_value=fixture) as load,
+            patch("new_api_cockpit.app.load_site_name", return_value="fixture"),
+            patch("new_api_cockpit.balance.check_once") as check,
+            patch("new_api_cockpit.notifications.notify_safely") as notify,
         ):
             for _ in range(2):
                 response = app.test_client().get(
@@ -120,10 +120,10 @@ class BalanceTest(unittest.TestCase):
 
     def test_manual_check_endpoint(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.balance.check_once", return_value=True) as check,
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.balance.check_once", return_value=True) as check,
             patch(
-                "new_api_statistics.balance.snapshot", return_value={"configured": True}
+                "new_api_cockpit.balance.snapshot", return_value={"configured": True}
             ) as snapshot,
         ):
             client = app.test_client()
@@ -190,9 +190,9 @@ class BalanceTest(unittest.TestCase):
             }
         ]
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.balance.usage_channels_snapshot",
+                "new_api_cockpit.balance.usage_channels_snapshot",
                 return_value=rows,
             ),
         ):
@@ -208,13 +208,13 @@ class BalanceTest(unittest.TestCase):
         body = self.body()
         preview_rows = [{"month": "2026-01", "before": "10", "after": "12"}]
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.balance.history_preview",
+                "new_api_cockpit.balance.history_preview",
                 return_value={"version": 1, "rows": preview_rows},
             ) as preview,
             patch(
-                "new_api_statistics.balance.recalculate_history",
+                "new_api_cockpit.balance.recalculate_history",
                 return_value={"version": 2, "months": 1},
             ) as recalculate,
         ):
@@ -265,7 +265,7 @@ class BalanceTest(unittest.TestCase):
 
     def test_api_writes_require_auth_and_custom_header(self):
         client = app.test_client()
-        with patch("new_api_statistics.app.verify_admin", return_value=False):
+        with patch("new_api_cockpit.app.verify_admin", return_value=False):
             self.assertEqual(
                 client.put(
                     "/cockpit/statistics/api/balance/settings", json=self.body()
@@ -273,8 +273,8 @@ class BalanceTest(unittest.TestCase):
                 401,
             )
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.balance.save_settings") as save,
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.balance.save_settings") as save,
         ):
             args = dict(auth=("test_admin", "test"), json=self.body())
             self.assertEqual(

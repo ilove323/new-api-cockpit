@@ -18,7 +18,7 @@ import uuid
 import psycopg
 from psycopg.types.json import Jsonb
 
-from new_api_statistics import balance, quota
+from new_api_cockpit import balance, quota
 
 
 class ManagementError(ValueError):

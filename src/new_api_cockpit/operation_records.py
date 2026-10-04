@@ -11,7 +11,7 @@ import uuid
 
 from psycopg.types.json import Jsonb
 
-from new_api_statistics import balance
+from new_api_cockpit import balance
 
 
 RULE_FIELDS = (
@@ -29,7 +29,7 @@ RULE_FIELDS = (
 
 
 def ready():
-    from new_api_statistics.user_management import ManagementError
+    from new_api_cockpit.user_management import ManagementError
 
     if not balance.configured():
         raise ManagementError("写操作需要监控数据库保存操作记录。")
@@ -168,7 +168,7 @@ def record_rule(conn, operator, action, rule_id, before, after):
 
 
 def _operator(username):
-    from new_api_statistics import user_management as management
+    from new_api_cockpit import user_management as management
 
     operator = management.actor(username)
     ready()
@@ -176,7 +176,7 @@ def _operator(username):
 
 
 def _cursor(value):
-    from new_api_statistics.user_management import ManagementError
+    from new_api_cockpit.user_management import ManagementError
 
     try:
         if not isinstance(value, str) or len(value) > 512:
@@ -201,7 +201,7 @@ def _cursor(value):
 
 
 def list_records(username, args):
-    from new_api_statistics.user_management import ManagementError
+    from new_api_cockpit.user_management import ManagementError
 
     operator = _operator(username)
     params = []
@@ -288,7 +288,7 @@ def list_records(username, args):
 
 
 def detail(username, source, record_id, after=-1):
-    from new_api_statistics.user_management import ManagementError, Forbidden
+    from new_api_cockpit.user_management import ManagementError, Forbidden
 
     operator = _operator(username)
     try:

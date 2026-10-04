@@ -1,1 +1,0 @@
-"""newapi-cockpit application package."""

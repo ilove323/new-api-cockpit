@@ -10,7 +10,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 DSN = os.environ.get("TEST_SCHEDULE_DATABASE_URL")
-MIGRATIONS = Path(__file__).resolve().parents[1] / "src/new_api_statistics/migrations"
+MIGRATIONS = Path(__file__).resolve().parents[1] / "src/new_api_cockpit/migrations"
 
 
 @unittest.skipUnless(DSN, "Requires an isolated PostgreSQL fixture database")

@@ -1,6 +1,6 @@
 services:
   statistics:
-    image: ghcr.io/ilove323/new-api-statistics:${IMAGE_TAG:?Set IMAGE_TAG to a released version}
+    image: ghcr.io/ilove323/new-api-cockpit:${IMAGE_TAG:?Set IMAGE_TAG to a released version}
     restart: unless-stopped
     stop_grace_period: 90s
     env_file: .env

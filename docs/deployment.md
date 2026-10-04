@@ -170,7 +170,7 @@ curl -H 'Authorization: Bearer <管理员PAT>' \
 | SQL | 位置 | 执行方式 |
 |---|---|---|
 | 监控建库 | [余额监控](monitoring.md#独立数据库) | PostgreSQL 管理员首次创建独立库和账号 |
-| 应用表结构 | [migrations](../src/new_api_statistics/migrations/) 的 `001`～`010` | 容器启动自动按编号执行尚未登记的文件 |
+| 应用表结构 | [migrations](../src/new_api_cockpit/migrations/) 的 `001`～`010` | 容器启动自动按编号执行尚未登记的文件 |
 | 缺失 PAT 补建函数 | [source_pat_function.sql](../sql/source_pat_function.sql) | New API 原库表所有者单独安装，再向查询角色授权 EXECUTE |
 
 `source_pat_function.sql` 不是建库脚本，也不修改用户余额、密码或 KEY。

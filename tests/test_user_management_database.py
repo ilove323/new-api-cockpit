@@ -12,7 +12,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from new_api_statistics import (
+from new_api_cockpit import (
     balance,
     quota,
     operation_records,
@@ -250,7 +250,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
         )
 
     def test_preview_and_uninitiated_remaining_targets_are_not_operation_records(self):
-        from new_api_statistics import operation_records as records
+        from new_api_cockpit import operation_records as records
 
         with psycopg.connect(DSN) as c:
             c.cursor().executemany(
@@ -304,7 +304,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
             )
 
     def test_manual_quota_stops_without_journaling_unsent_waves(self):
-        from new_api_statistics import operation_records as records
+        from new_api_cockpit import operation_records as records
 
         with psycopg.connect(DSN) as c:
             c.cursor().executemany(
@@ -457,7 +457,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
     def test_manual_quota_records_before_sending_and_after_results_without_source_writes(
         self,
     ):
-        from new_api_statistics import operation_records as records
+        from new_api_cockpit import operation_records as records
 
         observed = []
 
@@ -498,7 +498,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
     def test_unified_history_pagination_handles_same_timestamp_and_keeps_legacy_runs(
         self,
     ):
-        from new_api_statistics import operation_records as records
+        from new_api_cockpit import operation_records as records
         from psycopg.types.json import Jsonb
 
         with self.monitor() as c:
@@ -562,7 +562,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
                 records.list_records("admin", {"before": cursor})
 
     def test_scheduled_rule_changes_and_audit_commit_together(self):
-        from new_api_statistics import quota_schedule, operation_records as records
+        from new_api_cockpit import quota_schedule, operation_records as records
 
         values = {
             "groups": ["a"],

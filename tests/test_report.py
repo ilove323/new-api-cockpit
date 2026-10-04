@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 from openpyxl import load_workbook
 
-from new_api_statistics.app import app
-from new_api_statistics.report import (
+from new_api_cockpit.app import app
+from new_api_cockpit.report import (
     current_prices,
     price_details,
     decorate,
@@ -375,7 +375,7 @@ class ReportTest(unittest.TestCase):
         self.assertTrue(cost_formula(row)["converted"])
 
     def test_site_name_database_and_fallback(self):
-        with patch("new_api_statistics.report.psycopg.connect") as connect:
+        with patch("new_api_cockpit.report.psycopg.connect") as connect:
             conn = connect.return_value.__enter__.return_value
             for value, expected in [
                 (("示例网关",), "示例网关"),
@@ -388,9 +388,9 @@ class ReportTest(unittest.TestCase):
 
     def test_site_name_rendered_and_escaped(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.app.load_site_name", return_value="示例网关<script>"
+                "new_api_cockpit.app.load_site_name", return_value="示例网关<script>"
             ),
         ):
             response = app.test_client().get(
@@ -738,8 +738,8 @@ class ReportTest(unittest.TestCase):
 
     def test_developer_mode_does_not_change_excel(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.app.load_report", return_value=self.rows),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_report", return_value=self.rows),
         ):
             books = []
             for suffix in ["", "&dev=0", "&dev=1", "&dev=2"]:
@@ -758,9 +758,9 @@ class ReportTest(unittest.TestCase):
 
     def test_developer_two_requests_failure_aggregation(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.app.load_report", return_value=deepcopy(self.rows)
+                "new_api_cockpit.app.load_report", return_value=deepcopy(self.rows)
             ) as load,
         ):
             response = app.test_client().get(
@@ -774,7 +774,7 @@ class ReportTest(unittest.TestCase):
 
     def test_auth_and_user_model_filters(self):
         with patch(
-            "new_api_statistics.app.verify_admin",
+            "new_api_cockpit.app.verify_admin",
             side_effect=lambda u, p: u == "test_admin" and p == "testing",
         ):
             client = app.test_client()
@@ -782,7 +782,7 @@ class ReportTest(unittest.TestCase):
                 client.get("/cockpit/statistics/api/usage").status_code, 401
             )
             with patch(
-                "new_api_statistics.app.load_report", return_value=deepcopy(self.rows)
+                "new_api_cockpit.app.load_report", return_value=deepcopy(self.rows)
             ):
                 response = client.get(
                     "/cockpit/statistics/api/usage?start=2026-07-26&end=2026-08-25",
@@ -821,10 +821,8 @@ class ReportTest(unittest.TestCase):
     def test_token_detail_endpoint_is_separate_from_excel(self):
         token_rows = [dict(self.rows[0], token_id=7, token_name="key-a")]
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch(
-                "new_api_statistics.app.load_report", return_value=token_rows
-            ) as load,
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_report", return_value=token_rows) as load,
         ):
             response = app.test_client().get(
                 "/cockpit/statistics/api/usage/by-token?start=2026-07-26&end=2026-08-25",
@@ -837,15 +835,15 @@ class ReportTest(unittest.TestCase):
     def test_token_group_options_and_filtered_summary_endpoints(self):
         token_rows = [dict(token_id=7, token_name="key-a")]
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.app.load_token_options", return_value=token_rows
+                "new_api_cockpit.app.load_token_options", return_value=token_rows
             ) as options,
             patch(
-                "new_api_statistics.app.load_group_options",
+                "new_api_cockpit.app.load_group_options",
                 return_value=[{"group_name": "auto"}],
             ) as groups,
-            patch("new_api_statistics.app.load_report", return_value=self.rows) as load,
+            patch("new_api_cockpit.app.load_report", return_value=self.rows) as load,
         ):
             client = app.test_client()
             response = client.get(

@@ -26,7 +26,7 @@
 
 字体文件与许可在 `static/fonts/`；图标文件在 `static/icons/`，静态按钮与导航共用
 `static/icons.svg` 和 `partials/icons.html`。字体和图标随安装包分发，保留原始许可，见 [NOTICE](../NOTICE)。
-这些资源与页面一样要求管理员认证。
+公共资源统一从 `/cockpit/static/` 提供，与页面一样要求管理员认证。
 
 ## 按钮与功能位置
 

@@ -2,7 +2,7 @@
 
 维护者：ilove323。版本唯一来源为 `pyproject.toml`。
 依赖范围使用 `requirements.txt`，不生成依赖锁文件。
-历史发布说明统一放在 [GitHub Releases](https://github.com/ilove323/new-api-statistics/releases)，
+历史发布说明统一放在 [GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)，
 仓库文档只描述当前代码与操作方法。
 
 ## 仓库权限

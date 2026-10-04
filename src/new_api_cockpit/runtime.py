@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 
-from new_api_statistics import balance
+from new_api_cockpit import balance
 
 
 def main():
@@ -27,7 +27,7 @@ def main():
             command = [
                 command[0],
                 "--config",
-                "python:new_api_statistics.gunicorn_conf",
+                "python:new_api_cockpit.gunicorn_conf",
                 *command[1:],
             ]
         os.execvp(command[0], command)

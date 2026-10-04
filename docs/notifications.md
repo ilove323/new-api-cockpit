@@ -47,5 +47,5 @@ API 不回传凭据或密文；编辑时留空沿用原值。更改飞书应用 
 飞书访问凭证按有效期缓存，过期刷新；钉钉请求按配置生成毫秒时间戳与 HMAC-SHA256 签名。
 请求不跟随重定向，不记录 Webhook、访问令牌、密钥或响应中的敏感信息。
 
-通用配置与分发在 `src/new_api_statistics/notifications.py`；各渠道独立放在同包的 `notification_channels/`，
+通用配置与分发在 `src/new_api_cockpit/notifications.py`；各渠道独立放在同包的 `notification_channels/`，
 当前实现为 `feishu_app.py` 和 `dingtalk_webhook.py`。报警配置不影响原统计和 Excel 导出。

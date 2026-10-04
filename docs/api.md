@@ -68,8 +68,8 @@ checked_at、timezone，金额为数字，时间为带时区 ISO 8601。
 上述 `/cockpit/statistics/api/balance` 与 `/cockpit/statistics/api/alert` 对外接口仅使用管理员 PAT Bearer。
 现有 /cockpit/statistics/ Nginx 转发即可覆盖新接口。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
 
-数据库只读账号需要 users 表（包含 access_token）的 SELECT 权限；
-无需 tokens 表权限，无需修改数据库结构或新建密钥表。
+这两个对外接口的 PAT 校验只读取 users（包含 access_token），不读取模型调用 KEY。
+完整应用的查询权限还包括 tokens 等表，见[部署](deployment.md)；无需新建 API 密钥表。
 
 ## 账本选择
 

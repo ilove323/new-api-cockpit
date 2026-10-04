@@ -10,7 +10,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from new_api_statistics import balance
+from new_api_cockpit import balance
 
 CONNECT = psycopg.connect
 DSN = os.environ.get("MONITOR_DATABASE_URL")
@@ -43,6 +43,6 @@ class MonitorTestCase(unittest.TestCase):
             patch.object(balance, "source_channels", return_value=self.catalog)
         )
         self.notify = self.enterContext(
-            patch("new_api_statistics.notifications.notify_safely")
+            patch("new_api_cockpit.notifications.notify_safely")
         )
         balance.initialize()

@@ -11,12 +11,12 @@
 - 更新应用镜像时同时使用配套 Compose，不把当前源码模板与不包含该实现的发布镜像混用。
 - 本文只操作统计项目；不对 New API、PostgreSQL、Redis 项目执行 `down` 或清空数据库。
 
-备份监控库（示例库名为 `new_api_statistics`，应按自己的配置核对）：
+备份监控库（示例库名为 `new_api_cockpit`，应按自己的配置核对）：
 
 ```bash
 umask 077
 docker exec <PostgreSQL容器名> sh -lc \
-  'pg_dump -U "$POSTGRES_USER" -Fc new_api_statistics' > /安全备份目录/monitor.dump
+  'pg_dump -U "$POSTGRES_USER" -Fc new_api_cockpit' > /安全备份目录/monitor.dump
 
 docker exec -i <PostgreSQL容器名> pg_restore -l \
   < /安全备份目录/monitor.dump > /安全备份目录/monitor.contents.txt
@@ -24,6 +24,10 @@ docker exec -i <PostgreSQL容器名> pg_restore -l \
 
 确认备份非空并能列出内容，再继续升级。New API 原库按其自身备份策略单独备份，
 不要将监控库恢复操作用于原库。通知加密密钥与数据库备份缺一不可。
+
+目录或仓库改名不要求重命名数据库、角色或源库 PAT 函数。保留现有 `.env`、连接串与
+Compose 项目名；需要固定项目名时使用 `COMPOSE_PROJECT_NAME` 或 `docker compose -p <现有项目名>`。
+应用服务名保持 `statistics`，避免升级产生另一组应用容器。
 
 ## 停止与更新
 
@@ -73,10 +77,10 @@ Docker entrypoint 在启动网页前应用 `migrations/` 中尚未执行的脚�
 非 Docker 部署使用统一入口，自动应用迁移和 Gunicorn 生命周期配置：
 
 ```bash
-python -m new_api_statistics.runtime gunicorn --bind 127.0.0.1:8000 new_api_statistics.app:app
+python -m new_api_cockpit.runtime gunicorn --bind 127.0.0.1:8000 new_api_cockpit.app:app
 ```
 
-`python -m new_api_statistics.runtime` 不带命令时仅执行迁移，不启动网页或定时器。
+`python -m new_api_cockpit.runtime` 不带命令时仅执行迁移，不启动网页或定时器。
 如使用自定义 Gunicorn 配置，须引入[定时器生命周期钩子](quota.md#部署与数据库)。
 
 ## 升级后验证

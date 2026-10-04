@@ -7,10 +7,10 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from new_api_statistics.app import app
+from new_api_cockpit.app import app
 
 
-ROOT = Path(__file__).resolve().parents[1] / "src/new_api_statistics"
+ROOT = Path(__file__).resolve().parents[1] / "src/new_api_cockpit"
 
 
 class Page(HTMLParser):
@@ -56,10 +56,8 @@ class UITest(unittest.TestCase):
 
     def page(self, route):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch(
-                "new_api_statistics.app.load_site_name", return_value="Fixture <site>"
-            ),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_site_name", return_value="Fixture <site>"),
         ):
             response = self.client.get("/cockpit/" + route + "/", auth=self.auth)
             self.assertEqual(response.status_code, 200)
@@ -108,7 +106,7 @@ class UITest(unittest.TestCase):
             for file in re.findall(r'url\("([^"\)]+)"\)', text):
                 self.assertTrue((ROOT / "static" / file).is_file(), (css, file))
                 assets.add(file)
-        with patch("new_api_statistics.app.verify_admin", return_value=True):
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
             for file in assets:
                 path = "/cockpit/static/" + file
                 denied = self.client.get(path)

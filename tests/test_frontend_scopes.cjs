@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
-const root=path.join(__dirname,'../src/new_api_statistics');
+const root=path.join(__dirname,'../src/new_api_cockpit');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const html=read('templates/index.html');
 class Element {

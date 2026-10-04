@@ -1,6 +1,6 @@
 /* Functional DOM fixtures; no browser, production database or native mutations. */
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-const root=path.join(__dirname,'../src/new_api_statistics');
+const root=path.join(__dirname,'../src/new_api_cockpit');
 class Element{
   constructor(tag='div'){this.tag=tag;this.children=[];this.events={};this.textContent='';this.value='';this.checked=false;this.open=false;this.disabled=false;this.hidden=false;this.classList={toggle(){},add(){}};}
   append(...items){this.children.push(...items);}

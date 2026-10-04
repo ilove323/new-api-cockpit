@@ -4,7 +4,7 @@ import re
 import unittest
 from unittest.mock import patch
 
-from new_api_statistics.app import app
+from new_api_cockpit.app import app
 
 
 class CockpitRoutesTest(unittest.TestCase):
@@ -14,8 +14,8 @@ class CockpitRoutesTest(unittest.TestCase):
 
     def test_all_four_pages_and_their_assets_are_authenticated(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.app.load_site_name", return_value="Fixture"),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_site_name", return_value="Fixture"),
         ):
             for route, title in (
                 ("statistics", "用量统计"),
@@ -47,7 +47,7 @@ class CockpitRoutesTest(unittest.TestCase):
                 or rule.rule.startswith("/cockpit/"),
                 rule.rule,
             )
-        with patch("new_api_statistics.app.verify_admin", return_value=True):
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
             for old in (
                 "/statistics",
                 "/statistics/",
@@ -77,8 +77,8 @@ class CockpitRoutesTest(unittest.TestCase):
 
     def test_canonical_external_balance_paths_require_admin_pat(self):
         with (
-            patch("new_api_statistics.app.verify_api_key", return_value=True),
-            patch("new_api_statistics.app.balance.snapshot", return_value={}) as unused,
+            patch("new_api_cockpit.app.verify_api_key", return_value=True),
+            patch("new_api_cockpit.app.balance.snapshot", return_value={}) as unused,
         ):
             for suffix in ("balance", "alert"):
                 for prefix in ("/cockpit/statistics",):
@@ -93,12 +93,12 @@ class CockpitRoutesTest(unittest.TestCase):
 
     def test_operation_records_are_read_only_and_profile_writes_check_origin(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.app.operation_records.list_records",
+                "new_api_cockpit.app.operation_records.list_records",
                 return_value={"rows": [], "next_before": None},
             ),
-            patch("new_api_statistics.app.user_management.single_action") as mutate,
+            patch("new_api_cockpit.app.user_management.single_action") as mutate,
         ):
             self.assertEqual(
                 self.client.get(

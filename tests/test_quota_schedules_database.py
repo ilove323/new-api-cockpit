@@ -15,13 +15,13 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from cryptography.fernet import Fernet
 
-from new_api_statistics import balance, locks, notifications, quota, operation_records
-from new_api_statistics import quota_timer
-from new_api_statistics import (
+from new_api_cockpit import balance, locks, notifications, quota, operation_records
+from new_api_cockpit import quota_timer
+from new_api_cockpit import (
     quota_schedule as schedules,
     quota_schedule_executor as executor,
 )
-from new_api_statistics.report import TZ
+from new_api_cockpit.report import TZ
 
 DSN = os.environ.get("TEST_SCHEDULE_DATABASE_URL") or os.environ.get(
     "MONITOR_DATABASE_URL"
@@ -553,7 +553,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assert_no_record(run_id)
 
     def test_plan_is_not_a_record_and_inflight_count_is_uncertain(self):
-        from new_api_statistics import operation_records
+        from new_api_cockpit import operation_records
 
         run_id = self.queued()
         self.assertFalse(

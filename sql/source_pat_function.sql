@@ -31,4 +31,4 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) FROM PUBLIC;
 -- Example (replace with your existing reader role):
--- GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) TO statistics_reader;
+-- GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) TO cockpit_reader;

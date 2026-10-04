@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from database import isolated_schema
-from new_api_statistics import balance
+from new_api_cockpit import balance
 
 MIGRATIONS = sorted(Path(balance.__file__).with_name("migrations").glob("[0-9]*.sql"))
 

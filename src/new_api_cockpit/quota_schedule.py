@@ -6,9 +6,9 @@ from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
-from new_api_statistics import balance, quota
-from new_api_statistics.locks import QUOTA_SCHEDULER_LOCK
-from new_api_statistics.report import TZ
+from new_api_cockpit import balance, quota
+from new_api_cockpit.locks import QUOTA_SCHEDULER_LOCK
+from new_api_cockpit.report import TZ
 
 NOTIFY_CHANNEL = "quota_schedule_changed"
 LEADER_LOCK = QUOTA_SCHEDULER_LOCK
@@ -248,7 +248,7 @@ def save_rule(username, body, rule_id=None, now=None, *, audit_action=None):
                 "INSERT INTO quota_schedule_rule_groups(rule_id,group_name) VALUES (%s,%s)",
                 (rule_id, group),
             )
-        from new_api_statistics.operation_records import record_rule
+        from new_api_cockpit.operation_records import record_rule
 
         record_rule(
             conn,
@@ -283,7 +283,7 @@ def delete_rule(username, rule_id, body):
             deleted_at=now(),updated_at=now(),version=version+1 WHERE id=%s""",
             (rule_id,),
         )
-        from new_api_statistics.operation_records import record_rule
+        from new_api_cockpit.operation_records import record_rule
 
         record_rule(
             conn,
