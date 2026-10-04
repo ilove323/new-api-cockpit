@@ -60,7 +60,9 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 函数为受限 `SECURITY DEFINER`：固定 `search_path`，显式访问 `public.users`，
 校验管理员/目标用户角色与状态，只在 PAT 为空时更新相关字段；已撤销 PUBLIC 执行权限。
 该函数调用能力只交给受信任的应用服务，不开放给普通用户数据库连接。
-普通查询仍使用只读事务，函数调用单独使用可写事务，但角色不拥有直接表写权限。
+普通查询仍使用只读事务。补建函数的专用连接显式设置
+`default_transaction_read_only=off`，覆盖查询角色可能配置的只读默认值；
+这不会修改角色配置，也不授予业务表直接写权限。函数调用单独使用可写事务。
 没有安装或授权函数时，已有 PAT 的操作可使用；缺失 PAT 时明确报错，不尝试扩大数据库权限。
 不同版本或 fork 应先核对 PAT 字段和生成规则，不支持只保存哈希且无法回读的 PAT 存储格式。
 

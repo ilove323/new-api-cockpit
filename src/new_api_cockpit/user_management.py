@@ -148,9 +148,10 @@ def owner_pat(operator, user_id):
                 # Dedicated write-capable transaction; ordinary source queries
                 # keep default_transaction_read_only=on. The reader has no
                 # UPDATE grants, only EXECUTE on this SECURITY DEFINER function.
+                # Override a reader role's read-only default for this connection.
                 with psycopg.connect(
                     connect_timeout=8,
-                    options="-c statement_timeout=10000 -c lock_timeout=5000",
+                    options="-c default_transaction_read_only=off -c statement_timeout=10000 -c lock_timeout=5000",
                 ) as conn:
                     candidate = generate_pat()
                     committed = conn.execute(

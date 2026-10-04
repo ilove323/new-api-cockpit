@@ -215,6 +215,47 @@ class UserManagementDatabaseTest(unittest.TestCase):
         with self.assertRaises(manage.ManagementError):
             manage.owner_pat(self.operator, 4)
 
+    def test_missing_pat_overrides_readonly_default_with_function_only_privilege(self):
+        real_connect = psycopg.connect
+
+        def reader_default_connect(*args, **kwargs):
+            if args:
+                return real_connect(*args, **kwargs)
+            # Emulate the source role's read-only default before caller options.
+            kwargs["options"] = "-c default_transaction_read_only=on " + kwargs.get(
+                "options", ""
+            )
+            conn = real_connect(DSN, **kwargs)
+            conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
+            self.assertFalse(
+                conn.execute(
+                    "SELECT has_table_privilege(current_user,'public.users','UPDATE')"
+                ).fetchone()[0]
+            )
+            return conn
+
+        with patch.object(
+            manage.psycopg, "connect", side_effect=reader_default_connect
+        ):
+            pat = manage.owner_pat(self.operator, 2)
+        self.assertTrue(pat)
+        with self.source() as conn:
+            self.assertEqual(
+                conn.execute("SHOW transaction_read_only").fetchone()[
+                    "transaction_read_only"
+                ],
+                "on",
+            )
+            self.assertEqual(
+                conn.execute("SELECT access_token FROM users WHERE id=2").fetchone()[
+                    "access_token"
+                ],
+                pat,
+            )
+        records = operation_records.list_records("admin", {"kind": "user"})["rows"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["action"], "user.pat_create")
+
     def test_pat_records_show_target_identity_and_preserve_legacy_user_ids(self):
         pat = manage.owner_pat(self.operator, 2)
         record = operation_records.list_records("admin", {"kind": "user"})["rows"][0]

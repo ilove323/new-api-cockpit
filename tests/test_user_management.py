@@ -65,7 +65,7 @@ class UserManagementTest(unittest.TestCase):
         with (
             patch.object(manage, "target", return_value=self.user),
             patch.object(manage.quota, "connect", return_value=read),
-            patch.object(manage.psycopg, "connect", return_value=write),
+            patch.object(manage.psycopg, "connect", return_value=write) as writer,
             patch.object(manage, "_audit_ready"),
             patch.object(manage, "_record_pat_creation"),
         ):
@@ -75,6 +75,9 @@ class UserManagementTest(unittest.TestCase):
             "SELECT public.statistics_ensure_user_pat(%s,%s,%s)",
         )
         self.assertNotIn("UPDATE", write.execute.call_args.args[0])
+        self.assertIn(
+            "-c default_transaction_read_only=off", writer.call_args.kwargs["options"]
+        )
 
     def test_filters_are_literal_parameterized_and_fail_closed(self):
         query, params = manage.filters(
