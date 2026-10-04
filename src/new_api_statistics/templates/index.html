@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{{ site_name }} · 用量统计</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='user-display.css') }}">
   <script defer src="{{ url_for('static', filename='presets.js') }}"></script>
   <script defer src="{{ url_for('static', filename='money-tooltip.js') }}"></script>
   <script defer src="{{ url_for('static', filename='scopes.js') }}"></script>
@@ -12,26 +12,32 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='balance.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='channel.css') }}">
   <script defer src="{{ url_for('static', filename='balance.js') }}"></script>
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <script defer src="/cockpit/static/navigation.js"></script>
 </head>
-<body>
-  <header><span class="brand">{{ site_name }} <span>用量统计</span></span>
-    <div class="header-actions"><a class="quota-nav" href="/quota/">用户配额</a><span id="updated">北京时间</span>
-      <button id="balance-bell" class="icon-button" type="button" title="余额警报" aria-label="余额警报">
-        <img src="{{ url_for('static', filename='bell.svg') }}" alt="" width="20" height="20">
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}
+    <div class="header-actions"><span id="updated">北京时间</span>
+      <button id="balance-bell" class="icon-button button-ghost" type="button" title="余额警报" aria-label="余额警报">
+        {{ icon('bell', 'header-icon') }}
       </button>
-      <button id="balance-gear" class="icon-button" type="button" title="余额监控设置" aria-label="余额监控设置">
-        <img src="{{ url_for('static', filename='settings.svg') }}" alt="" width="20" height="20">
+      <button id="balance-gear" class="icon-button button-ghost" type="button" title="余额监控设置" aria-label="余额监控设置">
+        {{ icon('settings', 'header-icon') }}
       </button>
     </div>
-  </header>
-  <main>
+  {% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main class="statistics-page">
+    <section class="page-panel" aria-labelledby="statistics-title">
+    <div class="page-heading"><h1 id="statistics-title">用量统计</h1><div class="page-actions"><button id="export" class="button-small" type="button" disabled>{{ icon('download') }}导出 Excel</button></div></div>
     <nav id="scope-tabs" class="scope-tabs" role="tablist" aria-label="上游账本"></nav>
     <p id="scope-status" role="status">正在读取账本…</p>
     <form id="query">
       <label>开始时间（北京时间）<input id="start" name="start" type="datetime-local" step="1" value="{{ start }}" required></label>
       <label>结束时间（北京时间）<input id="end" name="end" type="datetime-local" step="1" value="{{ end }}" required></label>
-      <button type="submit" id="submit">查询</button>
-      <button id="export" type="button" disabled>导出 Excel</button>
+      <button type="submit" id="submit">{{ icon('search') }}查询</button>
     </form>
     <div class="presets" aria-label="快捷时间范围">
       <button type="button" data-preset="month">上个月</button>
@@ -41,6 +47,7 @@
       <button type="button" data-preset="1">近1天</button>
     </div>
     <p id="status" role="status" aria-live="polite">等待查询</p>
+    </section>
     <section class="metrics" aria-label="区间汇总">
       <div><span>消费金额</span><strong id="amount">—</strong></div>
       <div><span>总 Token</span><strong id="total_tokens">—</strong></div>
@@ -52,7 +59,7 @@
       <div><span>区间平均 RPM</span><strong id="rpm">—</strong></div>
       <div><span>用户 / 模型</span><strong id="counts">—</strong></div>
     </section>
-    <section class="chart-section">
+    <section class="chart-section page-panel">
       <div class="ranking-tabs" role="tablist" aria-label="用量排序">
         <button id="tab-model" role="tab" type="button" data-ranking="model_amount" aria-selected="true" aria-controls="chart">模型消费</button>
         <button id="tab-token" role="tab" type="button" data-ranking="user_tokens" aria-selected="false" aria-controls="chart" tabindex="-1">用户 Token</button>
@@ -60,24 +67,24 @@
       </div>
       <div id="chart" role="tabpanel" aria-labelledby="tab-model"></div>
     </section>
-    <section><div class="table-heading"><div class="detail-title"><h2>用户模型明细</h2><div class="detail-mode" role="group" aria-label="令牌展示方式">
+    <section class="page-panel"><div class="table-heading"><div class="detail-title"><h2>用户模型明细</h2><div class="detail-mode" role="group" aria-label="令牌展示方式">
       <button type="button" data-detail-mode="summary" aria-pressed="true">令牌汇总</button><button type="button" data-detail-mode="token" aria-pressed="false">分令牌</button>
     </div><div class="detail-mode" role="group" aria-label="模型展示方式">
       <button type="button" data-model-mode="summary" aria-pressed="false">模型汇总</button><button type="button" data-model-mode="model" aria-pressed="true">分模型</button>
     </div></div><div class="detail-controls">
-      <div class="detail-filter"><span>用户</span><details class="filter-picker">
+      <div class="detail-filter"><span class="sr-only">用户</span><details class="filter-picker">
         <summary id="user-summary">全部用户</summary><div id="user-options" class="filter-menu" aria-label="筛选用户"></div>
       </details></div>
-      <div class="detail-filter"><span>模型</span><details class="filter-picker">
+      <div class="detail-filter"><span class="sr-only">模型</span><details class="filter-picker">
         <summary id="model-summary">全部模型</summary><div id="model-options" class="filter-menu" aria-label="筛选模型"></div>
       </details></div>
-      <div class="detail-filter"><span>令牌</span><details id="token-filter" class="filter-picker">
+      <div class="detail-filter"><span class="sr-only">令牌</span><details id="token-filter" class="filter-picker">
         <summary id="token-summary">全部令牌</summary><div id="token-options" class="filter-menu" aria-label="筛选令牌"></div>
       </details></div>
-      <div class="detail-filter"><span>分组</span><details id="group-filter" class="filter-picker">
+      <div class="detail-filter"><span class="sr-only">分组</span><details id="group-filter" class="filter-picker">
         <summary id="group-summary">全部分组</summary><div id="group-options" class="filter-menu" aria-label="筛选分组"></div>
       </details></div>
-      <span>价格单位：元 / 百万 Token</span>
+      <span class="price-unit">价格单位：元 / 百万 Token</span>
       <details class="column-picker"><summary>显示列</summary><div class="column-menu" aria-label="选择明细表显示列">
         <label><input type="checkbox" data-column-toggle="username" checked>用户名</label>
         <label><input type="checkbox" data-column-toggle="request_count" checked>消费请求数</label>

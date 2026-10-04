@@ -25,8 +25,6 @@ SQL 集成测试使用独立 PostgreSQL 库。在当前终端设置仅属于测�
 
 ```bash
 .venv/bin/python -m unittest discover -s tests
-.venv/bin/python tests/check_migrations.py
-.venv/bin/python tests/check_balance_database.py
 ```
 
 定时配额集成测试也可通过 `TEST_SCHEDULE_DATABASE_URL` 指定独立测试库。
@@ -38,6 +36,7 @@ SQL 集成测试使用独立 PostgreSQL 库。在当前终端设置仅属于测�
 临时库不创建配额规则，不调用真实额度修改或报警接口。其余 DOM 测试不启动浏览器。
 
 通过 Issue 说明问题，通过 PR 提交修改；PR 说明行为变化、验证结果及升级影响。
+Python 单元与 PostgreSQL 集成测试统一由 `unittest discover` 执行，不需要额外的手工检查脚本。
 迁移脚本追加到 `src/new_api_statistics/migrations/`，编号递增，不修改已发布迁移。
 发版流程见 [releasing.md](docs/releasing.md)。
 

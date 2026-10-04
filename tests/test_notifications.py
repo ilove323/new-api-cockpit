@@ -223,7 +223,7 @@ class NotificationsTest(unittest.TestCase):
 
     def test_routes_and_csrf(self):
         client = app.test_client()
-        base = "/statistics/api/balance/channel"
+        base = "/cockpit/statistics/api/balance/channel"
         with (
             patch("new_api_statistics.app.verify_admin", return_value=True),
             patch("new_api_statistics.notifications.save") as save,
@@ -274,7 +274,7 @@ class NotificationsTest(unittest.TestCase):
 
     def test_alert_api_uses_new_api_bearer_auth(self):
         client = app.test_client()
-        url = "/statistics/api/alert"
+        url = "/cockpit/statistics/api/alert"
         with (
             patch(
                 "new_api_statistics.app.verify_api_key",

@@ -1,0 +1,35 @@
+.management-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.batch-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-radius: 16px; background: var(--ui-muted); padding: 12px; margin: 12px 0; }
+.batch-toolbar .batch-target { display: flex; flex-direction: row; align-items: center; gap: 8px; margin-left: auto; }
+#token-selection-count { font-size: 12px; color: var(--ui-muted-text); }
+.management-wide { width: 1180px; }
+.management-wide .table-wrap { max-height: 50vh; }
+#management-table { min-width: 1300px; }
+#management-table th, #management-table td { white-space: nowrap; text-align: left; }
+#management-table .money { text-align: right; }
+#management-table .row-actions { min-width: 200px; text-align: right; }
+#management-table th:last-child { text-align: right; }
+#management-table .user-cell { position: sticky; left: 0; z-index: 1; min-width: 220px; max-width: 280px; white-space: normal; vertical-align: middle; background: var(--ui-background); border-right: 1px solid var(--ui-border); }
+#management-table th:first-child { position: sticky; left: 0; z-index: 3; }
+.user-name { display: block; font-size: 14px; font-weight: 600; }
+.user-meta { overflow-wrap: anywhere; }
+.user-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.user-actions button { height: 28px; min-height: 28px; font-size: 12px; }
+#management-table .user-group-start:not(:first-child) td { border-top: 1px solid var(--ui-border); }
+#edit-fields, #user-profile-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+#edit-fields label.full { grid-column: 1/-1; }
+#edit-fields label.check { flex-direction: row; align-items: center; }
+#edit-fields textarea, #user-profile-fields textarea { width: 100%; }
+#revealed-key, #search-full-key { width: 100%; font-family: ui-monospace, monospace; }
+#token-info { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 8px 16px; }
+#token-info dt { color: var(--ui-muted-text); font-size: 12px; }
+#token-info dd { margin: 0; overflow-wrap: anywhere; }
+#records-rows td, #records-items td { text-align: left; white-space: normal; }
+#records-rows td:nth-child(4), #records-items td:nth-child(3), #records-items td:nth-child(4) { max-width: 420px; overflow-wrap: anywhere; font-size: 12px; }
+#records-rows td:nth-child(1) { min-width: 170px; font-size: 12px; }
+.operations-page table { min-width: 850px; }
+@media (max-width:700px) {
+  #edit-fields, #user-profile-fields { grid-template-columns: 1fr; }
+  .batch-toolbar .batch-target { width: 100%; margin-left: 0; flex-wrap: wrap; }
+  .batch-toolbar select { flex: 1; }
+}

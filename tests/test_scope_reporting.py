@@ -47,7 +47,7 @@ class ScopeReportingTest(unittest.TestCase):
 
     def get(self, path, query=None):
         return self.client.get(
-            "/statistics/api/" + path + "?" + (query or self.query),
+            "/cockpit/statistics/api/" + path + "?" + (query or self.query),
             headers=self.headers,
         )
 
@@ -160,7 +160,7 @@ class ScopeReportingTest(unittest.TestCase):
                 ) as call,
             ):
                 response = getattr(self.client, method)(
-                    "/statistics/api/" + path + "?scope_id=3",
+                    "/cockpit/statistics/api/" + path + "?scope_id=3",
                     headers=self.headers,
                     json={},
                 )
@@ -176,7 +176,7 @@ class ScopeReportingTest(unittest.TestCase):
             ) as snapshot,
         ):
             response = self.client.post(
-                "/statistics/api/balance/check?scope_id=3",
+                "/cockpit/statistics/api/balance/check?scope_id=3",
                 json={},
                 headers=self.headers,
             )
@@ -203,7 +203,7 @@ class ScopeReportingTest(unittest.TestCase):
             patch("new_api_statistics.app.load_site_name", return_value="test"),
         ):
             response = self.client.get(
-                "/statistics/api/balance?scope_id=3",
+                "/cockpit/statistics/api/balance?scope_id=3",
                 headers={"Authorization": "Bearer fixture"},
             )
             self.assertEqual(response.status_code, 200)
@@ -218,7 +218,7 @@ class ScopeReportingTest(unittest.TestCase):
             ) as alert,
         ):
             response = self.client.get(
-                "/statistics/api/alert?scope_id=3",
+                "/cockpit/statistics/api/alert?scope_id=3",
                 headers={"Authorization": "Bearer fixture"},
             )
             self.assertEqual(

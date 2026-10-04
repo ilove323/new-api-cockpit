@@ -7,12 +7,12 @@ process lifecycle. Source queries/notifications occur only when a job is due.
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Event, Lock, Thread
 
 import psycopg
 
-from new_api_statistics import balance, balance_worker, quota_worker
+from new_api_statistics import balance, quota_timer
 from new_api_statistics.locks import BALANCE_SCHEDULER_LOCK, QUOTA_SCHEDULER_LOCK
 
 LOG = logging.getLogger(__name__)
@@ -21,11 +21,25 @@ _state = None
 STOP_TIMEOUT = 60
 
 
+def next_balance_run(now):
+    now = now.astimezone(balance.TZ)
+    scheduled = now.replace(hour=10, minute=0, second=0, microsecond=0)
+    return scheduled if now < scheduled else scheduled + timedelta(days=1)
+
+
+def record_balance_failure(exc):
+    LOG.error("Balance check failed: %s", type(exc).__name__)
+    try:
+        balance.record_failure()
+    except Exception:
+        LOG.error("Unable to persist monitor failure")
+
+
 def run_balance(stopped):
     # Initial startup always chooses a future 10:00, never a first balance check.
     # Standby processes retain this boundary so leadership handover at 10:00
     # does not silently skip the day's check.
-    scheduled = balance_worker.next_run(datetime.now(balance.TZ))
+    scheduled = next_balance_run(datetime.now(balance.TZ))
     LOG.info("Next scheduled balance check: %s", scheduled.isoformat())
     while not stopped.is_set():
         try:
@@ -51,7 +65,7 @@ def run_balance(stopped):
                     now = datetime.now(balance.TZ)
                     if now >= scheduled:
                         due = scheduled
-                        scheduled = balance_worker.next_run(now)
+                        scheduled = next_balance_run(now)
                         if stopped.is_set():
                             return
                         # Do not catch up days missed while disconnected.
@@ -59,7 +73,7 @@ def run_balance(stopped):
                             try:
                                 balance.check_all_enabled(now=now, _stopped=stopped)
                             except Exception as exc:
-                                balance_worker.log_failure(exc)
+                                record_balance_failure(exc)
                         LOG.info(
                             "Next scheduled balance check: %s", scheduled.isoformat()
                         )
@@ -94,7 +108,7 @@ def start():
                 target=run_balance, args=(stopped,), name="balance-timer", daemon=True
             ),
             Thread(
-                target=quota_worker.run,
+                target=quota_timer.run,
                 args=(stopped,),
                 name="quota-timer",
                 daemon=True,
@@ -124,7 +138,7 @@ def stop(timeout=STOP_TIMEOUT):
             options="-c statement_timeout=1000",
         ) as conn:
             conn.execute(
-                "SELECT pg_notify(%s,'')", (quota_worker.schedules.NOTIFY_CHANNEL,)
+                "SELECT pg_notify(%s,'')", (quota_timer.schedules.NOTIFY_CHANNEL,)
             )
     except Exception:
         pass  # The scheduler's bounded notification wait remains the fallback.

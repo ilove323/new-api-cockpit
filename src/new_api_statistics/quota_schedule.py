@@ -166,7 +166,9 @@ def list_rules(username):
     with balance.connect() as conn:
         rows = conn.execute("""SELECT r.*,
             ARRAY(SELECT group_name FROM quota_schedule_rule_groups g WHERE g.rule_id=r.id ORDER BY group_name) AS groups,
-            (SELECT status FROM quota_schedule_runs x WHERE x.rule_id=r.id ORDER BY id DESC LIMIT 1) AS last_status
+            (SELECT status FROM quota_schedule_runs x WHERE x.rule_id=r.id
+             AND EXISTS (SELECT 1 FROM quota_schedule_run_items i WHERE i.run_id=x.id)
+             ORDER BY id DESC LIMIT 1) AS last_status
             FROM quota_schedule_rules r WHERE deleted_at IS NULL ORDER BY id""").fetchall()
     serialized = []
     for row in rows:
@@ -184,7 +186,7 @@ def list_rules(username):
     }
 
 
-def save_rule(username, body, rule_id=None, now=None):
+def save_rule(username, body, rule_id=None, now=None, *, audit_action=None):
     initialize()
     values = validate_rule(body)
     admin = actor(username=username, require_pat=values["enabled"])
@@ -199,6 +201,13 @@ def save_rule(username, body, rule_id=None, now=None):
             ).fetchone()
             _owned(old, admin)
             _version(body, old)
+            old["groups"] = [
+                g["group_name"]
+                for g in conn.execute(
+                    "SELECT group_name FROM quota_schedule_rule_groups WHERE rule_id=%s",
+                    (rule_id,),
+                ).fetchall()
+            ]
         next_run = next_boundary(values["period"], now) if values["enabled"] else None
         # Preserve an already due boundary if only groups/amount/operation are edited.
         if (
@@ -239,6 +248,21 @@ def save_rule(username, body, rule_id=None, now=None):
                 "INSERT INTO quota_schedule_rule_groups(rule_id,group_name) VALUES (%s,%s)",
                 (rule_id, group),
             )
+        from new_api_statistics.operation_records import record_rule
+
+        record_rule(
+            conn,
+            admin,
+            audit_action or ("schedule.edit" if old else "schedule.create"),
+            rule_id,
+            old,
+            {
+                **values,
+                "executor_user_id": admin["id"],
+                "executor_username": admin["username"],
+                "next_run_at": next_run,
+            },
+        )
         _notify(conn)
     return {"id": rule_id, "next_run_at": next_run}
 
@@ -258,6 +282,16 @@ def delete_rule(username, rule_id, body):
             """UPDATE quota_schedule_rules SET enabled=false,next_run_at=NULL,
             deleted_at=now(),updated_at=now(),version=version+1 WHERE id=%s""",
             (rule_id,),
+        )
+        from new_api_statistics.operation_records import record_rule
+
+        record_rule(
+            conn,
+            admin,
+            "schedule.delete",
+            rule_id,
+            row,
+            {"enabled": False, "deleted_at": True},
         )
         _notify(conn)
 
@@ -291,49 +325,8 @@ def set_enabled(username, rule_id, body):
             "amount_yuan": str(Decimal(row["amount_units"]) / quota.QUOTA_PER_YUAN),
         },
         rule_id,
+        audit_action="schedule.enable" if body["enabled"] else "schedule.disable",
     )
-
-
-def list_runs(before=None):
-    initialize()
-    if before is not None and (type(before) is not int or before <= 0):
-        raise ValueError("执行记录分页参数无效。")
-    with balance.connect() as conn:
-        rows = conn.execute(
-            """SELECT * FROM quota_schedule_runs
-            WHERE (%s::bigint IS NULL OR id < %s) ORDER BY id DESC LIMIT 51""",
-            (before, before),
-        ).fetchall()
-    return {
-        "rows": rows[:50],
-        "next_before": rows[49]["id"] if len(rows) > 50 else None,
-    }
-
-
-def run_detail(run_id, after=0):
-    initialize()
-    if type(after) is not int or after < 0:
-        raise ValueError("用户记录分页参数无效。")
-    with balance.connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM quota_schedule_runs WHERE id=%s", (run_id,)
-        ).fetchone()
-        if not row:
-            raise ValueError("执行记录不存在。")
-        items = conn.execute(
-            """SELECT * FROM quota_schedule_run_items
-            WHERE run_id=%s AND user_id>%s ORDER BY user_id LIMIT 201""",
-            (run_id, after),
-        ).fetchall()
-    for item in items:
-        item["amount_yuan"] = str(
-            Decimal(item.pop("amount_units")) / quota.QUOTA_PER_YUAN
-        )
-    return {
-        "run": row,
-        "rows": items[:200],
-        "next_after": items[199]["user_id"] if len(items) > 200 else None,
-    }
 
 
 def claim_due(now):
@@ -367,20 +360,19 @@ def claim_due(now):
             }
             frozen["groups"] = groups
             missed = now - rule["next_run_at"] > START_WINDOW
-            run = conn.execute(
-                """INSERT INTO quota_schedule_runs(rule_id,scheduled_for,snapshot,status,message,finished_at)
-                VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id""",
-                (
-                    rule["id"],
-                    rule["next_run_at"],
-                    Jsonb(frozen),
-                    "missed" if missed else "queued",
-                    "错过执行窗口，不自动补发；期间错过的周期一并跳过。"
-                    if missed
-                    else "",
-                    now if missed else None,
-                ),
-            ).fetchone()
+            run = (
+                None
+                if missed
+                else conn.execute(
+                    """INSERT INTO quota_schedule_runs(rule_id,scheduled_for,snapshot,status)
+                VALUES (%s,%s,%s,'queued') ON CONFLICT DO NOTHING RETURNING id""",
+                    (
+                        rule["id"],
+                        rule["next_run_at"],
+                        Jsonb(frozen),
+                    ),
+                ).fetchone()
+            )
             conn.execute(
                 "UPDATE quota_schedule_rules SET next_run_at=%s WHERE id=%s",
                 (next_boundary(rule["period"], now), rule["id"]),
@@ -391,15 +383,18 @@ def claim_due(now):
 
 
 def finish_run(conn, run_id, message="", force_status=None):
+    conn.execute("DELETE FROM quota_schedule_run_targets WHERE run_id=%s", (run_id,))
     counts = conn.execute(
         """SELECT count(*)::integer AS total_count,
         count(*) FILTER (WHERE status='success')::integer AS success_count,
         count(*) FILTER (WHERE status='failed')::integer AS failed_count,
-        count(*) FILTER (WHERE status='unknown')::integer AS unknown_count,
-        count(*) FILTER (WHERE status='skipped')::integer AS skipped_count
+        count(*) FILTER (WHERE status='unknown')::integer AS unknown_count
         FROM quota_schedule_run_items WHERE run_id=%s""",
         (run_id,),
     ).fetchone()
+    if not counts["total_count"]:
+        conn.execute("DELETE FROM quota_schedule_runs WHERE id=%s", (run_id,))
+        return
     if force_status:
         status = force_status
     elif counts["unknown_count"]:
@@ -410,7 +405,7 @@ def finish_run(conn, run_id, message="", force_status=None):
         status = "partial" if counts["success_count"] else "failed"
     conn.execute(
         """UPDATE quota_schedule_runs SET status=%s,finished_at=now(),message=%s,
-        total_count=%s,success_count=%s,failed_count=%s,unknown_count=%s,skipped_count=%s
+        total_count=%s,success_count=%s,failed_count=%s,unknown_count=%s
         WHERE id=%s""",
         (
             status,
@@ -422,7 +417,6 @@ def finish_run(conn, run_id, message="", force_status=None):
                     "success_count",
                     "failed_count",
                     "unknown_count",
-                    "skipped_count",
                 )
             ),
             run_id,
@@ -443,24 +437,10 @@ def recover_interrupted():
                 WHERE run_id=%s AND status='sending'""",
                 (run["id"],),
             )
-            conn.execute(
-                """UPDATE quota_schedule_run_items SET status='skipped',finished_at=now(),message='执行进程中断，未发起。'
-                WHERE run_id=%s AND status='pending'""",
-                (run["id"],),
-            )
-            has_items = conn.execute(
-                "SELECT EXISTS(SELECT 1 FROM quota_schedule_run_items WHERE run_id=%s) AS present",
-                (run["id"],),
-            ).fetchone()["present"]
             finish_run(
                 conn,
                 run["id"],
                 "进程中断，不自动补发或续跑。",
-                force_status="missed"
-                if run["status"] == "queued"
-                else "failed"
-                if not has_items
-                else None,
             )
 
 

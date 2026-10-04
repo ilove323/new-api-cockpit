@@ -6,7 +6,7 @@ from threading import Event
 import unittest
 from unittest.mock import MagicMock, patch
 
-from new_api_statistics import quota, quota_schedule as schedules, quota_worker
+from new_api_statistics import quota, quota_schedule as schedules, quota_timer
 from new_api_statistics.app import app
 from new_api_statistics.report import TZ
 
@@ -91,10 +91,8 @@ class ScheduleTest(unittest.TestCase):
     def test_all_settings_assets_apis_require_basic_admin_auth(self):
         client = app.test_client()
         for path in [
-            "/quota/api/schedules",
-            "/quota/api/schedule-runs",
-            "/quota/api/schedule-runs/1",
-            "/quota/static/quota-schedule.js",
+            "/cockpit/users/api/schedules",
+            "/cockpit/static/quota-schedule.js",
         ]:
             self.assertEqual(client.get(path).status_code, 401)
             self.assertEqual(
@@ -108,10 +106,10 @@ class ScheduleTest(unittest.TestCase):
         client = app.test_client()
         with patch("new_api_statistics.app.verify_admin", return_value=True):
             for method, path in [
-                ("POST", "/quota/api/schedules"),
-                ("PUT", "/quota/api/schedules/1"),
-                ("PATCH", "/quota/api/schedules/1"),
-                ("DELETE", "/quota/api/schedules/1"),
+                ("POST", "/cockpit/users/api/schedules"),
+                ("PUT", "/cockpit/users/api/schedules/1"),
+                ("PATCH", "/cockpit/users/api/schedules/1"),
+                ("DELETE", "/cockpit/users/api/schedules/1"),
             ]:
                 self.assertEqual(
                     client.open(
@@ -140,7 +138,7 @@ class ScheduleTest(unittest.TestCase):
                 with patch.object(schedules, "save_rule", side_effect=error):
                     self.assertEqual(
                         client.post(
-                            "/quota/api/schedules",
+                            "/cockpit/users/api/schedules",
                             json={},
                             auth=("admin", "password"),
                             headers={"X-Quota-Action": "schedule"},
@@ -148,11 +146,11 @@ class ScheduleTest(unittest.TestCase):
                         code,
                     )
             for path in [
-                "/quota/api/schedule-runs?before=bad",
-                "/quota/api/schedule-runs/1?after=bad",
+                "/cockpit/users/api/schedule-runs?before=bad",
+                "/cockpit/users/api/schedule-runs/1?after=bad",
             ]:
                 self.assertEqual(
-                    client.get(path, auth=("admin", "password")).status_code, 400
+                    client.get(path, auth=("admin", "password")).status_code, 404
                 )
 
     def test_creating_rule_does_not_execute_or_expose_pat(self):
@@ -167,7 +165,7 @@ class ScheduleTest(unittest.TestCase):
             patch.object(quota, "_call_manage") as mutate,
         ):
             response = client.post(
-                "/quota/api/schedules",
+                "/cockpit/users/api/schedules",
                 json={"enabled": True},
                 auth=("admin", "password"),
                 headers={"X-Quota-Action": "schedule"},
@@ -183,13 +181,13 @@ class ScheduleTest(unittest.TestCase):
         leader.execute.return_value.fetchone.return_value = {"acquired": False}
         with (
             patch.object(schedules, "initialize"),
-            patch.object(quota_worker.balance, "connect", return_value=leader),
+            patch.object(quota_timer.balance, "connect", return_value=leader),
             patch.object(schedules, "recover_interrupted") as recover,
             patch.object(schedules, "claim_due") as claim,
-            patch.object(quota_worker.executor, "execute") as execute,
+            patch.object(quota_timer.executor, "execute") as execute,
         ):
             stopped = MagicMock(spec=Event)
-            quota_worker.serve(stopped)
+            quota_timer.serve(stopped)
             recover.assert_not_called()
             claim.assert_not_called()
             execute.assert_not_called()

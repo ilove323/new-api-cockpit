@@ -35,7 +35,6 @@ docker-compose.override.yaml
 *.sqlite
 *.sqlite3
 *.db
-*.xls
 build
 dist
 *.egg-info

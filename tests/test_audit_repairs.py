@@ -71,7 +71,7 @@ class RepairUnitTest(unittest.TestCase):
                 patch.object(quota, "connect") as connect,
             ):
                 response = app.test_client().post(
-                    "/quota/api/preview",
+                    "/cockpit/users/api/preview",
                     auth=("admin", "fixture"),
                     headers={"X-Quota-Action": "preview"},
                     json=dict(user_ids=[1], mode="add", amount_yuan=value),
@@ -378,7 +378,7 @@ class PerformanceDatabaseTest(unittest.TestCase):
             patch("new_api_statistics.app.verify_admin", return_value=True),
             patch("new_api_statistics.app.load_report", return_value=rows),
         ):
-            url = "/statistics/api/usage?start=2026-09-01&end=2026-09-01"
+            url = "/cockpit/statistics/api/usage?start=2026-09-01&end=2026-09-01"
             normal = client.get(url, auth=("alice", "fixture"))
             self.assertIn("cost_formula", normal.json["rows"][0])
             lazy = client.get(url + "&details=lazy", auth=("alice", "fixture"))
@@ -388,7 +388,7 @@ class PerformanceDatabaseTest(unittest.TestCase):
             self.assertEqual(lazy.json["totals"], normal.json["totals"])
             self.assertEqual(lazy.json["rankings"], normal.json["rankings"])
             payload = dict(report_id=row["report_id"], row_ids=[row["row_id"]])
-            route = "/statistics/api/usage/details"
+            route = "/cockpit/statistics/api/usage/details"
             self.assertEqual(
                 client.post(route, json=payload, auth=("alice", "fixture")).status_code,
                 403,

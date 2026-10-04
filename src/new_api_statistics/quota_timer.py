@@ -1,13 +1,8 @@
-"""Single-leader quota loop used by the application's internal timer.
-
-The module entrypoint remains for legacy compatibility, not normal deployment.
-"""
+"""Internal quota timer loop; lifecycle is owned by the web application."""
 
 import logging
 import os
-import signal
 from datetime import datetime
-from threading import Event
 
 from new_api_statistics import balance
 from new_api_statistics import quota_schedule as schedules
@@ -38,7 +33,7 @@ def serve(stopped):
 
         def check():
             if stopped.is_set():
-                raise InterruptedError("Quota worker is stopping")
+                raise InterruptedError("Quota timer is stopping")
             # A dead session means the advisory lock was lost.
             leader.execute("SELECT 1")
 
@@ -75,21 +70,3 @@ def run(stopped):
                 type(exc).__name__,
             )
             stopped.wait(5)
-
-
-def main():
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
-    stopped = Event()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stopped.set())
-    if not balance.configured():
-        LOG.error("MONITOR_DATABASE_URL is required for the quota scheduler.")
-        raise SystemExit(1)
-    balance.initialize()
-    run(stopped)
-
-
-if __name__ == "__main__":
-    main()

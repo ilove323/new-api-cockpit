@@ -39,7 +39,7 @@ API 不回传凭据或密文；编辑时留空沿用原值。更改飞书应用 
 `notification_feishu_settings`，钉钉配置保存在 `notification_dingtalk_webhook_settings`。
 切换渠道不会覆盖另一渠道的凭据。
 
-每天北京时间 10:00、点击铃铛或调用 `/statistics/api/alert` 的成功检查中，
+每天北京时间 10:00、点击铃铛或调用 `/cockpit/statistics/api/alert` 的成功检查中，
 余额低于阈值且渠道已启用就发送一次通知。
 反复点击铃铛会再次发送；普通页面加载和保存渠道不发送。余额恢复清除本地报警，不发送恢复消息，
 已发出的渠道消息不会撤回。最新发送时间与失败原因保存在独立库并显示在渠道设置里。

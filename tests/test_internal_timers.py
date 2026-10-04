@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from new_api_statistics import balance, gunicorn_conf, quota_worker, runtime, timers
+from new_api_statistics import balance, gunicorn_conf, quota_timer, runtime, timers
 from new_api_statistics.app import app
 from new_api_statistics.report import TZ
 
@@ -158,20 +158,18 @@ class InternalTimerTest(unittest.TestCase):
             raise InterruptedError("not for logs")
 
         with (
-            patch.object(quota_worker, "serve", side_effect=interrupted),
-            patch.object(quota_worker.LOG, "error") as log,
+            patch.object(quota_timer, "serve", side_effect=interrupted),
+            patch.object(quota_timer.LOG, "error") as log,
         ):
-            quota_worker.run(stopped)
+            quota_timer.run(stopped)
             log.assert_not_called()
         stopped = MagicMock()
         stopped.is_set.side_effect = [False, False, True]
         with (
-            patch.object(
-                quota_worker, "serve", side_effect=ValueError("private-value")
-            ),
+            patch.object(quota_timer, "serve", side_effect=ValueError("private-value")),
             self.assertLogs(level="ERROR") as captured,
         ):
-            quota_worker.run(stopped)
+            quota_timer.run(stopped)
         self.assertNotIn("private-value", "".join(captured.output))
         stopped.wait.assert_called_once_with(5)
 

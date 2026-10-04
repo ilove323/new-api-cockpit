@@ -34,13 +34,7 @@ def _check_wave(ids, groups, admin):
     }
 
 
-def _attempt(admin, item, eligible):
-    if item["user_id"] not in eligible:
-        return {
-            "user_id": item["user_id"],
-            "status": "skipped",
-            "message": "用户已停用、删除、换组或权限改变，未发起。",
-        }
+def _attempt(admin, item):
     try:
         quota._call_manage(
             admin, item["user_id"], item["operation"], item["amount_units"]
@@ -74,11 +68,6 @@ def _abort(run_id, message):
         ).fetchone()
         if not run or run["status"] != "running":
             return
-        conn.execute(
-            """UPDATE quota_schedule_run_items SET status='skipped',finished_at=now(),message='此前发生错误，未发起。'
-            WHERE run_id=%s AND status='pending'""",
-            (run_id,),
-        )
         successes = conn.execute(
             "SELECT count(*) AS n FROM quota_schedule_run_items WHERE run_id=%s AND status='success'",
             (run_id,),
@@ -103,8 +92,6 @@ def execute(run_id, leader_check):
             schedules.finish_run(
                 conn,
                 run_id,
-                "规则在任务开始前被停用或删除，未发起。",
-                force_status="missed",
             )
             return
         conn.execute(
@@ -123,13 +110,13 @@ def execute(run_id, leader_check):
         status = conn.execute(
             "SELECT status FROM quota_schedule_runs WHERE id=%s FOR UPDATE", (run_id,)
         ).fetchone()
-        if status["status"] != "running":
+        if not status or status["status"] != "running":
             return
         for target in targets:
             conn.execute(
-                """INSERT INTO quota_schedule_run_items
-                (run_id,user_id,username,display_name,group_name,operation,amount_units,status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,'pending')""",
+                """INSERT INTO quota_schedule_run_targets
+                (run_id,user_id,username,display_name,group_name,operation,amount_units)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     run_id,
                     target["id"],
@@ -140,10 +127,6 @@ def execute(run_id, leader_check):
                     frozen["amount_units"],
                 ),
             )
-        conn.execute(
-            "UPDATE quota_schedule_runs SET total_count=%s WHERE id=%s",
-            (len(targets), run_id),
-        )
     # Snapshot rows and sending states are COMMITTED before any external request.
     with ThreadPoolExecutor(max_workers=quota.CONCURRENT_REQUESTS) as pool:
         while True:
@@ -153,10 +136,10 @@ def execute(run_id, leader_check):
                     "SELECT status FROM quota_schedule_runs WHERE id=%s FOR UPDATE",
                     (run_id,),
                 ).fetchone()
-                if current["status"] != "running":
+                if not current or current["status"] != "running":
                     return
                 wave = conn.execute(
-                    """SELECT * FROM quota_schedule_run_items WHERE run_id=%s AND status='pending'
+                    """SELECT * FROM quota_schedule_run_targets WHERE run_id=%s
                     ORDER BY user_id LIMIT %s""",
                     (run_id, quota.CONCURRENT_REQUESTS),
                 ).fetchall()
@@ -179,11 +162,13 @@ def execute(run_id, leader_check):
                     "SELECT status FROM quota_schedule_runs WHERE id=%s FOR UPDATE",
                     (run_id,),
                 ).fetchone()
-                if current["status"] != "running":
+                if not current or current["status"] != "running":
                     return
                 conn.execute(
-                    """UPDATE quota_schedule_run_items SET status='sending',request_started_at=now()
-                    WHERE run_id=%s AND user_id=ANY(%s) AND status='pending'""",
+                    """INSERT INTO quota_schedule_run_items
+                    (run_id,user_id,username,display_name,group_name,operation,amount_units,status,request_started_at)
+                    SELECT run_id,user_id,username,display_name,group_name,operation,amount_units,'sending',now()
+                    FROM quota_schedule_run_targets WHERE run_id=%s AND user_id=ANY(%s)""",
                     (
                         run_id,
                         [
@@ -194,25 +179,24 @@ def execute(run_id, leader_check):
                     ),
                 )
                 conn.execute(
-                    """UPDATE quota_schedule_run_items SET status='skipped',finished_at=now(),
-                    message='用户已停用、删除、换组或权限改变，未发起。'
-                    WHERE run_id=%s AND user_id=ANY(%s) AND status='pending'""",
+                    "DELETE FROM quota_schedule_run_targets WHERE run_id=%s AND user_id=ANY(%s)",
                     (
                         run_id,
-                        [
-                            item["user_id"]
-                            for item in wave
-                            if item["user_id"] not in eligible
-                        ],
+                        [item["user_id"] for item in wave],
                     ),
                 )
-            results = list(pool.map(lambda item: _attempt(admin, item, eligible), wave))
+            results = list(
+                pool.map(
+                    lambda item: _attempt(admin, item),
+                    [item for item in wave if item["user_id"] in eligible],
+                )
+            )
             with balance.connect() as conn:
                 current = conn.execute(
                     "SELECT status FROM quota_schedule_runs WHERE id=%s FOR UPDATE",
                     (run_id,),
                 ).fetchone()
-                if current["status"] != "running":
+                if not current or current["status"] != "running":
                     return  # Another leader recovered this run. Never overwrite its unknown records.
                 for result in results:
                     conn.execute(
@@ -225,13 +209,17 @@ def execute(run_id, leader_check):
                             result["user_id"],
                         ),
                     )
-                if any(result["status"] != "success" for result in results):
-                    conn.execute(
-                        """UPDATE quota_schedule_run_items SET status='skipped',finished_at=now(),message='此前发生错误，未发起。'
-                        WHERE run_id=%s AND status='pending'""",
-                        (run_id,),
-                    )
+                if len(results) != len(wave) or any(
+                    result["status"] != "success" for result in results
+                ):
                     schedules.finish_run(
-                        conn, run_id, "当前组已收集结果，停止后续组；不自动重试或回滚。"
+                        conn,
+                        run_id,
+                        "当前组已收集结果，停止后续组；不自动重试或回滚。",
+                        force_status="partial"
+                        if len(results) != len(wave)
+                        and results
+                        and all(r["status"] == "success" for r in results)
+                        else None,
                     )
                     return

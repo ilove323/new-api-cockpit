@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Usage: PGHOST=... PGPASSWORD=... python -m new_api_statistics.app
-# Production: docker compose up -d --build (Gunicorn serves /statistics/).
-"""Single-container statistics page and authenticated read-only API."""
+# Production: docker compose up -d --build (Gunicorn serves /cockpit/).
+"""Single-container statistics, quota and user management with protected APIs."""
 
 import os
 import re
@@ -15,7 +15,7 @@ from flask import (
     render_template,
     request,
     send_file,
-    send_from_directory,
+    redirect,
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg
@@ -23,7 +23,13 @@ from new_api_statistics import balance
 from new_api_statistics import scopes as scope_backend
 from new_api_statistics import notifications
 from new_api_statistics import quota as quota_backend
-from new_api_statistics import quota_schedule, report_snapshots, timers
+from new_api_statistics import (
+    quota_schedule,
+    report_snapshots,
+    timers,
+    user_management,
+    operation_records,
+)
 
 from new_api_statistics.report import (
     TZ,
@@ -38,7 +44,7 @@ from new_api_statistics.report import (
 )
 from new_api_statistics.auth import verify_admin, verify_api_key
 
-app = Flask(__name__, static_url_path="/statistics/static")
+app = Flask(__name__, static_url_path="/cockpit/static")
 
 
 class JSONProvider(DefaultJSONProvider):
@@ -57,7 +63,10 @@ app.json = JSONProvider(app)
 def authenticate():
     if request.path == "/healthz":
         return None
-    if request.path in {"/statistics/api/balance", "/statistics/api/alert"}:
+    if request.path in {
+        "/cockpit/statistics/api/balance",
+        "/cockpit/statistics/api/alert",
+    }:
         authorization = request.headers.get("Authorization", "")
         scheme, separator, token = authorization.partition(" ")
         if separator and scheme.lower() == "bearer" and verify_api_key(token.strip()):
@@ -76,7 +85,7 @@ def authenticate():
         return (
             "请使用 New API 管理员用户名和密码登录。",
             401,
-            {"WWW-Authenticate": 'Basic realm="New API Statistics", charset="UTF-8"'},
+            {"WWW-Authenticate": 'Basic realm="newapi-cockpit", charset="UTF-8"'},
         )
 
 
@@ -87,7 +96,7 @@ def headers(response):
         and response.is_json
         and response.status_code < 400
         and (
-            request.path.startswith("/statistics/api/balance/")
+            request.path.startswith("/cockpit/statistics/api/balance/")
             and "/channel" not in request.path
         )
     ):
@@ -111,8 +120,55 @@ def health():
     )
 
 
-@app.get("/statistics")
-@app.get("/statistics/")
+@app.get("/cockpit")
+@app.get("/cockpit/")
+def ops_home():
+    return redirect("/cockpit/statistics/", 302)
+
+
+@app.get("/cockpit/operations")
+@app.get("/cockpit/operations/")
+def operations_page():
+    return render_template("operations.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/operations/api/records")
+def operations_list():
+    return jsonify(
+        operation_records.list_records(request.authorization.username, request.args)
+    )
+
+
+@app.get("/cockpit/operations/api/records/<source>/<record_id>")
+def operations_detail(source, record_id):
+    return jsonify(
+        operation_records.detail(
+            request.authorization.username,
+            source,
+            record_id,
+            request.args.get("after", -1),
+        )
+    )
+
+
+@app.get("/cockpit/users/api/user/<int:target_id>")
+def user_profile_detail(target_id):
+    return jsonify(
+        user_management.detail(request.authorization.username, "user", target_id)
+    )
+
+
+@app.post("/cockpit/users/api/user/<int:target_id>/action")
+def user_profile_action(target_id):
+    return jsonify(
+        user_management.single_action(
+            request.authorization.username, "user", target_id, management_body()
+        )
+    )
+
+
+@app.get("/cockpit/statistics")
+@app.get("/cockpit/statistics/")
 def index():
     now = datetime.now(TZ).replace(microsecond=0)
     return render_template(
@@ -125,25 +181,18 @@ def index():
     )
 
 
-@app.get("/quota")
-@app.get("/quota/")
-def quota_page():
-    return render_template("quota.html", site_name=load_site_name())
+@app.get("/cockpit/users")
+@app.get("/cockpit/users/")
+def users_page():
+    return render_template("users.html", site_name=load_site_name())
 
 
-@app.get("/quota/static/<path:filename>")
-def quota_static(filename):
-    if filename not in {"quota.css", "quota.js", "quota-schedule.js"}:
-        return "Not Found", 404
-    return send_from_directory(app.static_folder, filename)
-
-
-@app.get("/quota/api/users")
+@app.get("/cockpit/users/api/users")
 def quota_users():
     return jsonify(rows=quota_backend.list_users())
 
 
-@app.post("/quota/api/preview")
+@app.post("/cockpit/users/api/preview")
 def quota_preview():
     if request.headers.get("X-Quota-Action") != "preview":
         return jsonify(error="请求来源无效。"), 403
@@ -154,7 +203,7 @@ def quota_preview():
     )
 
 
-@app.post("/quota/api/apply")
+@app.post("/cockpit/users/api/apply")
 def quota_apply():
     if request.headers.get("X-Quota-Action") != "confirm":
         return jsonify(error="请先确认额度调整。"), 403
@@ -173,12 +222,12 @@ def quota_schedule_write_allowed():
     )
 
 
-@app.get("/quota/api/schedules")
+@app.get("/cockpit/users/api/schedules")
 def quota_schedules_list():
     return jsonify(quota_schedule.list_rules(request.authorization.username))
 
 
-@app.post("/quota/api/schedules")
+@app.post("/cockpit/users/api/schedules")
 def quota_schedule_create():
     if not quota_schedule_write_allowed():
         return jsonify(error="不允许的定时规则请求。"), 403
@@ -189,7 +238,9 @@ def quota_schedule_create():
     ), 201
 
 
-@app.route("/quota/api/schedules/<int:rule_id>", methods=["PUT", "PATCH", "DELETE"])
+@app.route(
+    "/cockpit/users/api/schedules/<int:rule_id>", methods=["PUT", "PATCH", "DELETE"]
+)
 def quota_schedule_change(rule_id):
     if not quota_schedule_write_allowed():
         return jsonify(error="不允许的定时规则请求。"), 403
@@ -206,25 +257,6 @@ def quota_schedule_change(rule_id):
     )
 
 
-@app.get("/quota/api/schedule-runs")
-def quota_schedule_runs():
-    before = request.args.get("before")
-    try:
-        before = int(before) if before is not None else None
-    except ValueError:
-        raise ValueError("执行记录分页参数无效。") from None
-    return jsonify(quota_schedule.list_runs(before))
-
-
-@app.get("/quota/api/schedule-runs/<int:run_id>")
-def quota_schedule_run_detail(run_id):
-    try:
-        after = int(request.args.get("after", "0"))
-    except ValueError:
-        raise ValueError("用户记录分页参数无效。") from None
-    return jsonify(quota_schedule.run_detail(run_id, after))
-
-
 @app.errorhandler(quota_schedule.ScheduleConflict)
 def quota_schedule_conflict(exc):
     return jsonify(error=str(exc)), 409
@@ -238,6 +270,105 @@ def quota_schedule_forbidden(exc):
 @app.errorhandler(quota_schedule.ScheduleUnavailable)
 def quota_schedule_unavailable(exc):
     return jsonify(error=str(exc)), 503
+
+
+@app.get("/cockpit/keys")
+@app.get("/cockpit/keys/")
+def keys_page():
+    return render_template("keys.html", site_name=load_site_name())
+
+
+def management_body():
+    if (
+        request.headers.get("X-Management-Action") != "confirm"
+        or not request.is_json
+        or request.headers.get("Sec-Fetch-Site") == "cross-site"
+    ):
+        raise user_management.Forbidden("不允许的用户管理请求。")
+    origin = request.headers.get("Origin")
+    if origin:
+        from urllib.parse import urlsplit
+
+        if urlsplit(origin).netloc != request.host:
+            raise user_management.Forbidden("请求来源不匹配。")
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise user_management.ManagementError("请求体必须是对象。")
+    return body
+
+
+@app.get("/cockpit/keys/api/options")
+def management_options():
+    return jsonify(user_management.options(request.authorization.username))
+
+
+@app.post("/cockpit/keys/api/query/grouped")
+def management_query():
+    return jsonify(
+        user_management.list_grouped(request.authorization.username, management_body())
+    )
+
+
+@app.post("/cockpit/keys/api/search-key")
+def management_search_key():
+    return jsonify(
+        user_management.search_key(request.authorization.username, management_body())
+    )
+
+
+@app.get("/cockpit/keys/api/<kind>/<int:target_id>")
+def management_detail(kind, target_id):
+    if kind != "token":
+        return jsonify(error="Not Found"), 404
+    return jsonify(
+        user_management.detail(request.authorization.username, kind, target_id)
+    )
+
+
+@app.post("/cockpit/keys/api/<kind>/<int:target_id>/action")
+def management_action(kind, target_id):
+    if kind != "token":
+        return jsonify(error="Not Found"), 404
+    return jsonify(
+        user_management.single_action(
+            request.authorization.username, kind, target_id, management_body()
+        )
+    )
+
+
+@app.post("/cockpit/keys/api/groups/preview")
+def management_group_preview():
+    return jsonify(
+        user_management.preview_group(request.authorization.username, management_body())
+    )
+
+
+@app.post("/cockpit/keys/api/operations/<uuid:operation_id>/apply")
+def management_group_apply(operation_id):
+    management_body()
+    return jsonify(
+        user_management.apply_wave(request.authorization.username, operation_id)
+    )
+
+
+@app.errorhandler(user_management.Forbidden)
+def management_forbidden(exc):
+    return jsonify(error=str(exc)), 403
+
+
+@app.errorhandler(user_management.Conflict)
+def management_conflict(exc):
+    return jsonify(error=str(exc)), 409
+
+
+@app.errorhandler(user_management.Uncertain)
+def management_uncertain(exc):
+    return jsonify(error=str(exc), uncertain=True), 502
+
+
+@app.errorhandler(user_management.ManagementError)
+def management_error(exc):
+    return jsonify(error=str(exc)), 400
 
 
 def scope_context():
@@ -294,7 +425,7 @@ def report_scope_kwargs():
     return {"channel_ids": g.scope_channels}
 
 
-@app.get("/statistics/api/scopes")
+@app.get("/cockpit/statistics/api/scopes")
 def scopes():
     if not balance.configured():
         return jsonify(rows=[{"id": 1, "kind": "all", "tag_value": ""}])
@@ -333,7 +464,7 @@ def report_rows(rows):
     return rows
 
 
-@app.post("/statistics/api/usage/details")
+@app.post("/cockpit/statistics/api/usage/details")
 def usage_details():
     if not monitor_write_allowed():
         return jsonify(error="不允许的详情请求。"), 403
@@ -349,7 +480,7 @@ def snapshot_expired(exc):
     return jsonify(error=str(exc)), 410
 
 
-@app.get("/statistics/api/usage")
+@app.get("/cockpit/statistics/api/usage")
 def usage():
     start, end, rows = selected(include_failures=failure_diagnostics())
     return jsonify(
@@ -363,13 +494,13 @@ def usage():
     )
 
 
-@app.get("/statistics/api/usage/by-token")
+@app.get("/cockpit/statistics/api/usage/by-token")
 def usage_by_token():
     start, end, rows = selected(by_token=True, include_failures=failure_diagnostics())
     return jsonify(scope=scope_context(), start=start, end=end, rows=report_rows(rows))
 
 
-@app.get("/statistics/api/usage/tokens")
+@app.get("/cockpit/statistics/api/usage/tokens")
 def usage_tokens():
     start, end = request.args.get("start", ""), request.args.get("end", "")
     kwargs = report_scope_kwargs()
@@ -383,7 +514,7 @@ def usage_tokens():
     )
 
 
-@app.get("/statistics/api/usage/groups")
+@app.get("/cockpit/statistics/api/usage/groups")
 def usage_groups():
     start, end = request.args.get("start", ""), request.args.get("end", "")
     kwargs = report_scope_kwargs()
@@ -419,7 +550,7 @@ def requested_groups():
     return sorted(set(values)) or None
 
 
-@app.get("/statistics/api/usage/by-selection")
+@app.get("/cockpit/statistics/api/usage/by-selection")
 def usage_by_selection():
     start, end = request.args.get("start", ""), request.args.get("end", "")
     token_ids, groups = requested_token_ids(), requested_groups()
@@ -435,7 +566,7 @@ def usage_by_selection():
     return jsonify(scope=scope_context(), start=start, end=end, rows=report_rows(rows))
 
 
-@app.get("/statistics/api/export")
+@app.get("/cockpit/statistics/api/export")
 def export():
     start, end, rows = selected()
     first = parse_boundary(start).strftime("%Y-%m-%d_%H-%M-%S")
@@ -462,14 +593,14 @@ def monitor_write_allowed():
     )
 
 
-@app.get("/statistics/api/balance/status")
+@app.get("/cockpit/statistics/api/balance/status")
 def balance_status():
     return jsonify(
         balance.snapshot(live=request.args.get("live") == "1", **scope_kwargs())
     )
 
 
-@app.get("/statistics/api/balance")
+@app.get("/cockpit/statistics/api/balance")
 def balance_api():
     result = balance.snapshot(live=True, **scope_kwargs())
     if not result.get("configured") or not result.get("valid"):
@@ -496,7 +627,7 @@ def balance_api():
     )
 
 
-@app.get("/statistics/api/alert")
+@app.get("/cockpit/statistics/api/alert")
 def balance_alert_api():
     try:
         balance.check_once(daily=False, **scope_kwargs())
@@ -510,7 +641,7 @@ def balance_alert_api():
     )
 
 
-@app.put("/statistics/api/balance/settings")
+@app.put("/cockpit/statistics/api/balance/settings")
 def balance_settings():
     if not monitor_write_allowed():
         return jsonify(error="不允许的设置请求。"), 403
@@ -523,7 +654,7 @@ def balance_settings():
     return jsonify(saved=True)
 
 
-@app.post("/statistics/api/balance/recalculate-history/preview")
+@app.post("/cockpit/statistics/api/balance/recalculate-history/preview")
 def balance_recalculate_history_preview():
     if not monitor_write_allowed():
         return jsonify(error="不允许的追溯请求。"), 403
@@ -539,7 +670,7 @@ def balance_recalculate_history_preview():
     return jsonify(result)
 
 
-@app.post("/statistics/api/balance/recalculate-history")
+@app.post("/cockpit/statistics/api/balance/recalculate-history")
 def balance_recalculate_history():
     if not monitor_write_allowed():
         return jsonify(error="不允许的追溯请求。"), 403
@@ -568,7 +699,7 @@ def balance_recalculate_history():
     return jsonify(recalculated=True, **result)
 
 
-@app.get("/statistics/api/balance/usage-channels")
+@app.get("/cockpit/statistics/api/balance/usage-channels")
 def balance_usage_channels():
     return jsonify(
         **({"scope": scope_context()} if "scope_id" in request.args else {}),
@@ -576,7 +707,7 @@ def balance_usage_channels():
     )
 
 
-@app.post("/statistics/api/balance/check")
+@app.post("/cockpit/statistics/api/balance/check")
 def balance_check():
     if not monitor_write_allowed():
         return jsonify(error="不允许的检查请求。"), 403
@@ -592,7 +723,7 @@ def invalid(exc):
     return jsonify(error=str(exc)), 400
 
 
-@app.route("/statistics/api/balance/channel", methods=["GET", "PUT"])
+@app.route("/cockpit/statistics/api/balance/channel", methods=["GET", "PUT"])
 def notification_settings():
     if request.method == "GET":
         return jsonify(notifications.snapshot(request.args.get("channel") or None))
@@ -605,7 +736,7 @@ def notification_settings():
     return jsonify(notifications.snapshot())
 
 
-@app.post("/statistics/api/balance/channel/test")
+@app.post("/cockpit/statistics/api/balance/channel/test")
 def notification_test():
     if not monitor_write_allowed():
         return jsonify(error="不允许的测试请求。"), 403

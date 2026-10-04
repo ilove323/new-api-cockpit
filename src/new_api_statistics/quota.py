@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 import psycopg
 from psycopg.rows import dict_row
 
+from new_api_statistics import operation_records
+
 
 QUOTA_PER_YUAN = Decimal("500000")
 CONCURRENT_REQUESTS = 5
@@ -42,7 +44,8 @@ def list_users():
         rows = conn.execute(
             """SELECT id,username,COALESCE(display_name,'') AS display_name,
                       COALESCE("group",'') AS user_group,
-                      role,status,quota,used_quota
+                      role,status,quota,used_quota,COALESCE(remark,'') AS remark,
+                      (SELECT count(*) FROM tokens WHERE user_id=users.id AND deleted_at IS NULL) AS token_count
                FROM users WHERE deleted_at IS NULL ORDER BY id"""
         ).fetchall()
     return [
@@ -53,6 +56,8 @@ def list_users():
             "user_group": row["user_group"],
             "role": row["role"],
             "status": row["status"],
+            "remark": row.get("remark", ""),
+            "token_count": row.get("token_count", 0),
             "quota": row["quota"],
             "quota_yuan": str(Decimal(row["quota"]) / QUOTA_PER_YUAN),
             "used_quota_yuan": str(Decimal(row["used_quota"]) / QUOTA_PER_YUAN),
@@ -189,6 +194,9 @@ def apply(username, body):
     with connect() as conn:
         operator = _operator(conn, username)
         targets = _targets(conn, ids, operator)
+    operation_id = operation_records.begin_quota(
+        operator, username, targets, ids, mode, units
+    )
 
     def attempt(user_id):
         try:
@@ -198,6 +206,9 @@ def apply(username, body):
                 "id": user_id,
                 "username": targets[user_id]["username"],
                 "ok": False,
+                "state": "unknown"
+                if isinstance(exc, QuotaRequestUncertain)
+                else "failed",
                 "message": str(exc),
             }
         except Exception as exc:
@@ -210,18 +221,29 @@ def apply(username, body):
                 "id": user_id,
                 "username": targets[user_id]["username"],
                 "ok": False,
+                "state": "unknown",
                 "message": "请求结果不明确，请先核对实际额度和审计日志，不要直接重试。",
             }
-        return {"id": user_id, "username": targets[user_id]["username"], "ok": True}
+        return {
+            "id": user_id,
+            "username": targets[user_id]["username"],
+            "ok": True,
+            "state": "success",
+        }
 
     results = []
     with ThreadPoolExecutor(max_workers=CONCURRENT_REQUESTS) as pool:
         for offset in range(0, len(ids), CONCURRENT_REQUESTS):
-            wave = list(pool.map(attempt, ids[offset : offset + CONCURRENT_REQUESTS]))
+            wave_ids = ids[offset : offset + CONCURRENT_REQUESTS]
+            operation_records.start_quota_wave(operation_id, wave_ids)
+            wave = list(pool.map(attempt, wave_ids))
+            operation_records.finish_quota(operation_id, wave, final=False)
             results.extend(wave)
             if any(not row["ok"] for row in wave):
                 break  # Account for all in-flight requests, but never start another wave.
+    operation_records.finish_quota(operation_id, [], final=True)
     return {
+        "operation_id": str(operation_id),
         "mode": mode,
         "amount_yuan": str(amount),
         "results": results,

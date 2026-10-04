@@ -108,13 +108,10 @@ class ScopeDatabaseTest(unittest.TestCase):
         month = self.write_month()
         with self.connect() as conn:
             before = conn.execute(
-                "SELECT scope_id,amount FROM balance_month_scopes WHERE month=%s",
+                "SELECT * FROM balance_month_channels WHERE month=%s ORDER BY channel_id NULLS LAST",
                 (month,),
             ).fetchall()
-            self.assertEqual(
-                {r["scope_id"]: r["amount"] for r in before},
-                {1: 42, 2: 12, self.ids["A"]: 10, self.ids["B"]: 20},
-            )
+            self.assertEqual(sum(row["amount"] for row in before), 42)
             conn.execute("INSERT INTO balance_excluded_channels(channel_id) VALUES(1)")
         self.catalog[0]["tag_value"] = "C"
         self.catalog = [r for r in self.catalog if r["channel_id"] != 2]
@@ -136,10 +133,17 @@ class ScopeDatabaseTest(unittest.TestCase):
                 0,
             )
             self.assertEqual(
-                balance.archived_month_rows(
-                    conn, month, date(2026, 9, 1), [1], scope_id=1
-                )[0]["amount"],
+                balance.archived_month_rows(conn, month, date(2026, 9, 1), scope_id=1)[
+                    0
+                ]["amount"],
                 42,
+            )
+            self.assertEqual(
+                before,
+                conn.execute(
+                    "SELECT * FROM balance_month_channels WHERE month=%s ORDER BY channel_id NULLS LAST",
+                    (month,),
+                ).fetchall(),
             )
         self.assertNotIn(self.ids["B"], [r["id"] for r in scopes.list_scopes(False)])
         self.assertIsNone(balance.check_once(scope_id=self.ids["B"]))
@@ -192,28 +196,21 @@ class ScopeDatabaseTest(unittest.TestCase):
             self.assertEqual(snap["state"]["current_amount"], 20)
             self.assertEqual(snap["state"]["remaining"], -15)
 
-    def test_first_backfill_preserves_totals_unknown_deleted_ungrouped(self):
+    def test_archives_use_current_inventory_without_rebuilding_scope_snapshots(self):
         month = self.write_month()
         with self.connect() as conn:
-            conn.execute(
-                "UPDATE balance_month_channels SET scope_id=NULL,tag_value=NULL"
-            )
-            conn.execute("UPDATE balance_scope_backfill SET completed=false")
-            conn.execute("DELETE FROM balance_month_scopes WHERE scope_id<>1")
+            conn.execute("DELETE FROM balance_month_scopes")
         scopes.refresh_scopes()
         with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT channel_id,scope_id FROM balance_month_channels WHERE month=%s",
-                (month,),
-            ).fetchall()
             self.assertEqual(
-                {r["channel_id"]: r["scope_id"] for r in rows},
-                {1: self.ids["A"], 2: self.ids["B"], 0: 2, None: 2, 99: 2},
+                balance.archived_month_rows(conn, month, date(2026, 9, 1), scope_id=2)[
+                    0
+                ]["amount"],
+                12,
             )
             self.assertEqual(
                 conn.execute(
-                    "SELECT amount FROM balance_month_scopes WHERE month=%s AND scope_id=1",
-                    (month,),
-                ).fetchone()["amount"],
-                42,
+                    "SELECT count(*) AS n FROM balance_month_scopes"
+                ).fetchone()["n"],
+                0,
             )

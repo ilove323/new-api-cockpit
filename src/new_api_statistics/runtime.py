@@ -1,4 +1,4 @@
-"""Apply monitoring migrations once before starting a web/worker process.
+"""Apply monitoring migrations once before starting the application process.
 
 Docker's entrypoint and non-Docker deployments use the same startup boundary.
 Normal requests never execute DDL. No New API source writes are performed.

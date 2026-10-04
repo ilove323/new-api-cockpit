@@ -1,1 +1,1 @@
-"""New API Statistics application package."""
+"""newapi-cockpit application package."""

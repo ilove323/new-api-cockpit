@@ -75,41 +75,7 @@ def refresh_scopes(*, full_discovery=False):
             conn.execute(
                 "UPDATE channel_catalog_sync_state SET history_discovered=true WHERE id=1 AND NOT history_discovered"
             )
-        marker = conn.execute(
-            "SELECT completed FROM balance_scope_backfill WHERE id=1"
-        ).fetchone()
-        if not marker["completed"]:
-            conn.execute("""UPDATE balance_month_channels d SET scope_id=COALESCE(i.scope_id,2),
-                tag_value=COALESCE(s.tag_value,'') FROM
-                (SELECT d.month,d.channel_id,i.scope_id FROM balance_month_channels d
-                 LEFT JOIN balance_channel_inventory i ON i.channel_id=d.channel_id) i
-                LEFT JOIN balance_scopes s ON s.id=i.scope_id
-                WHERE d.month=i.month AND d.channel_id IS NOT DISTINCT FROM i.channel_id
-                  AND d.scope_id IS NULL""")
-            rebuild_month_scopes(conn)
-            conn.execute("UPDATE balance_scope_backfill SET completed=true WHERE id=1")
-            # Keep legacy monthly scope rows for schema compatibility; reads use
-            # channel archives joined with current inventory, not these rows.
-            conn.execute("""INSERT INTO balance_month_scopes(month,scope_id,tag_value,amount)
-                SELECT m.month,s.id,s.tag_value,0 FROM balance_channel_archive_months m
-                CROSS JOIN balance_scopes s ON CONFLICT DO NOTHING""")
     return live
-
-
-def rebuild_month_scopes(conn, months=None):
-    """Aggregate immutable channel snapshots, never reassign them from live tags."""
-    conn.execute(
-        """INSERT INTO balance_month_scopes(month,scope_id,tag_value,amount)
-        SELECT m.month,s.id,s.tag_value,COALESCE(SUM(d.amount),0)
-        FROM balance_channel_archive_months m CROSS JOIN balance_scopes s
-        LEFT JOIN balance_month_channels d ON d.month=m.month
-          AND (s.kind='all' OR d.scope_id=s.id)
-        WHERE (%s::date[] IS NULL OR m.month=ANY(%s::date[]))
-        GROUP BY m.month,s.id,s.tag_value
-        ON CONFLICT(month,scope_id) DO UPDATE SET amount=EXCLUDED.amount,
-          tag_value=EXCLUDED.tag_value,archived_at=now()""",
-        (months, months),
-    )
 
 
 def list_scopes(refresh=True):

@@ -24,20 +24,6 @@ def format_alert_message(alert, site_name):
     )
 
 
-def current_alert_message(scope_id=1):
-    """Read the persisted active alert without running a balance check or notifying."""
-    with balance.connect() as conn:
-        alert = conn.execute(
-            """SELECT remaining,threshold,spent,budget,updated_at
-            FROM balance_alerts WHERE resolved_at IS NULL AND scope_id=%s ORDER BY updated_at DESC,id DESC LIMIT 1""",
-            (scope_id,),
-        ).fetchone()
-        scope = scopes.get_scope(scope_id, conn)
-        if alert:
-            alert["scope_name"] = scopes.scope_name(scope)
-    return format_alert_message(alert, load_site_name()) if alert else None
-
-
 def current_alert_record(scope_id=1):
     """Return typed API fields for the active persisted alert."""
     with balance.connect() as conn:

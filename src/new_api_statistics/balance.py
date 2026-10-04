@@ -37,7 +37,7 @@ def initialize():
             row["version"]
             for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
         }
-        # The lock and transaction make upgrades atomic across web/worker processes.
+        # The lock and transaction serialize application startup migrations.
         for migration in sorted(
             Path(__file__).with_name("migrations").glob("[0-9]*.sql")
         ):
@@ -143,13 +143,6 @@ def sync_channel_inventory(conn, live_channels):
                     (tag,),
                 ).fetchone()
             )["id"]
-            if created:
-                conn.execute(
-                    """INSERT INTO balance_month_scopes(month,scope_id,tag_value,amount)
-                    SELECT month,%s,%s,0 FROM balance_channel_archive_months
-                    ON CONFLICT DO NOTHING""",
-                    (scope_id, tag),
-                )
             tag_ids[tag] = scope_id
         else:
             scope_id = tag_ids.get(tag, 2)
@@ -185,7 +178,6 @@ def usage_channels_snapshot(scope_id=1):
     live_channels = [r for r in catalog if not r.get("is_deleted")]
     live_by_id = {row["channel_id"]: row for row in live_channels}
     with connect() as conn:
-        excluded = set()
         inventory = conn.execute(
             "SELECT channel_id,channel_name,scope_id FROM balance_channel_inventory WHERE (%s=1 OR scope_id=%s) ORDER BY channel_id",
             (scope_id, scope_id),
@@ -201,32 +193,9 @@ def usage_channels_snapshot(scope_id=1):
                 else stored["channel_name"],
                 "channel_status": live["channel_status"] if live else None,
                 "deleted": live is None,
-                "included": stored["channel_id"] not in excluded,
             }
         )
     return result
-
-
-def validate_excluded_channel_ids(value):
-    if value is None:
-        return None
-    if not isinstance(value, list) or len(value) > 5000:
-        raise ValueError("请选择有效的消费渠道。")
-    result = set()
-    for channel_id in value:
-        if type(channel_id) is not int or channel_id < 0 or channel_id in result:
-            raise ValueError("请选择有效的消费渠道。")
-        result.add(channel_id)
-    return sorted(result)
-
-
-def excluded_usage_channel_ids(conn):
-    return [
-        row["channel_id"]
-        for row in conn.execute(
-            "SELECT channel_id FROM balance_excluded_channels"
-        ).fetchall()
-    ]
 
 
 def validate_settings(body, today=None):
@@ -264,9 +233,6 @@ def validate_settings(body, today=None):
         start_month=month,
         enabled=body["enabled"],
         version=body["version"],
-        excluded_channel_ids=validate_excluded_channel_ids(
-            body.get("excluded_channel_ids")
-        ),
     )
 
 
@@ -284,18 +250,6 @@ class ArchiveDataMissing(Exception):
 
 class HistoryPreviewChanged(Exception):
     """The source data or settings changed after the history preview."""
-
-
-def replace_excluded_channels(conn, channel_ids, username):
-    if channel_ids is None:
-        return
-    conn.execute("DELETE FROM balance_excluded_channels")
-    if channel_ids:
-        conn.execute(
-            """INSERT INTO balance_excluded_channels(channel_id,updated_by)
-               SELECT channel_id,%s FROM unnest(%s::bigint[]) AS channel_id""",
-            (username, channel_ids),
-        )
 
 
 def update_settings(conn, values, username, scope_id=1):
@@ -333,7 +287,6 @@ def save_settings(body, username, scope_id=1):
     scopes.refresh_scopes()
     scope_id = scopes.get_scope(scope_id)["id"]
     values = validate_settings(body)
-    values.pop("excluded_channel_ids")
     with connect() as conn:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
         row = update_settings(conn, values, username, scope_id)
@@ -347,7 +300,6 @@ def save_settings(body, username, scope_id=1):
 def history_calculation(conn, body, now, scope_id=1):
     """Read complete per-channel history and build a protected monthly comparison."""
     values = validate_settings(body)
-    excluded_channel_ids = values.pop("excluded_channel_ids")
     current = now.date().replace(day=1)
     months = month_list(values["start_month"], current)
     if not months:
@@ -396,7 +348,7 @@ def history_calculation(conn, body, now, scope_id=1):
         for m in months
     }
 
-    return values, excluded_channel_ids, months, archived, details, amounts
+    return values, months, archived, details, amounts
 
 
 def history_preview(body, now=None, scope_id=1):
@@ -408,7 +360,7 @@ def history_preview(body, now=None, scope_id=1):
     now = (now or datetime.now(TZ)).astimezone(TZ)
     with connect() as conn:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
-        values, _, months, archived, _, amounts = history_calculation(
+        values, months, archived, _, amounts = history_calculation(
             conn, body, now, scope_id
         )
     return {
@@ -462,7 +414,7 @@ def recalculate_history(body, preview_rows, username, now=None, scope_id=1):
     now = (now or datetime.now(TZ)).astimezone(TZ)
     with connect() as conn:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
-        values, excluded, months, archived, details, amounts = history_calculation(
+        values, months, archived, details, amounts = history_calculation(
             conn, body, now, scope_id
         )
         actual = {
@@ -479,7 +431,7 @@ def recalculate_history(body, preview_rows, username, now=None, scope_id=1):
     return {"version": row["version"], "months": len(months)}
 
 
-def archived_month_rows(conn, first, end, excluded_channel_ids=None, scope_id=1):
+def archived_month_rows(conn, first, end, *, scope_id=1):
     """Aggregate retained monthly channel fees using current channel membership."""
     return conn.execute(
         """SELECT m.month,
@@ -557,18 +509,13 @@ def write_channel_archives(conn, months, details):
         for detail in details.get(month, []):
             conn.execute(
                 """INSERT INTO balance_month_channels
-                   (month,channel_id,channel_name,amount,scope_id,tag_value)
-                   VALUES (%s,%s,%s,%s,
-                     COALESCE((SELECT scope_id FROM balance_channel_inventory WHERE channel_id=%s),2),
-                     COALESCE((SELECT s.tag_value FROM balance_channel_inventory i
-                       JOIN balance_scopes s ON s.id=i.scope_id WHERE i.channel_id=%s),''))""",
+                   (month,channel_id,channel_name,amount)
+                   VALUES (%s,%s,%s,%s)""",
                 (
                     month,
                     detail["channel_id"],
                     detail["channel_name"],
                     detail["amount"],
-                    detail["channel_id"],
-                    detail["channel_id"],
                 ),
             )
             if detail["channel_id"] is not None:
@@ -583,51 +530,6 @@ def write_channel_archives(conn, months, details):
            WHERE detail.channel_id=inventory.channel_id
              AND detail.channel_name IS DISTINCT FROM inventory.channel_name"""
     )
-
-    from new_api_statistics.scopes import rebuild_month_scopes
-
-    rebuild_month_scopes(conn, months)
-
-
-def rebuild_channel_archives(now=None):
-    """One-time safe upgrade from monthly totals to unfiltered channel archives."""
-    now = (now or datetime.now(TZ)).astimezone(TZ)
-    current = now.date().replace(day=1)
-    with connect() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(%s)", (BALANCE_LOCK,))
-        settings = conn.execute(
-            "SELECT start_month FROM balance_settings WHERE id=1"
-        ).fetchone()
-        months = month_list(settings["start_month"], current)
-        baseline = {
-            row["month"]: row["amount"]
-            for row in conn.execute(
-                "SELECT month,amount FROM balance_months WHERE month >= %s AND month < %s",
-                (settings["start_month"], current),
-            ).fetchall()
-        }
-        if any(month not in baseline for month in months):
-            raise ArchiveDataMissing()
-        details = source_channel_amounts(months, now)
-        raw = {
-            month: sum((row["amount"] for row in details.get(month, [])), Decimal(0))
-            for month in months
-        }
-        if any(raw[month] < baseline[month] for month in months):
-            raise ArchiveDataMissing()
-        write_channel_archives(conn, months, details)
-        sync_channel_inventory(conn, source_channels())
-    return {
-        "months": len(months),
-        "channels": len(
-            {
-                row["channel_id"]
-                for rows in details.values()
-                for row in rows
-                if row["channel_id"] is not None
-            }
-        ),
-    }
 
 
 def archive_missing(conn, first, now):
@@ -660,19 +562,12 @@ def archive_missing(conn, first, now):
     sync_channel_inventory(conn, source_channels())
 
 
-def source_amounts_with_raw(months, now, excluded_channel_ids=None):
-    """Return raw and filtered billing in one read-only source query."""
+def source_amounts(months, now):
+    """Aggregate log quota once over half-open Beijing month boundaries."""
     if not months:
         return {}
     ranges = []
     params = []
-    filtered_sum = "SUM(quota::numeric)/500000"
-    if excluded_channel_ids:
-        filtered_sum = (
-            "SUM(quota::numeric) FILTER (WHERE channel_id IS NULL "
-            "OR NOT (channel_id = ANY(%s::bigint[])))/500000"
-        )
-        params.append(excluded_channel_ids)
     for month in sorted(set(months)):
         first = datetime.combine(month, datetime.min.time(), tzinfo=TZ)
         last = datetime.combine(next_month(month), datetime.min.time(), tzinfo=TZ)
@@ -691,31 +586,15 @@ def source_amounts_with_raw(months, now, excluded_channel_ids=None):
         rows = conn.execute(
             """SELECT date_trunc('month',to_timestamp(created_at)
             AT TIME ZONE 'Asia/Shanghai')::date AS month,
-            SUM(quota::numeric)/500000 AS raw_amount,"""
-            + filtered_sum
-            + """ AS filtered_amount FROM logs
+            SUM(quota::numeric)/500000 AS amount FROM logs
             WHERE type=2 AND ("""
             + " OR ".join(ranges)
             + ")"
             + " GROUP BY 1",
             params,
         ).fetchall()
-    found = {
-        row["month"]: {"raw": row["raw_amount"], "filtered": row["filtered_amount"]}
-        for row in rows
-    }
-    zero = {"raw": Decimal(0), "filtered": Decimal(0)}
-    return {month: found.get(month, zero.copy()) for month in months}
-
-
-def source_amounts(months, now, excluded_channel_ids=None):
-    """One SQL aggregate, no request-log pagination; half-open Beijing months."""
-    return {
-        month: amounts["filtered"]
-        for month, amounts in source_amounts_with_raw(
-            months, now, excluded_channel_ids
-        ).items()
-    }
+    found = {row["month"]: row["amount"] for row in rows}
+    return {month: found.get(month, Decimal(0)) for month in months}
 
 
 def current_scope_amount(conn, scope_id, current, now):
@@ -730,11 +609,7 @@ def current_scope_amount(conn, scope_id, current, now):
         ).fetchall()
     }
     return sum(
-        (
-            r["amount"]
-            for r in details
-            if scope_id == 1 or mapping.get(r["channel_id"], 2) == scope_id
-        ),
+        (r["amount"] for r in details if mapping.get(r["channel_id"], 2) == scope_id),
         Decimal(0),
     )
 

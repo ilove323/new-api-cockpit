@@ -6,7 +6,7 @@ const balanceMoney=value=>value===null||value===undefined?'—':'¥ '+number(val
 const balanceTableMoney=value=>value===null||value===undefined?'—':'¥ '+Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const balanceTime=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';
 async function balanceRequest(path,options={}){
-  const root=!path||path.startsWith('?')?'/statistics/api/balance/status':'/statistics/api/balance';
+  const root=!path||path.startsWith('?')?'/cockpit/statistics/api/balance/status':'/cockpit/statistics/api/balance';
   const globalChannel=path.startsWith('/channel');
   const response=await (globalChannel?fetch(root+path,options):Scope.request(root+path,options));
   let data;try{data=await response.json();}catch(error){if(error.name==='AbortError')throw error;throw new Error('监控服务暂不可用，请稍后重试。');}

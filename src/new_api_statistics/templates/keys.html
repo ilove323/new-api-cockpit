@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 令牌管理</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/quota.css">
+  <link rel="stylesheet" href="/cockpit/static/keys.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/keys.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main class="keys-page">
+    <section id="list-panel" class="page-panel" aria-labelledby="keys-title">
+      <div class="page-heading"><h1 id="keys-title">令牌管理</h1><div class="page-actions"><button id="find-key" class="button-small" type="button">{{ icon('search') }}通过 KEY 找用户</button><button id="new-key" class="button-primary button-small" type="button">{{ icon('plus') }}新增 KEY</button></div></div>
+      <form id="management-search" class="table-toolbar">
+        <label class="search-control"><span class="sr-only">搜索用户名 / 显示名 / ID / KEY 名称</span>{{ icon('search') }}<input id="management-keyword" type="search" autocomplete="off" placeholder="按用户、ID 或 KEY 名称筛选…"></label>
+        <button type="submit" class="button-ghost">查询</button>
+      <div class="management-filters">
+        <details class="management-picker"><summary>用户状态</summary><div id="user-status-options"><label><input type="checkbox" value="1" checked>启用</label><label><input type="checkbox" value="2">禁用</label></div></details>
+        <details class="management-picker"><summary>用户组</summary><div id="user-group-options"></div></details>
+        <details class="management-picker"><summary>KEY 分组</summary><div id="token-group-options"></div></details>
+        <details class="management-picker"><summary>KEY 状态</summary><div id="token-status-options"><label><input type="checkbox" value="1" checked>启用</label><label><input type="checkbox" value="2" checked>禁用</label><label><input type="checkbox" value="3" checked>已过期</label><label><input type="checkbox" value="4" checked>额度耗尽</label></div></details>
+        <button id="clear-user-filter" type="button" hidden>取消指定用户筛选</button>
+      </div>
+        <button id="management-refresh" class="toolbar-end icon-button button-ghost" type="button" title="刷新" aria-label="刷新">{{ icon('refresh-cw') }}</button>
+      </form>
+      <div class="batch-toolbar">
+        <button id="select-filtered" type="button">选择全部筛选结果</button><button id="clear-token-selection" type="button">清空已选 KEY</button>
+        <span id="token-selection-count">已选 0 个 KEY</span>
+        <label class="batch-target">目标 KEY 分组<select id="batch-target-group"></select></label>
+        <button id="batch-preview" type="button">{{ icon('users') }}预览批量改组</button>
+      </div>
+      <details class="help-note"><summary>{{ icon('info') }}列表说明</summary><p>每个 KEY 一行，第一列用户信息合并显示；按用户分页，同一用户不会拆到两页。仅显示拥有匹配 KEY 的用户。用户资料与配额在“用户管理”页面操作。</p></details>
+      <p class="warning">KEY 额度是调用限额，不是用户充值。New API 的 KEY 编辑接口会覆盖剩余额度；改组、编辑或调整额度前请暂停该 KEY 的并发调用。增减是按刚读取的余额计算，不是原子增减；成功结果不自动回滚。</p>
+      <div class="table-wrap"><table id="management-table"><thead id="management-head"></thead><tbody id="management-rows"></tbody></table></div>
+      <div class="pagination"><button id="page-prev" type="button">{{ icon('chevron-left') }}上一页</button><span id="page-info"></span><button id="page-next" type="button">下一页{{ icon('chevron-right') }}</button></div>
+    </section>
+    <p id="management-status" role="status" aria-live="polite">正在读取…</p>
+  </main>
+  <dialog id="key-search-dialog"><h2>通过完整 KEY 找用户</h2><form id="key-search-form"><label>模型调用 KEY<input id="search-full-key" type="password" autocomplete="off" required></label><p class="hint">精确匹配，兼容 sk- 前缀；不会保存搜索内容或将 KEY 写入 URL。</p><p id="key-search-result" role="status"></p><div class="dialog-actions"><button type="button" data-close="key-search-dialog">关闭</button><button type="submit">查找</button></div></form></dialog>
+  <dialog id="edit-dialog"><h2 id="edit-title"></h2><form id="edit-form"><div id="edit-fields"></div><p id="edit-warning" class="warning"></p><p id="edit-error" class="error" role="status"></p><div class="dialog-actions"><button type="button" data-close="edit-dialog">取消</button><button id="edit-save" type="submit">确认保存</button></div></form></dialog>
+  <dialog id="batch-dialog" class="management-wide"><h2>确认 KEY 批量改组</h2><p id="batch-summary"></p><p class="warning">确认前请暂停这些 KEY 的并发调用。每组最多 5 个并发，失败停止后续组；已成功的不回滚。执行中窗口暂不可关闭；刷新或离开页面会停止尚未发送的组，但不能撤销已经发出的请求。</p><div class="table-wrap"><table><thead><tr><th>KEY ID</th><th>所属用户</th><th>原分组</th><th>目标分组</th><th>执行结果</th></tr></thead><tbody id="batch-rows"></tbody></table></div><p id="batch-progress" role="status"></p><div class="dialog-actions"><button id="batch-cancel" type="button">关闭</button><button id="batch-apply" type="button">确认执行</button></div></dialog>
+  <dialog id="token-info-dialog"><h2>KEY 详情</h2><dl id="token-info"></dl><div class="dialog-actions"><button type="button" data-close="token-info-dialog">关闭</button></div></dialog>
+  <dialog id="reveal-dialog"><h2>模型调用 KEY</h2><p class="warning">完整 KEY 仅在本次窗口显示，请勿公开。关闭后清除页面中的明文。</p><input id="revealed-key" readonly type="password" autocomplete="off"><div class="dialog-actions"><button id="show-key" type="button">显示 / 隐藏</button><button id="copy-key" type="button">复制</button><button type="button" data-close="reveal-dialog">关闭</button></div></dialog>
+</body>
+</html>

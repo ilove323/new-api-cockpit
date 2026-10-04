@@ -1,7 +1,10 @@
-New API Statistics
+newapi-cockpit
 Copyright 2026 ilove323
 
 Licensed under the Apache License, Version 2.0.
 
-Bundled Lucide icons retain their original ISC license and attribution:
+Bundled Lucide icons retain their original ISC license and Feather MIT attribution:
 src/new_api_statistics/static/LUCIDE-LICENSE.
+
+Bundled Public Sans typeface retains its original SIL Open Font License 1.1:
+src/new_api_statistics/static/fonts/OFL-LICENSE.txt.

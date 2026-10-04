@@ -24,7 +24,7 @@ const Scope = (() => {
   }
   async function init(){
     try{
-      const response=await fetch('/statistics/api/scopes');if(!response.ok)throw new Error('账本列表读取失败，请刷新重试');
+      const response=await fetch('/cockpit/statistics/api/scopes');if(!response.ok)throw new Error('账本列表读取失败，请刷新重试');
       const data=await response.json();const rows=data.rows;
       if(!Array.isArray(rows)||!rows.length)throw new Error('暂无可用账本');
       const order={all:0,tag:1,ungrouped:2};rows.sort((a,b)=>order[a.kind]-order[b.kind]);

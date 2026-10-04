@@ -61,7 +61,7 @@ function tooltipHarness(){
 }
 test('lazy hover fetches the existing snapshot exactly once without recomputation',async()=>{
   const h=tooltipHarness();let calls=0;
-  h.context.Scope.request=async(path,options)=>{calls++;assert.equal(path,'/statistics/api/usage/details');assert.deepEqual(JSON.parse(options.body),{report_id:'frozen-id',row_ids:[7]});return {ok:true,json:async()=>({rows:[{row_id:7,detail:{cost_formula:{mode:'unknown'}}}]})};};
+  h.context.Scope.request=async(path,options)=>{calls++;assert.equal(path,'/cockpit/statistics/api/usage/details');assert.deepEqual(JSON.parse(options.body),{report_id:'frozen-id',row_ids:[7]});return {ok:true,json:async()=>({rows:[{row_id:7,detail:{cost_formula:{mode:'unknown'}}}]})};};
   h.context.row={report_id:'frozen-id',row_id:7,username:'alice',model_name:'gpt',amount:'1.234567'};
   const [a,b]=await Promise.all([h.run('lazyRowMoneyFormula(row)'),h.run('lazyRowMoneyFormula(row)')]);
   assert.equal(calls,1);assert.deepEqual(Array.from(a),Array.from(b));

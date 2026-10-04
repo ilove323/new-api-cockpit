@@ -70,9 +70,9 @@ class AuthTest(unittest.TestCase):
     def test_bearer_cannot_access_web_admin_endpoints(self):
         with patch("new_api_statistics.app.verify_api_key", return_value=True):
             for route in (
-                "/statistics/api/balance/status",
-                "/statistics/api/balance/settings",
-                "/statistics/api/usage",
+                "/cockpit/statistics/api/balance/status",
+                "/cockpit/statistics/api/balance/settings",
+                "/cockpit/statistics/api/usage",
             ):
                 response = app.test_client().get(
                     route, headers={"Authorization": "Bearer fixture"}
@@ -87,20 +87,20 @@ class AuthTest(unittest.TestCase):
         ):
             self.assertEqual(
                 client.get(
-                    "/statistics/", auth=("test_admin", "测试Password")
+                    "/cockpit/statistics/", auth=("test_admin", "测试Password")
                 ).status_code,
                 200,
             )
         for route in (
-            "/statistics/",
-            "/statistics/static/app.js",
-            "/statistics/api/usage",
-            "/statistics/api/usage/by-token",
-            "/statistics/api/usage/tokens",
-            "/statistics/api/usage/groups",
-            "/statistics/api/usage/by-selection",
-            "/statistics/api/export",
-            "/statistics/api/balance/usage-channels",
+            "/cockpit/statistics/",
+            "/cockpit/static/app.js",
+            "/cockpit/statistics/api/usage",
+            "/cockpit/statistics/api/usage/by-token",
+            "/cockpit/statistics/api/usage/tokens",
+            "/cockpit/statistics/api/usage/groups",
+            "/cockpit/statistics/api/usage/by-selection",
+            "/cockpit/statistics/api/export",
+            "/cockpit/statistics/api/balance/usage-channels",
         ):
             self.assertEqual(client.get(route).status_code, 401)
             with patch(

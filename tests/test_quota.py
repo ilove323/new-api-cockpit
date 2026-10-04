@@ -34,6 +34,10 @@ class FakeConn:
 
 class QuotaTest(unittest.TestCase):
     def setUp(self):
+        for name in ("begin_quota", "start_quota_wave", "finish_quota"):
+            mock = patch.object(quota.operation_records, name)
+            mock.start()
+            self.addCleanup(mock.stop)
         self.operator = dict(
             id=1, username="admin", role=100, status=1, access_token="secret-pat"
         )
@@ -202,29 +206,32 @@ class QuotaTest(unittest.TestCase):
 
     def test_page_auth_and_mutation_header(self):
         client = app.test_client()
-        self.assertEqual(client.get("/quota/").status_code, 401)
+        self.assertEqual(client.get("/cockpit/users/").status_code, 401)
         with (
             patch("new_api_statistics.app.verify_admin", return_value=True),
             patch("new_api_statistics.app.load_site_name", return_value="Test"),
             patch.object(quota, "preview", return_value={"users": []}) as preview,
         ):
             self.assertEqual(
-                client.get("/quota/", auth=("admin", "password")).status_code, 200
+                client.get("/cockpit/users/", auth=("admin", "password")).status_code,
+                200,
             )
             self.assertIn(
                 "用户组",
-                client.get("/quota/", auth=("admin", "password")).get_data(
+                client.get("/cockpit/users/", auth=("admin", "password")).get_data(
                     as_text=True
                 ),
             )
             self.assertEqual(
                 client.post(
-                    "/quota/api/preview", json=self.body, auth=("admin", "password")
+                    "/cockpit/users/api/preview",
+                    json=self.body,
+                    auth=("admin", "password"),
                 ).status_code,
                 403,
             )
             response = client.post(
-                "/quota/api/preview",
+                "/cockpit/users/api/preview",
                 json=self.body,
                 headers={"X-Quota-Action": "preview"},
                 auth=("admin", "password"),

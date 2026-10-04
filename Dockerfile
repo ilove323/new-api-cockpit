@@ -7,6 +7,7 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home statistics
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY src/ ./src/
+COPY sql/ ./sql/
 RUN pip install --no-cache-dir --no-deps .
 USER statistics
 EXPOSE 8000

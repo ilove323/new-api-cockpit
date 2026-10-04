@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const root=path.join(__dirname,'../src/new_api_statistics');
-const html=fs.readFileSync(path.join(root,'templates/quota.html'),'utf8');
+const html=fs.readFileSync(path.join(root,'templates/users.html'),'utf8');
 class Element{
   constructor(){this.children=[];this.events={};this.attrs={};this.value='';this.checked=false;this.textContent='';this.hidden=false;this.disabled=false;}
   append(...children){this.children.push(...children);}
@@ -34,7 +34,7 @@ function harness(data=fixture){
 test('settings opens rule tab, safely renders group choices and never requests mutations on load',async()=>{
   const h=harness();await h.open();await h.elements.get('schedule-new').fire('click');
   assert.equal(h.elements.get('quota-settings-dialog').open,true);
-  assert.equal(h.elements.get('schedule-rules-tab').attrs['aria-selected'],'true');
+  assert.equal(h.elements.has('schedule-runs-tab'),false);
   assert.equal(h.elements.get('schedule-form').hidden,false);
   assert.ok(h.elements.get('schedule-groups').children.some(label=>label.children[1].textContent==='<img src=x>'));
   assert.ok(h.calls.every(call=>call.options.method==='GET'));
@@ -91,17 +91,8 @@ test('rules owned by other administrators have no enabled management controls',a
   assert.ok(buttons.every(button=>button.disabled));
   assert.equal(h.elements.get('schedule-rules').children[0].children[4].textContent,'100.01');
 });
-test('execution records and user detail are paginated, two-decimal and read-only',async()=>{
-  const h=harness();await h.open();
-  const run={id:7,rule_id:1,scheduled_for:'2026-10-01T00:00:00+08:00',snapshot:{groups:['team-a'],operation:'add',amount_units:617283945},status:'unknown',success_count:4,failed_count:0,unknown_count:1,skipped_count:5,message:'请核对审计日志'};
-  h.ctx.fetch=async(url,options)=>{h.calls.push({url,options});return {ok:true,json:async()=>url.includes('schedule-runs/7')?{run,rows:[{username:'alice',display_name:'Alice',group_name:'team-a',operation:'add',amount_yuan:'1234.56789',status:'unknown',message:'结果不明确'}],next_after:null}:{rows:[run],next_before:7}};};
-  await h.elements.get('schedule-runs-tab').fire('click');
-  const row=h.elements.get('schedule-runs').children[0];
-  assert.equal(row.children[4].textContent,'1,234.57');assert.equal(row.children[5].textContent,'结果不明确');
-  await row.children[7].children[0].fire('click');
-  const item=h.elements.get('schedule-run-items').children[0];
-  assert.equal(item.children[3].textContent,'1,234.57');assert.equal(item.children[0].children[0].textContent,'Alice');
-  assert.ok(h.calls.every(call=>call.options.method==='GET'));
-  await h.elements.get('schedule-run-close').fire('click');await h.elements.get('schedule-runs-more').fire('click');
-  assert.ok(h.calls.some(call=>call.url.endsWith('?before=7')));
+test('execution history is on its own page, not embedded in schedule settings',()=>{
+  assert.doesNotMatch(html,/id="schedule-runs-panel"|id="schedule-runs-tab"|id="schedule-run-dialog"/);
+  const records=fs.readFileSync(path.join(root,'templates/operations.html'),'utf8');
+  assert.match(records,/操作记录/);assert.match(records,/records-next/);
 });

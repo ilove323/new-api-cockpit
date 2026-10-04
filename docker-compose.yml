@@ -1,6 +1,6 @@
 services:
   statistics:
-    image: new-api-statistics:local
+    image: newapi-cockpit:local
     build:
       context: .
       args:

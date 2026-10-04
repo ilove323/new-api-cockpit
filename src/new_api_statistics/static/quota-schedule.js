@@ -2,18 +2,18 @@
 (() => {
   const $ = id => document.getElementById(id);
   const periods={daily:'每天',weekly:'每周',monthly:'每月'};
-  const statuses={queued:'待执行',running:'执行中',success:'成功',partial:'部分成功',failed:'失败',unknown:'结果不明确',missed:'未执行',pending:'待执行',sending:'请求中',skipped:'未发起'};
+  const statuses={running:'执行中',success:'成功',partial:'部分成功',failed:'失败',unknown:'结果不明确',sending:'请求中'};
   const money=value=>value===null||value===undefined?'—':Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
   const time=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';
   const groupName=value=>value||'未分组';
   const operation=value=>value==='add'?'增加':'减少';
-  let data={configured:false,rows:[],groups:[]},editing=null,busy=false,needsRefresh=false,runCursor=null,itemCursor=null,currentRun=null,detailEpoch=0,detailBusy=false;
+  let data={configured:false,rows:[],groups:[]},editing=null,busy=false,needsRefresh=false;
   const cell=(tr,value)=>{const td=document.createElement('td');td.textContent=value;tr.append(td);return td;};
   const status=(value,error=false)=>{$('schedule-status').textContent=value;$('schedule-status').className=error?'error':'';};
   async function api(path,method='GET',body){
     const options={cache:'no-store',method};
     if(method!=='GET')Object.assign(options,{headers:{'Content-Type':'application/json','X-Quota-Action':'schedule'},body:JSON.stringify(body)});
-    let response;try{response=await fetch('/quota/api/'+path,options);}catch{const error=new Error('网络中断，请刷新核对结果，不要重复提交。');error.ambiguous=true;throw error;}
+    let response;try{response=await fetch('/cockpit/users/api/'+path,options);}catch{const error=new Error('网络中断，请刷新核对结果，不要重复提交。');error.ambiguous=true;throw error;}
     let result;try{result=await response.json();}catch{const error=new Error('服务响应无效，请刷新核对结果，不要重复提交。');error.ambiguous=true;throw error;}
     if(!response.ok){const error=new Error(result.error||`请求失败（HTTP ${response.status}）`);error.ambiguous=response.status>=500||response.status===409;throw error;}
     return result;
@@ -21,7 +21,6 @@
   function controls(){
     $('schedule-close').disabled=busy;$('schedule-save').disabled=busy||needsRefresh;
     $('schedule-new').disabled=busy||needsRefresh||!data.configured;$('schedule-refresh').disabled=busy;
-    $('schedule-runs-refresh').disabled=busy||!data.configured;
     $('schedule-edit-cancel').disabled=busy;
   }
   function button(parent,label,callback,disabled=false){
@@ -88,50 +87,8 @@
     if(!window.confirm(`确认保存？${groups.map(groupName).join('、')}，${periods[body.period]}每人${operation(body.operation)} ${money(body.amount_yuan)} 元；${body.enabled?'启用':'停用'}。保存不会立即修改额度，减少额度允许负余额。${warning}`))return;
     await write(()=>api('schedules'+(editing?'/'+editing.id:''),editing?'PUT':'POST',body));
   });
-  async function loadRuns(more=false){
-    if(busy)return;
-    busy=true;controls();$('schedule-runs-more').disabled=true;
-    try{
-      const result=await api('schedule-runs'+(more&&runCursor?'?before='+runCursor:''));
-      if(!more)$('schedule-runs').replaceChildren();
-      for(const run of result.rows){
-        const tr=document.createElement('tr'),s=run.snapshot;
-        for(const value of [run.rule_id,time(run.scheduled_for),s.groups.map(groupName).join('、'),operation(s.operation),money(Number(s.amount_units)/500000),statuses[run.status],`${run.success_count} / ${run.failed_count} / ${run.unknown_count} / ${run.skipped_count}`])cell(tr,value);
-        button(cell(tr,''),'查看',()=>showRun(run.id));$('schedule-runs').append(tr);
-      }
-      if(!more&&!result.rows.length){const tr=document.createElement('tr');cell(tr,'暂无执行记录').colSpan=8;$('schedule-runs').append(tr);}
-      runCursor=result.next_before;$('schedule-runs-more').hidden=!runCursor;status('记录均为实际执行结果；结果不明确时请核对 New API 审计日志，不要重试。');
-    }catch(error){status(error.message,true);}
-    finally{busy=false;controls();$('schedule-runs-more').disabled=false;}
-  }
-  async function showRun(id,more=false){
-    if(more&&detailBusy)return;
-    detailBusy=true;const ticket=++detailEpoch;currentRun=id;$('schedule-run-more').disabled=true;
-    if(!more){$('schedule-run-items').replaceChildren();$('schedule-run-dialog').showModal();}
-    $('schedule-run-status').textContent='正在读取…';
-    try{
-      const result=await api('schedule-runs/'+id+(more&&itemCursor?'?after='+itemCursor:''));
-      if(ticket!==detailEpoch)return;
-      $('schedule-run-summary').textContent=`规则 #${result.run.rule_id} · ${time(result.run.scheduled_for)}（北京时间） · ${statuses[result.run.status]}。${result.run.message}`;
-      for(const item of result.rows){
-        const tr=document.createElement('tr'),name=cell(tr,item.username);
-        if(item.display_name){const span=document.createElement('span');span.className='display-name';span.textContent=item.display_name;name.append(span);}
-        for(const value of [groupName(item.group_name),operation(item.operation),money(item.amount_yuan),statuses[item.status],item.message])cell(tr,value);
-        $('schedule-run-items').append(tr);
-      }
-      itemCursor=result.next_after;$('schedule-run-more').hidden=!itemCursor;$('schedule-run-status').textContent='';
-    }catch(error){if(ticket===detailEpoch)$('schedule-run-status').textContent=error.message;}
-    finally{if(ticket===detailEpoch){detailBusy=false;$('schedule-run-more').disabled=false;}}
-  }
-  async function tab(which){
-    if(busy)return;
-    for(const name of ['rules','runs']){
-      const active=name===which;$('schedule-'+name+'-tab').setAttribute('aria-selected',String(active));$('schedule-'+name+'-tab').tabIndex=active?0:-1;$('schedule-'+name+'-panel').hidden=!active;
-    }
-    if(which==='runs')await loadRuns();
-  }
   $('quota-settings').addEventListener('click',async()=>{
-    if(busy)return;await tab('rules');$('quota-settings-dialog').showModal();busy=true;controls();status('正在读取…');
+    if(busy)return;await $('quota-settings-dialog').showModal();busy=true;controls();status('正在读取…');
     try{await loadRules();}catch(error){status(error.message,true);}finally{busy=false;renderRules();}
   });
   $('schedule-close').addEventListener('click',()=>{if(!busy)$('quota-settings-dialog').close();});
@@ -142,17 +99,4 @@
     if(busy)return;busy=true;controls();
     try{await loadRules();editing=null;$('schedule-form').hidden=true;}catch(error){status(error.message,true);}finally{busy=false;renderRules();}
   });
-  for(const name of ['rules','runs']){
-    $('schedule-'+name+'-tab').addEventListener('click',()=>tab(name));
-    $('schedule-'+name+'-tab').addEventListener('keydown',event=>{
-      if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){
-        event.preventDefault();const next=event.key==='Home'?'rules':event.key==='End'?'runs':name==='rules'?'runs':'rules';tab(next);$('schedule-'+next+'-tab').focus();
-      }
-    });
-  }
-  $('schedule-runs-refresh').addEventListener('click',()=>loadRuns());
-  $('schedule-runs-more').addEventListener('click',()=>loadRuns(true));
-  $('schedule-run-more').addEventListener('click',()=>showRun(currentRun,true));
-  $('schedule-run-close').addEventListener('click',()=>{detailEpoch++;detailBusy=false;$('schedule-run-dialog').close();});
-  $('schedule-run-dialog').addEventListener('cancel',()=>{detailEpoch++;detailBusy=false;});
 })();

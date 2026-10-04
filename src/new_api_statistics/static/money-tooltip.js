@@ -8,7 +8,7 @@ async function lazyRowMoneyFormula(row){
   if(row.cost_formula||!row.report_id)return rowMoneyFormula(row);
   if(!moneyDetails.has(row)){
     const promise=(async()=>{
-      const response=await Scope.request('/statistics/api/usage/details',{method:'POST',headers:{'Content-Type':'application/json','X-Statistics-Request':'1'},body:JSON.stringify({report_id:row.report_id,row_ids:[row.row_id]})});
+      const response=await Scope.request('/cockpit/statistics/api/usage/details',{method:'POST',headers:{'Content-Type':'application/json','X-Statistics-Request':'1'},body:JSON.stringify({report_id:row.report_id,row_ids:[row.row_id]})});
       const body=await response.json();
       if(!response.ok)throw new Error(body.error||'详情加载失败，请重新查询。');
       return body.rows[0].detail;

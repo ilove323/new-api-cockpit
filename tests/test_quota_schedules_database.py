@@ -7,6 +7,7 @@ import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 import psycopg
@@ -14,8 +15,8 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from cryptography.fernet import Fernet
 
-from new_api_statistics import balance, locks, notifications, quota
-from new_api_statistics import quota_worker
+from new_api_statistics import balance, locks, notifications, quota, operation_records
+from new_api_statistics import quota_timer
 from new_api_statistics import (
     quota_schedule as schedules,
     quota_schedule_executor as executor,
@@ -49,6 +50,24 @@ class ScheduleDatabaseTest(unittest.TestCase):
             DSN, row_factory=dict_row, options="-c search_path=" + self.schema
         )
 
+    def run_state(self, run_id):
+        # Inspect internal execution state directly, not a redundant public API.
+        with self.connect() as conn:
+            run = conn.execute(
+                "SELECT * FROM quota_schedule_runs WHERE id=%s", (run_id,)
+            ).fetchone()
+            if not run:
+                raise ValueError("执行记录不存在。")
+            rows = conn.execute(
+                "SELECT * FROM quota_schedule_run_items WHERE run_id=%s ORDER BY user_id",
+                (run_id,),
+            ).fetchall()
+        for row in rows:
+            row["amount_yuan"] = str(
+                Decimal(row["amount_units"]) / quota.QUOTA_PER_YUAN
+            )
+        return {"run": run, "rows": rows}
+
     def source_connect(self):
         return psycopg.connect(
             DSN,
@@ -69,8 +88,9 @@ class ScheduleDatabaseTest(unittest.TestCase):
             self.addCleanup(mocked.stop)
         balance.initialize()
         with self.connect() as conn:
+            conn.execute("TRUNCATE user_management_operations CASCADE")
             conn.execute(
-                "TRUNCATE quota_schedule_run_items,quota_schedule_runs,quota_schedule_rule_groups,quota_schedule_rules RESTART IDENTITY"
+                "TRUNCATE quota_schedule_run_targets,quota_schedule_run_items,quota_schedule_runs,quota_schedule_rule_groups,quota_schedule_rules RESTART IDENTITY"
             )
             conn.execute("""CREATE TABLE IF NOT EXISTS users (id bigint PRIMARY KEY,username text,display_name text,
                 "group" text,role integer,status integer,access_token text,quota bigint,deleted_at timestamptz);
@@ -133,11 +153,24 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual(schedules.claim_due(self.now), [])
         self.assertEqual(schedules.next_due(), self.now + timedelta(days=1))
 
-    def test_missed_cycles_are_logged_but_never_replayed(self):
+    def test_missed_cycles_have_no_operation_record_and_are_never_replayed(self):
         self.rule()
         self.assertEqual(schedules.claim_due(self.now + timedelta(days=40)), [])
-        rows = schedules.list_runs()["rows"]
-        self.assertEqual(rows[0]["status"], "missed")
+        rows = [
+            r
+            for r in operation_records.list_records("admin", {"kind": "schedule"})[
+                "rows"
+            ]
+            if r["source"] == "schedule"
+        ]
+        self.assertEqual(rows, [])
+        with self.connect() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM quota_schedule_runs"
+                ).fetchone()["n"],
+                0,
+            )
         self.assertEqual(schedules.next_due(), self.now + timedelta(days=41))
 
     def test_live_members_enabled_filter_five_concurrency_and_durable_sending_state(
@@ -175,7 +208,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
             executor.execute(run_id, lambda: None)
         self.assertEqual(maximum, 5)
         self.assertEqual(set(calls), {*range(2, 14), 17})
-        detail = schedules.run_detail(run_id)
+        detail = self.run_state(run_id)
         self.assertEqual(detail["run"]["status"], "success")
         self.assertEqual(detail["run"]["success_count"], 13)
         self.assertEqual(len(detail["rows"]), 13)
@@ -201,10 +234,13 @@ class ScheduleDatabaseTest(unittest.TestCase):
                 with patch.object(quota, "_call_manage", side_effect=mutate) as call:
                     executor.execute(run_id, lambda: None)
                     self.assertEqual(call.call_count, 5)
-                detail = schedules.run_detail(run_id)
+                detail = self.run_state(run_id)
                 self.assertEqual(detail["run"]["status"], status)
                 self.assertEqual(detail["run"]["success_count"], 4)
-                self.assertEqual(detail["run"]["skipped_count"], 7)
+                self.assertEqual(detail["run"]["total_count"], 5)
+                self.assertEqual(len(detail["rows"]), 5)
+                self.assertNotIn("skipped_count", detail["run"])
+                self.assert_plans_empty(run_id)
                 with patch.object(quota, "_call_manage") as call:
                     executor.execute(run_id, lambda: None)
                     call.assert_not_called()
@@ -216,7 +252,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         with patch.object(quota, "_call_manage") as call:
             executor.execute(run_id, lambda: None)
             call.assert_not_called()
-        self.assertEqual(schedules.run_detail(run_id)["run"]["status"], "failed")
+        self.assert_no_record(run_id)
 
     def test_admin_pat_is_reread_between_waves_and_not_saved_in_history(self):
         run_id = self.queued()
@@ -234,7 +270,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
             executor.execute(run_id, lambda: None)
         self.assertEqual(tokens[:5], ["fixture-pat"] * 5)
         self.assertTrue(all(value == "fixture-rotated-pat" for value in tokens[5:]))
-        self.assertNotIn("fixture-rotated-pat", str(schedules.run_detail(run_id)))
+        self.assertNotIn("fixture-rotated-pat", str(self.run_state(run_id)))
 
     def test_rule_edits_do_not_change_existing_run_snapshot(self):
         run_id = self.queued()
@@ -252,21 +288,19 @@ class ScheduleDatabaseTest(unittest.TestCase):
         with patch.object(quota, "_call_manage") as call:
             executor.execute(run_id, lambda: None)
             call.assert_not_called()
-        self.assertEqual(schedules.run_detail(run_id)["run"]["status"], "missed")
+        self.assert_no_record(run_id)
         with self.connect() as conn:
-            conn.execute(
-                "UPDATE quota_schedule_runs SET status='queued' WHERE id=%s", (run_id,)
-            )
             conn.execute(
                 "UPDATE quota_schedule_rules SET enabled=true,next_run_at=%s WHERE id=1",
                 (self.now,),
             )
             conn.execute("UPDATE users SET role=10 WHERE id=1")
             conn.execute("UPDATE users SET role=10 WHERE id=2")
+        run_id = schedules.claim_due(self.now)[0]
         with patch.object(quota, "_call_manage") as call:
             executor.execute(run_id, lambda: None)
             call.assert_not_called()
-        self.assertEqual(schedules.run_detail(run_id)["run"]["status"], "failed")
+        self.assert_no_record(run_id)
 
     def test_interrupted_sending_is_unknown_and_pending_is_never_resumed(self):
         run_id = self.queued()
@@ -276,15 +310,19 @@ class ScheduleDatabaseTest(unittest.TestCase):
             )
             conn.execute(
                 """INSERT INTO quota_schedule_run_items(run_id,user_id,username,group_name,operation,amount_units,status)
-                VALUES (%s,2,'sent','team-a','add',500000,'sending'),(%s,3,'pending','team-a','add',500000,'pending')""",
-                (run_id, run_id),
+                VALUES (%s,2,'sent','team-a','add',500000,'sending')""",
+                (run_id,),
+            )
+            conn.execute(
+                """INSERT INTO quota_schedule_run_targets(run_id,user_id,username,group_name,operation,amount_units)
+                VALUES (%s,3,'pending','team-a','add',500000)""",
+                (run_id,),
             )
         schedules.recover_interrupted()
-        detail = schedules.run_detail(run_id)
+        detail = self.run_state(run_id)
         self.assertEqual(detail["run"]["status"], "unknown")
-        self.assertEqual(
-            [item["status"] for item in detail["rows"]], ["unknown", "skipped"]
-        )
+        self.assertEqual([item["status"] for item in detail["rows"]], ["unknown"])
+        self.assert_plans_empty(run_id)
         with patch.object(quota, "_call_manage") as call:
             executor.execute(run_id, lambda: None)
             call.assert_not_called()
@@ -391,13 +429,13 @@ class ScheduleDatabaseTest(unittest.TestCase):
 
         def run():
             try:
-                quota_worker.serve(stopped)
+                quota_timer.serve(stopped)
             except Exception as exc:
                 if not stopped.is_set():
                     errors.append(type(exc).__name__)
 
         with (
-            patch.object(quota_worker, "datetime") as clock,
+            patch.object(quota_timer, "datetime") as clock,
             patch.object(quota, "_call_manage") as call,
         ):
             clock.now.return_value = self.now
@@ -449,11 +487,11 @@ class ScheduleDatabaseTest(unittest.TestCase):
         with patch.object(quota, "_call_manage", side_effect=mutate) as call:
             executor.execute(run_id, lambda: None)
             self.assertEqual(call.call_count, 5)
-        detail = schedules.run_detail(run_id)
+        detail = self.run_state(run_id)
         self.assertEqual(detail["run"]["status"], "partial")
-        self.assertEqual(
-            (detail["run"]["success_count"], detail["run"]["skipped_count"]), (5, 7)
-        )
+        self.assertEqual(detail["run"]["success_count"], 5)
+        self.assertEqual(detail["run"]["total_count"], 5)
+        self.assert_plans_empty(run_id)
 
     def test_disabled_or_moved_user_is_skipped_at_wave_recheck(self):
         run_id = self.queued()
@@ -467,12 +505,11 @@ class ScheduleDatabaseTest(unittest.TestCase):
             executor.execute(run_id, lambda: None)
         self.assertNotIn(7, [c.args[1] for c in call.call_args_list])
         self.assertEqual(call.call_count, 9)
-        detail = schedules.run_detail(run_id)
-        skipped = next(item for item in detail["rows"] if item["user_id"] == 7)
-        self.assertEqual(skipped["status"], "skipped")
-        self.assertIsNone(skipped["request_started_at"])
+        detail = self.run_state(run_id)
+        self.assertNotIn(7, [item["user_id"] for item in detail["rows"]])
         self.assertEqual(detail["run"]["status"], "partial")
-        self.assertEqual(detail["run"]["skipped_count"], 3)
+        self.assertEqual(detail["run"]["total_count"], 9)
+        self.assert_plans_empty(run_id)
 
     def test_queued_and_preparation_interruptions_are_not_reported_as_success(self):
         first = self.queued()
@@ -482,8 +519,71 @@ class ScheduleDatabaseTest(unittest.TestCase):
                 "UPDATE quota_schedule_runs SET status='running' WHERE id=%s", (second,)
             )
         schedules.recover_interrupted()
-        self.assertEqual(schedules.run_detail(first)["run"]["status"], "missed")
-        self.assertEqual(schedules.run_detail(second)["run"]["status"], "failed")
+        self.assert_no_record(first)
+        self.assert_no_record(second)
+
+    def assert_plans_empty(self, run_id):
+        with self.connect() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM quota_schedule_run_targets WHERE run_id=%s",
+                    (run_id,),
+                ).fetchone()["n"],
+                0,
+            )
+
+    def assert_no_record(self, run_id):
+        with self.connect() as conn:
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT id FROM quota_schedule_runs WHERE id=%s", (run_id,)
+                ).fetchone()
+            )
+        with self.assertRaisesRegex(ValueError, "不存在"):
+            self.run_state(run_id)
+        self.assert_plans_empty(run_id)
+
+    def test_no_eligible_users_produces_no_operation_record(self):
+        run_id = self.queued()
+        with self.connect() as conn:
+            conn.execute("UPDATE users SET status=2 WHERE role=1")
+        with patch.object(quota, "_call_manage") as call:
+            executor.execute(run_id, lambda: None)
+            call.assert_not_called()
+        self.assert_no_record(run_id)
+
+    def test_plan_is_not_a_record_and_inflight_count_is_uncertain(self):
+        from new_api_statistics import operation_records
+
+        run_id = self.queued()
+        self.assertFalse(
+            [
+                r
+                for r in operation_records.list_records("admin", {"kind": "schedule"})[
+                    "rows"
+                ]
+                if r["source"] == "schedule"
+            ]
+        )
+        barrier = threading.Barrier(5)
+
+        def mutate(admin, user_id, operation, units):
+            if user_id <= 6:
+                barrier.wait(timeout=5)
+                rows = operation_records.list_records("admin", {"kind": "schedule"})[
+                    "rows"
+                ]
+                record = next(
+                    row for row in rows if row["action"] == "schedule.execute"
+                )
+                self.assertEqual(record["counts"]["uncertain"], 5)
+                self.assertEqual(record["counts"]["total"], 5)
+                self.assertNotIn("pending", record["counts"])
+                barrier.wait(timeout=5)
+
+        with patch.object(quota, "_call_manage", side_effect=mutate):
+            executor.execute(run_id, lambda: None)
+        self.assertEqual(self.run_state(run_id)["run"]["success_count"], 12)
 
 
 if __name__ == "__main__":

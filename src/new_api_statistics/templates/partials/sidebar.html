@@ -1,0 +1,11 @@
+{% from "partials/icons.html" import icon %}
+<aside class="app-sidebar" id="app-sidebar" aria-label="页面导航">
+  <p class="sidebar-heading">扩展管理</p>
+  <nav>
+    <a href="/cockpit/statistics/" {% if request.path.startswith('/cockpit/statistics') %}aria-current="page"{% endif %} title="用量统计">{{ icon('chart-no-axes-combined') }}<span class="nav-label">用量统计</span></a>
+    <a href="/cockpit/users/" {% if request.path.startswith('/cockpit/users') %}aria-current="page"{% endif %} title="用户管理">{{ icon('users') }}<span class="nav-label">用户管理</span></a>
+    <a href="/cockpit/keys/" {% if request.path.startswith('/cockpit/keys') %}aria-current="page"{% endif %} title="令牌管理">{{ icon('key-round') }}<span class="nav-label">令牌管理</span></a>
+    <a href="/cockpit/operations/" {% if request.path.startswith('/cockpit/operations') %}aria-current="page"{% endif %} title="操作记录">{{ icon('scroll-text') }}<span class="nav-label">操作记录</span></a>
+  </nav>
+</aside>
+<button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="关闭导航" hidden></button>

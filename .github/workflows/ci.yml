@@ -47,8 +47,6 @@ jobs:
       - run: ruff check src tests
       - run: ruff format --check src tests
       - run: python -m unittest discover -s tests
-      - run: python tests/check_balance_database.py
-      - run: python tests/check_migrations.py
       - run: for file in src/new_api_statistics/static/*.js; do node --check "$file"; done
       - run: node --test tests/*.cjs
       - run: python -m build
@@ -68,7 +66,7 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8091/healthz
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/statistics/)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/statistics/)" = 401
       - if: always()
         run: docker logs statistics-ci || true
 

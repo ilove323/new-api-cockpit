@@ -1,46 +1,47 @@
-:root{font-family:system-ui,-apple-system,"PingFang SC",sans-serif;color:#242c2b;background:#f6f8f7;font-size:14px}*{box-sizing:border-box}body{margin:0}header{height:66px;background:#fff;border-bottom:1px solid #dde4e0;padding:0 30px;display:flex;align-items:center;justify-content:space-between}.brand{font-size:22px;font-weight:750;color:#156b59}.brand span{font-size:17px;color:#242c2b;margin-left:14px}a{color:#156b59;text-decoration:none;font-weight:600}a:hover{text-decoration:underline}main{max-width:1400px;margin:auto;padding:28px 30px}h1{font-size:22px;margin:0 0 8px}.intro p,.hint{color:#61716a}.toolbar{display:flex;align-items:end;flex-wrap:wrap;gap:12px;margin:25px 0 15px}.toolbar label{display:grid;gap:7px;color:#52615b;font-size:12px}.toolbar label:first-child{min-width:260px;flex:1}.toolbar label:has(#mode){text-align:center}#mode{text-align:center;text-align-last:center}input,select,button{font:inherit;border:1px solid #cbd5cf;border-radius:5px;background:#fff;color:#242c2b;min-height:38px;padding:8px 11px}input[type=checkbox]{min-height:0;width:17px;height:17px;padding:0;cursor:pointer}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}#preview,#apply{background:#156b59;border-color:#156b59;color:#fff;padding-inline:20px}#status{min-height:20px;color:#56645e}.error{color:#af3535!important}.hint{font-size:12px;margin:8px 0 16px}.table-wrap,.preview-wrap{overflow:auto;border:1px solid #d8e1dc;border-radius:6px;background:#fff}table{width:100%;border-collapse:collapse;min-width:650px}th,td{border-bottom:1px solid #e7ece9;padding:11px 13px;text-align:left}thead{background:#eaf1ed;color:#55645e}tr:hover td{background:#f5faf7}td:nth-last-child(-n+2),th:nth-last-child(-n+2){text-align:right;font-variant-numeric:tabular-nums}.display-name{display:block;color:#708078;font-size:12px;margin-top:3px}dialog{border:1px solid #c9d5ce;border-radius:9px;box-shadow:0 18px 70px #0003;max-width:min(720px,94vw);width:100%;padding:24px}dialog::backdrop{background:#0007}dialog h2{margin:0 0 12px}.preview-wrap{max-height:420px}.warning{color:#a45f14;font-size:12px;line-height:1.5}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}:focus-visible{outline:2px solid #156b59;outline-offset:2px}@media(max-width:700px){header,main{padding-inline:16px}.toolbar label{flex:1 1 100%;min-width:0}.toolbar button{width:100%}}
-
-/* Center the compact text-and-arrow group without extra blank reservations. */
+/* User quota workflows only; shared controls and tables are defined in ui.css. */
+.toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.toolbar label { display: grid; gap: 6px; }
 .toolbar label:has(#mode){justify-items:center}
+/* Center the compact text-and-arrow group without an unused blank reservation. */
 #mode {
-  appearance: none;
-  -webkit-appearance: none;
   text-align: center;
   text-align-last: center;
   width: calc(4em + 41px);
-  padding: 8px 28px 8px 11px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23242c2b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
+  padding: 4px 28px 4px 11px;
   background-position: right 11px center;
   background-size: 12px 8px;
 }
-
-.group-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0 0 16px}
-.group-toolbar details{position:relative;min-width:210px}
-.group-toolbar summary{list-style:none;cursor:pointer;border:1px solid #cbd5cf;border-radius:5px;background:#fff;padding:10px 34px 10px 12px;min-height:38px}
-.group-toolbar summary::-webkit-details-marker{display:none}
-.group-toolbar summary::after{content:'⌄';position:absolute;right:12px;top:7px;font-size:20px}
-.picker-options{position:absolute;z-index:5;top:100%;left:0;min-width:240px;max-height:240px;overflow:auto;padding:8px;background:#fff;border:1px solid #cbd5cf;border-radius:5px;box-shadow:0 8px 22px #0002}
-.picker-options label{display:flex;align-items:center;gap:8px;padding:7px 6px;white-space:nowrap;cursor:pointer}
-.picker-options label:hover{background:#f1f7f3}
-.group-hint{color:#61716a;font-size:12px}
-.preview-wrap td:nth-child(2),.preview-wrap th:nth-child(2),.preview-wrap td:nth-child(3),.preview-wrap th:nth-child(3){text-align:right;font-variant-numeric:tabular-nums}
-.preview-wrap td:last-child,.preview-wrap th:last-child{text-align:left;white-space:normal}
-@media(max-width:700px){.group-toolbar details{width:100%}.group-hint{width:100%}}
-
-.header-actions,.schedule-heading,.schedule-actions,.schedule-tabs{display:flex;align-items:center;gap:12px}
-.schedule-heading{justify-content:space-between}.schedule-heading h2{margin:0}
-#quota-settings{display:flex;align-items:center;justify-content:center;padding:8px;min-width:38px}
-.schedule-dialog{max-width:min(1180px,96vw);max-height:90vh;overflow:auto}
-.schedule-tabs{margin:18px 0 10px;border-bottom:1px solid #d8e1dc;padding-bottom:10px}
-.schedule-tabs [aria-selected=true],#schedule-save{background:#156b59;color:white;border-color:#156b59}
-.schedule-actions{margin-bottom:12px}.schedule-table{min-width:840px}
-.schedule-table th,.schedule-table td{text-align:left;font-variant-numeric:tabular-nums}
-.schedule-table button{margin:2px;font-size:12px;white-space:nowrap}
-#schedule-form{margin-top:20px;border-top:1px solid #d8e1dc;padding-top:10px}
-.schedule-groups{display:flex;flex-wrap:wrap;gap:12px}.schedule-groups label,.schedule-enabled{display:flex;align-items:center;gap:6px}
-.schedule-fields{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px}
-.schedule-fields>label:not(.schedule-enabled){display:grid;gap:6px}
-.schedule-fields input[type=number]{max-width:200px}.schedule-danger{color:#af3535}
-#schedule-runs-panel .table-wrap{margin-top:12px}
-#schedule-status,#schedule-run-status{min-height:20px}
+.batch-panel { background: var(--ui-muted); border-radius: 16px; padding: 12px; margin: 12px 0; }
+.batch-selection { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.selection-count { font-size: 12px; color: var(--ui-muted-text); margin-right: auto; }
+.batch-panel .hint { margin-bottom: 0; }
+#amount { width: 190px; }
+#preview, #apply, #schedule-save { background: var(--ui-primary); color: #fff; border-color: transparent; }
+#preview:hover:not(:disabled), #apply:hover:not(:disabled), #schedule-save:hover:not(:disabled) { background: color-mix(in oklch, var(--ui-primary) 85%, white); }
+.users-page .table-wrap { max-height: 650px; }
+.users-page table { min-width: 1050px; }
+.users-page th:nth-child(6), .users-page th:nth-child(7), #users td:nth-child(6), #users td:nth-child(7) { text-align: right; }
+#users td:first-child, .users-page th:first-child { width: 40px; text-align: center; }
+#users td:nth-child(3) { min-width: 160px; }
+#users .row-actions { min-width: 145px; white-space: nowrap; text-align: right; }
+.users-page th:last-child { text-align: right; }
+#users td:nth-child(9) { max-width: 260px; overflow-wrap: anywhere; font-size: 12px; color: var(--ui-muted-text); }
+.schedule-dialog { width: 1180px; }
+.schedule-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.schedule-actions button:first-child { margin-right: auto; }
+.schedule-table { min-width: 840px; }
+.schedule-table td, .schedule-table th { text-align: left; }
+.schedule-table button { margin: 2px; height: 28px; min-height: 28px; font-size: 12px; }
+#schedule-form { margin-top: 20px; border-top: 1px solid var(--ui-border); padding-top: 12px; }
+.schedule-groups { display: flex; flex-wrap: wrap; gap: 12px; }
+.schedule-groups label, .schedule-enabled { flex-direction: row; align-items: center; gap: 6px; }
+.schedule-fields { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 16px; }
+.schedule-fields input[type=number] { max-width: 200px; }
+#confirm-dialog { width: 720px; }
+@media (max-width:700px) {
+  .toolbar label { flex: 1 1 100%; min-width: 0; }
+  #amount { width: 100%; }
+  .batch-selection button { font-size: 12px; }
+  .batch-panel .toolbar button { width: 100%; }
+  .schedule-actions { flex-wrap: wrap; }
+}

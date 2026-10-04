@@ -10,8 +10,13 @@ CI 配置覆盖 PostgreSQL 15/16，其他版本需自行验证。尚无按 New A
 | --- | --- |
 | logs | id, created_at, user_id, username, token_id, token_name, model_name, quota, prompt_tokens, completion_tokens, other, type, group, channel_id, channel_name |
 | users | access_token, id, username, display_name, group, password, role, status, quota, used_quota, deleted_at |
+| tokens | id, user_id, key, name, status, created_time, accessed_time, expired_time, remain_quota, used_quota, unlimited_quota, model_limits_enabled, model_limits, allow_ips, group, cross_group_retry, auto_groups, deleted_at |
 | options | key, value |
 | channels | id, name, status, tag |
+
+用户管理还读取 `users.remark`；PAT 补建按版本存在的 `access_token_created_at` 写入创建时间。
+源库 PAT 须是可回读的原生格式；加密或只保存哈希的 fork 不适用。
+KEY 编辑依赖官方令牌接口，自动分组选项依赖其 `auto_groups` 支持。
 
 消费日志为 `type=2`，`quota / 500000` 为消费金额；`?dev=2` 的失败请求统计读取
 `type=5`，从 `other.status_code` 读取错误码；元数据损坏或缺少可解析错误码时保留失败次数，显示“未知”。
