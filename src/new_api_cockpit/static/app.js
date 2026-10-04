@@ -9,13 +9,13 @@ let detailMode = 'summary';
 let modelMode = 'model';
 let ranking = 'model_amount';
 const tokenFields = ['total_tokens','input_tokens','output_tokens','cache_read_tokens','cache_write_tokens'];
-const detailColumns = ['username','request_count','model_name','tier_name',...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount'];
+const detailColumns = ['username','request_count','model_name','tier_name',...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount','cache_hit_rate','amount_per_million','failure_requests'];
 const modelSummaryColumns = ['group_ratio','input_price','output_price','cache_price','write_price'];
 const columnStorageKey = 'new-api-cockpit.visible-columns.v2';
 let modelColumnSelection = null;
-const developerLevel = Number(new URLSearchParams(window.location.search).get('dev')||0);
-const developerMode = developerLevel>=1;
-const failureMode = developerLevel>=2;
+let snapshotIncludesFailures = false;
+const failureMode = () => $('column-failure-requests').checked;
+const failureOnly = row => Number(row.request_count)===0&&Number(row.failure_count)>0;
 const number = (n, digits=6) => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{maximumFractionDigits:digits});
 // Presentation only: never round the source values used by calculations or tooltips.
 const tableMoney = n => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -49,7 +49,7 @@ function selectedRows(){
   const users=selectedFilterValues('user'),models=selectedFilterValues('model');
   const selected=selectedFilterValues('token').size||selectedFilterValues('group').size;
   const rows=selected?(filteredSelectionSnapshot?.rows||[]):detailMode==='token'?(tokenSnapshot?.rows||[]):snapshot.rows;
-  const filtered=rows.filter(r=>(!users.size||users.has(r.username))&&(!models.size||models.has(r.model_name)));
+  const filtered=rows.filter(r=>(failureMode()||!failureOnly(r))&&(!users.size||users.has(r.username))&&(!models.size||models.has(r.model_name)));
   return modelMode==='summary'?aggregateModels(filtered):filtered;
 }
 function visibleColumns(){
@@ -60,6 +60,10 @@ function saveVisibleColumns(){
   if(modelMode==='summary'&&modelColumnSelection)modelColumnSelection.forEach(column=>visible.add(column));
   try{localStorage.setItem(columnStorageKey,JSON.stringify([...visible]));}catch{}
 }
+function visibleColumnCount(){
+  const hidden=new Set(modelMode==='summary'?['model_name','tier_name',...modelSummaryColumns]:[]);
+  return Math.max(1,[...visibleColumns()].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0));
+}
 function applyColumnVisibility(){
   const visible=visibleColumns();
   const hiddenByMode=new Set(modelMode==='summary'?['model_name','tier_name',...modelSummaryColumns]:[]);
@@ -67,7 +71,8 @@ function applyColumnVisibility(){
     if(detailColumns.includes(element.dataset.column))element.hidden=!visible.has(element.dataset.column)||hiddenByMode.has(element.dataset.column);
   });
   document.querySelectorAll('#usage-table [data-token-column]').forEach(element=>element.hidden=detailMode!=='token');
-  const columns=[...visible].filter(column=>!hiddenByMode.has(column)).length+(detailMode==='token'?1:0)+(developerMode?2:0)+(failureMode?1:0);
+  const columns=visibleColumnCount();
+  document.querySelectorAll('#usage-table .empty').forEach(element=>element.colSpan=columns);
   $('usage-table').style.setProperty('--usage-table-min-width',Math.max(480,columns*115)+'px');
 }
 function loadVisibleColumns(){
@@ -129,26 +134,12 @@ function populateTokenFilter(){
 function populateGroupFilter(){
   populateFilter('group','全部分组',groupOptions.map(row=>row.group_name),value=>value||'未分组',refreshSelection);
 }
-// Developer diagnostics remain browser-only and never change Excel exports.
-if(developerMode){
-  for(const [column,label] of [['cache_hit_rate','缓存命中率'],['amount_per_million','每百万 Token 金额']]){
-    const th=document.createElement('th');th.textContent=label;th.dataset.column=column;
-    document.querySelector('#usage-table thead tr').append(th);
-  }
-}
-if(failureMode){
-  const th=document.createElement('th');th.textContent='失败请求';th.dataset.column='failure_requests';
-  document.querySelector('#usage-table thead tr').append(th);
-}
-function developerCells(tr,row){
-  if(!developerMode)return;
+// Optional table columns never change Excel exports.
+function optionalCells(tr,row){
   const read=Number(row.cache_read_tokens),denominator=Number(row.input_tokens)+read;
   cell(tr,row.cache_read_tokens!==null&&row.input_tokens!==null&&denominator>0?number(read/denominator*100,2)+'%':'—','','cache_hit_rate');
   const tokens=Number(row.total_tokens);
   cell(tr,tokens>0?tableMoney(Number(row.amount)/tokens*1000000):'—','','amount_per_million');
-}
-function failureCell(tr,row){
-  if(!failureMode)return;
   const lines=Object.entries(row.failure_codes||{}).map(([code,count])=>`${code} ${number(count,0)}次`);
   cell(tr,lines.length?lines.join('\n'):'—','failure-requests','failure_requests');
 }
@@ -188,16 +179,14 @@ function renderDetails() {
       const td=cell(tr,price?priceDisplay(r,key):key==='amount'?tableMoney(r[key]):number(r[key],tokenFields.includes(key)?0:6),price?'price-breakdown':'',key);
       if(key==='amount')bindMoneyTooltip(td,()=>modelMode==='summary'?totalMoneyFormula(r._sourceRows,r.amount):(r.report_id?lazyRowMoneyFormula(r):rowMoneyFormula(r)));
     }
-    developerCells(tr,r);
-    failureCell(tr,r);
+    optionalCells(tr,r);
     $('rows').append(tr);
   }
-  if(!data.length){const hidden=modelMode==='summary'?new Set(['model_name','tier_name',...modelSummaryColumns]):new Set(),tr=document.createElement('tr');cell(tr,'该时间范围内暂无消费或失败请求','empty').colSpan=[...visibleColumns()].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0)+(developerMode?2:0)+(failureMode?1:0);$('rows').append(tr);}
+  if(!data.length){const tr=document.createElement('tr');cell(tr,failureMode()?'该时间范围内暂无消费或失败请求':'该时间范围内暂无消费记录','empty').colSpan=visibleColumnCount();$('rows').append(tr);}
   const tr=document.createElement('tr');cell(tr,'总计','','username');if(detailMode==='token')cell(tr,'','token-name');cell(tr,number(total.request_count,0),'','request_count');cell(tr,'','','model_name');cell(tr,'','','tier_name');tokenFields.forEach(k=>cell(tr,number(total[k],0),'',k));
   for(const key of ['group_ratio','input_price','output_price','cache_price','write_price'])cell(tr,'','',key);
   bindMoneyTooltip(cell(tr,tableMoney(total.amount),'','amount'),()=>totalMoneyFormula(data,total.amount));
-  developerCells(tr,total);
-  failureCell(tr,total);
+  optionalCells(tr,total);
   $('totals').append(tr);
   applyColumnVisibility();
 }
@@ -227,50 +216,50 @@ function updateReportStatus(){
   else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode==='expression'&&!(r.price_tiers?.length||r.price_tier_count)))$('status').textContent+=' · 部分表达式无法拆分价格';
   else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode!=='expression'&&r.pricing_mode!=='unknown'&&['input_price','output_price','cache_price','write_price'].some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
 }
+function reportParams(){
+  const params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
+  if(snapshotIncludesFailures)params.set('include_failures','1');
+  return params;
+}
 async function loadTokenDetails(){
   const ticket=Scope.epoch;
   if(tokenSnapshot||!snapshot)return;
-  const expected=`${snapshot.start}\n${snapshot.end}`;
-  const params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
-  if(failureMode)params.set('dev','2');
+  const expected=snapshot,params=reportParams();
   const response=await Scope.request('/cockpit/statistics/api/usage/by-token?'+params+'&details=lazy');
   if(!response.ok){let msg='分令牌查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
-  if(snapshot&&expected===`${snapshot.start}\n${snapshot.end}`)tokenSnapshot=result;
+  if(expected===snapshot)tokenSnapshot=result;
 }
 async function loadTokenOptions(){
   const ticket=Scope.epoch;
-  const expected=`${snapshot.start}\n${snapshot.end}`,params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
-  if(failureMode)params.set('dev','2');
+  const expected=snapshot,params=reportParams();
   const response=await Scope.request('/cockpit/statistics/api/usage/tokens?'+params);
   if(!response.ok){let msg='令牌列表查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
-  if(snapshot&&expected===`${snapshot.start}\n${snapshot.end}`)tokenOptions=result.rows;
+  if(expected===snapshot)tokenOptions=result.rows;
 }
 async function loadGroupOptions(){
   const ticket=Scope.epoch;
-  const expected=`${snapshot.start}\n${snapshot.end}`,params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
-  if(failureMode)params.set('dev','2');
+  const expected=snapshot,params=reportParams();
   const response=await Scope.request('/cockpit/statistics/api/usage/groups?'+params);
   if(!response.ok){let msg='分组列表查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
-  if(snapshot&&expected===`${snapshot.start}\n${snapshot.end}`)groupOptions=result.rows;
+  if(expected===snapshot)groupOptions=result.rows;
 }
 async function loadFilteredSelection(){
   const ticket=Scope.epoch;
   const tokenIds=[...selectedFilterValues('token')].sort(),groups=[...selectedFilterValues('group')].sort();
   if(!tokenIds.length&&!groups.length){filteredSelectionSnapshot=null;return;}
-  const expected=`${snapshot.start}\n${snapshot.end}\n${detailMode}\n${tokenIds.join(',')}\n${groups.join(',')}`;
-  const params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
-  if(failureMode)params.set('dev','2');
+  const report=snapshot,expected=`${detailMode}\n${tokenIds.join(',')}\n${groups.join(',')}`;
+  const params=reportParams();
   tokenIds.forEach(id=>params.append('token_id',id));
   groups.forEach(group=>params.append('group',group));
   if(detailMode==='token')params.set('by_token','1');
   const response=await Scope.request('/cockpit/statistics/api/usage/by-selection?'+params+'&details=lazy');
   if(!response.ok){let msg='筛选查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
-  const current=`${snapshot.start}\n${snapshot.end}\n${detailMode}\n${[...selectedFilterValues('token')].sort().join(',')}\n${[...selectedFilterValues('group')].sort().join(',')}`;
-  if(expected===current)filteredSelectionSnapshot=result;
+  const current=`${detailMode}\n${[...selectedFilterValues('token')].sort().join(',')}\n${[...selectedFilterValues('group')].sort().join(',')}`;
+  if(report===snapshot&&expected===current)filteredSelectionSnapshot=result;
 }
 async function refreshSelection(){
   const ticket=Scope.epoch;
@@ -304,7 +293,8 @@ document.querySelectorAll('[data-model-mode]').forEach(button=>button.addEventLi
   else applyColumnVisibility();
 }));
 function render() {
-  const data=snapshot.rows;
+  // Failure-only dimensions belong to the optional detail column, not usage metrics/rankings.
+  const data=snapshot.rows.filter(row=>!failureOnly(row));
   renderSummary(data);
   renderDetails();
   renderRanking(data);
@@ -348,17 +338,18 @@ tabs.forEach((tab,i)=>{
     if(target){event.preventDefault();target.focus();target.click();}
   });
 });
-async function query(event){
+async function query(event,range){
   event?.preventDefault();if(!Scope.current||$('submit').disabled)return;
-  const ticket=Scope.epoch;
+  const ticket=Scope.epoch,includeFailures=failureMode();
   $('submit').disabled=true;document.querySelectorAll('[data-preset]').forEach(b=>b.disabled=true);
+  $('column-failure-requests').disabled=true;
   $('export').disabled=true;$('status').className='';$('status').textContent='正在查询…';
-  const params=new URLSearchParams({start:$('start').value,end:$('end').value});
-  if(failureMode)params.set('dev','2');
+  const params=new URLSearchParams(range||{start:$('start').value,end:$('end').value});
+  if(includeFailures)params.set('include_failures','1');
   try{
     const response=await Scope.request('/cockpit/statistics/api/usage?'+params+'&details=lazy');
     if(!response.ok){let msg='查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
-    const result=await response.json();Scope.guard(ticket);snapshot=result;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
+    const result=await response.json();Scope.guard(ticket);snapshot=result;snapshotIncludesFailures=includeFailures;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
     const userNames=[...new Set(snapshot.rows.map(r=>r.username))].sort();
     const displayNames=new Map(snapshot.rows.map(r=>[r.username,r.display_name]));
     populateFilter('user','全部用户',userNames,name=>displayNames.get(name)?`${name}（${displayNames.get(name)}）`:name);
@@ -367,8 +358,12 @@ async function query(event){
     if(selectedFilterValues('token').size||selectedFilterValues('group').size)await loadFilteredSelection();
     else if(detailMode==='token')await loadTokenDetails();
     Scope.guard(ticket);$('updated').textContent='更新于 '+snapshot.updated_at.replace('T',' ').slice(0,19)+' 北京时间';render();$('export').disabled=false;
-  }catch(error){if(ticket!==Scope.epoch)return;$('status').className='error';$('status').textContent=error.message;}
-  finally{if(ticket===Scope.epoch){$('submit').disabled=false;document.querySelectorAll('[data-preset]').forEach(b=>b.disabled=false);}}
+  }catch(error){
+    if(ticket!==Scope.epoch)return;
+    if(snapshot){$('column-failure-requests').checked=snapshotIncludesFailures;saveVisibleColumns();renderDetails();$('export').disabled=false;}
+    $('status').className='error';$('status').textContent=error.message;
+  }
+  finally{if(ticket===Scope.epoch){$('submit').disabled=false;$('column-failure-requests').disabled=false;document.querySelectorAll('[data-preset]').forEach(b=>b.disabled=false);}}
 }
 document.querySelectorAll('[data-preset]').forEach(button=>button.addEventListener('click',()=>{
   const range=presetRange(button.dataset.preset);$('start').value=range.start;$('end').value=range.end;
@@ -377,17 +372,22 @@ document.querySelectorAll('[data-preset]').forEach(button=>button.addEventListen
 }));
 for(const id of ['start','end'])$(id).addEventListener('input',()=>document.querySelectorAll('[data-preset]').forEach(b=>b.setAttribute('aria-pressed','false')));
 $('query').addEventListener('submit',query);
+function columnSelectionChanged(){
+  saveVisibleColumns();applyColumnVisibility();
+  // Use the displayed report's range, not unsubmitted edits in the time inputs.
+  if(snapshot&&failureMode()!==snapshotIncludesFailures)return query(undefined,{start:snapshot.start,end:snapshot.end});
+}
 document.querySelectorAll('[data-column-toggle]').forEach(input=>input.addEventListener('change',()=>{
   if(!document.querySelector('[data-column-toggle]:checked'))input.checked=true;
-  saveVisibleColumns();applyColumnVisibility();
+  return columnSelectionChanged();
 }));
-$('show-all-columns').addEventListener('click',()=>{document.querySelectorAll('[data-column-toggle]:not(:disabled)').forEach(input=>input.checked=true);saveVisibleColumns();applyColumnVisibility();});
+$('show-all-columns').addEventListener('click',()=>{document.querySelectorAll('[data-column-toggle]:not(:disabled)').forEach(input=>input.checked=true);return columnSelectionChanged();});
 $('export').addEventListener('click',()=>{if(snapshot)window.location.assign(Scope.url('/cockpit/statistics/api/export?'+new URLSearchParams({start:snapshot.start,end:snapshot.end})));});
 loadVisibleColumns();applyColumnVisibility();
 // Reset every ledger-dependent view before starting requests for the next ledger.
 window.addEventListener('scopechange',()=>{
   hideMoneyTooltip();
-  snapshot=null;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
+  snapshot=null;snapshotIncludesFailures=false;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
   for(const key of ['user','model','token','group'])populateFilter(key,{user:'全部用户',model:'全部模型',token:'全部令牌',group:'全部分组'}[key],[],x=>x);
   for(const id of ['rows','totals','chart'])$(id).replaceChildren();
   document.querySelectorAll('.metrics strong').forEach(el=>el.textContent='—');

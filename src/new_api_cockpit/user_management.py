@@ -135,7 +135,7 @@ def generate_pat():
 
 
 def owner_pat(operator, user_id):
-    target(operator, user_id, enabled=True)
+    user = target(operator, user_id, enabled=True)
     with quota.connect() as conn:
         row = conn.execute(
             "SELECT access_token FROM users WHERE id=%s AND deleted_at IS NULL",
@@ -158,7 +158,7 @@ def owner_pat(operator, user_id):
                         (operator["id"], user_id, candidate),
                     ).fetchone()[0]
                 if committed == candidate:
-                    _record_pat_creation(operator, user_id)
+                    _record_pat_creation(operator, user)
                 break
             except psycopg.errors.UniqueViolation:
                 if attempt == 4:
@@ -451,30 +451,6 @@ def list_grouped(username, body):
     }
 
 
-def search_key(username, body):
-    operator = actor(username)
-    key = body.get("key", "")
-    if not isinstance(key, str) or not 8 <= len(key.strip()) <= 256:
-        raise ManagementError("请输入完整的模型调用 KEY。")
-    key = key.strip()
-    candidates = [key, key[3:]] if key.startswith("sk-") else [key]
-    with quota.connect() as conn:
-        row = conn.execute(
-            "SELECT id,user_id FROM tokens WHERE key=ANY(%s) AND deleted_at IS NULL",
-            (candidates,),
-        ).fetchone()
-    if not row:
-        return {"found": False}
-    user = target(operator, row["user_id"])
-    return {
-        "found": True,
-        "user_id": user["id"],
-        "username": user["username"],
-        "user_status": user["status"],
-        "token_id": row["id"],
-    }
-
-
 def detail(username, kind, target_id):
     operator = actor(username)
     if kind == "user":
@@ -492,6 +468,25 @@ def detail(username, kind, target_id):
         )
     safe["available_groups"] = selectable_groups(operator, user)
     return safe
+
+
+def token_group_options(username, token_id):
+    """Read permitted groups without an upstream request or creating an owner PAT."""
+    operator = actor(username)
+    user, token_id = token_owner(operator, token_id)
+    with quota.connect() as conn:
+        row = conn.execute(
+            'SELECT "group" FROM tokens WHERE id=%s AND user_id=%s AND deleted_at IS NULL',
+            (token_id, user["id"]),
+        ).fetchone()
+    if not row:
+        raise ManagementError("KEY 不存在或已删除。")
+    return {
+        "id": token_id,
+        "group": row["group"],
+        "user_status": user["status"],
+        "available_groups": selectable_groups(operator, user),
+    }
 
 
 def amount_units(value):
@@ -712,16 +707,27 @@ def _audit_ready():
     balance.require_schema()
 
 
-def _record_pat_creation(operator, user_id):
+def _record_pat_creation(operator, user):
     operation_id = uuid.uuid4()
+    identity = {"id": user["id"], "username": user["username"]}
     with balance.connect() as conn:
         conn.execute(
-            "INSERT INTO user_management_operations(id,operator_id,operator_name,action,state,expires_at,confirmed_at,finished_at) VALUES(%s,%s,%s,'user.pat_create','completed',now(),now(),now())",
-            (operation_id, operator["id"], operator["username"]),
+            "INSERT INTO user_management_operations(id,operator_id,operator_name,action,parameters,state,expires_at,confirmed_at,finished_at) VALUES(%s,%s,%s,'user.pat_create',%s,'completed',now(),now(),now())",
+            (
+                operation_id,
+                operator["id"],
+                operator["username"],
+                Jsonb({"target_user": identity}),
+            ),
         )
         conn.execute(
             "INSERT INTO user_management_operation_items(operation_id,target_type,target_id,user_id,after_data,state,started_at,finished_at) VALUES(%s,'user',%s,%s,%s,'success',now(),now())",
-            (operation_id, user_id, user_id, Jsonb({"pat_created": True})),
+            (
+                operation_id,
+                user["id"],
+                user["id"],
+                Jsonb({"pat_created": True, "username": user["username"]}),
+            ),
         )
 
 
@@ -748,18 +754,25 @@ def single_action(username, kind, object_id, body):
             or not 8 <= len(changes["password"].encode()) <= 72
         ):
             raise ManagementError("新用户资料或密码无效。")
-        user_id = operator["id"]
+        # The upstream create response need not contain an ID. The administrator
+        # is the actor, never a substitute for the newly requested user.
+        user_id = 0
+        identity = {"id": None, "username": changes.get("username", "")}
         target_id = 0
     elif action == "create":
         user_id = positive_id(object_id)
-        target(operator, user_id, enabled=True)
+        user = target(operator, user_id, enabled=True)
+        identity = {"id": user_id, "username": user["username"]}
         target_id = 0
     elif kind == "user":
-        user_id = target(operator, object_id)["id"]
+        user = target(operator, object_id)
+        user_id = user["id"]
+        identity = {"id": user_id, "username": user["username"]}
         target_id = user_id
     else:
         user, target_id = token_owner(operator, object_id)
         user_id = user["id"]
+        identity = {"id": user_id, "username": user["username"]}
     _audit_ready()
     operation_id = uuid.uuid4()
     safe = _safe_changes(changes)
@@ -795,7 +808,14 @@ def single_action(username, kind, object_id, body):
         )
         conn.execute(
             "INSERT INTO user_management_operation_items(operation_id,target_type,target_id,user_id,before_data,after_data,state,started_at) VALUES(%s,%s,%s,%s,%s,%s,'sending',now())",
-            (operation_id, kind, target_id, user_id, Jsonb(snapshot), Jsonb(safe)),
+            (
+                operation_id,
+                kind,
+                target_id,
+                user_id,
+                Jsonb(snapshot),
+                Jsonb({**safe, "target_user": identity}),
+            ),
         )
     try:
         result = _perform(operator, kind, object_id, action, changes)
@@ -919,7 +939,15 @@ def preview_group(username, body):
                         r["id"],
                         r["user_id"],
                         Jsonb({"group": r["group"], "status": r["status"]}),
-                        Jsonb({"group": group}),
+                        Jsonb(
+                            {
+                                "group": group,
+                                "target_user": {
+                                    "id": r["user_id"],
+                                    "username": r["username"],
+                                },
+                            }
+                        ),
                     )
                     for r in rows
                 ],

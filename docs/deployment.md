@@ -156,9 +156,9 @@ curl -H 'Authorization: Bearer <管理员PAT>' \
 [用户配额](quota.md)。启用定时配额规则后，主程序内置定时器会在对应周期按执行管理员权限调用同一接口。
 网页访问不启动任务，应用启动也不会无条件发额度；仅执行符合既有到期窗口的启用规则。
 
-## 用户管理授权
+## 用户与令牌管理授权
 
-`/cockpit/keys/` 的写操作需要监控库用于审计。New API 源库须额外 SELECT `tokens`；
+用户、KEY 和配额写操作均需要监控库用于审计。New API 源库须能 SELECT `tokens`；
 缺失用户 PAT 的补建仅授权受限函数，不授予业务表 UPDATE，安装 SQL 见[用户管理](users.md#安装补建函数与最小权限)。
 页面、静态资源和 `/cockpit/keys/api/` 都经过认证。Nginx 统一转发 `/cockpit/`；
 无 Nginx 时访问 `http://<应用主机>:8091/cockpit/keys/`。不公开数据库端口，不另起容器。

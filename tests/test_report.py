@@ -736,13 +736,13 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(ws["F3"].value, 0)
         self.assertEqual(ws["P3"].value, 0)
 
-    def test_developer_mode_does_not_change_excel(self):
+    def test_optional_columns_do_not_change_excel_or_query_failures(self):
         with (
             patch("new_api_cockpit.app.verify_admin", return_value=True),
-            patch("new_api_cockpit.app.load_report", return_value=self.rows),
+            patch("new_api_cockpit.app.load_report", return_value=self.rows) as load,
         ):
             books = []
-            for suffix in ["", "&dev=0", "&dev=1", "&dev=2"]:
+            for suffix in ["", "&include_failures=0", "&include_failures=1", "&dev=2"]:
                 response = app.test_client().get(
                     "/cockpit/statistics/api/export?start=2026-07-26&end=2026-08-25"
                     + suffix,
@@ -752,25 +752,52 @@ class ReportTest(unittest.TestCase):
                 wb = load_workbook(BytesIO(response.data))
                 self.assertEqual(wb.active.max_column, 16)
                 books.append([[list(row) for row in ws.values] for ws in wb.worksheets])
-            self.assertEqual(books[0], books[1])
-            self.assertEqual(books[0], books[2])
-            self.assertEqual(books[0], books[3])
+                self.assertNotIn("include_failures", load.call_args.kwargs)
+                response.close()
+            self.assertTrue(all(book == books[0] for book in books[1:]))
 
-    def test_developer_two_requests_failure_aggregation(self):
-        with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
-            patch(
-                "new_api_cockpit.app.load_report", return_value=deepcopy(self.rows)
-            ) as load,
-        ):
-            response = app.test_client().get(
-                "/cockpit/statistics/api/usage?start=2026-07-26&end=2026-08-25&dev=2",
-                auth=("test_admin", "testing"),
-            )
-            self.assertEqual(response.status_code, 200)
-            load.assert_called_once_with(
-                "2026-07-26", "2026-08-25", by_token=False, include_failures=True
-            )
+    def test_failure_aggregation_requires_explicit_selection_on_all_report_routes(self):
+        routes = [
+            ("usage", "load_report", {"by_token": False}),
+            ("usage/by-token", "load_report", {"by_token": True}),
+            (
+                "usage/by-selection&token_id=1&group=default",
+                "load_report",
+                {"by_token": False, "token_ids": [1], "groups": ["default"]},
+            ),
+            ("usage/tokens", "load_token_options", {}),
+            ("usage/groups", "load_group_options", {}),
+        ]
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+            for route, loader, kwargs in routes:
+                path, _, filters = route.partition("&")
+                for flag in (
+                    "",
+                    "&include_failures=0",
+                    "&dev=1",
+                    "&dev=2",
+                    "&include_failures=1",
+                ):
+                    with (
+                        self.subTest(route=route, flag=flag),
+                        patch("new_api_cockpit.app." + loader, return_value=[]) as load,
+                    ):
+                        response = app.test_client().get(
+                            "/cockpit/statistics/api/"
+                            + path
+                            + "?start=2026-07-26&end=2026-08-25&"
+                            + filters
+                            + flag,
+                            auth=("test_admin", "testing"),
+                        )
+                        self.assertEqual(response.status_code, 200)
+                        expected = dict(kwargs)
+                        if flag == "&include_failures=1":
+                            expected["include_failures"] = True
+                        load.assert_called_once_with(
+                            "2026-07-26", "2026-08-25", **expected
+                        )
+                        response.close()
 
     def test_auth_and_user_model_filters(self):
         with patch(

@@ -309,19 +309,19 @@ def management_query():
     )
 
 
-@app.post("/cockpit/keys/api/search-key")
-def management_search_key():
-    return jsonify(
-        user_management.search_key(request.authorization.username, management_body())
-    )
-
-
 @app.get("/cockpit/keys/api/<kind>/<int:target_id>")
 def management_detail(kind, target_id):
     if kind != "token":
         return jsonify(error="Not Found"), 404
     return jsonify(
         user_management.detail(request.authorization.username, kind, target_id)
+    )
+
+
+@app.get("/cockpit/keys/api/token/<int:token_id>/groups")
+def management_token_groups(token_id):
+    return jsonify(
+        user_management.token_group_options(request.authorization.username, token_id)
     )
 
 
@@ -438,7 +438,7 @@ def scopes():
 
 
 def failure_diagnostics():
-    return request.args.get("dev") == "2"
+    return request.args.get("include_failures") == "1"
 
 
 def selected(*, by_token=False, include_failures=False):

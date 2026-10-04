@@ -58,14 +58,14 @@ class ScopeReportingTest(unittest.TestCase):
         ):
             self.assertEqual(self.get("scopes").json, {"rows": [TAG]})
 
-    def test_all_report_paths_propagate_scope_and_failure_mode(self):
+    def test_all_report_paths_propagate_scope_and_failure_selection(self):
         for path, extra, by_token in [
             ("usage", "", False),
             ("usage/by-token", "", True),
             ("usage/by-selection", "&token_id=2&group=auto&by_token=1", True),
         ]:
             with self.subTest(path=path):
-                response = self.get(path, self.query + extra + "&dev=2")
+                response = self.get(path, self.query + extra + "&include_failures=1")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json["scope"], TAG)
                 kwargs = self.load.call_args.kwargs
@@ -79,7 +79,7 @@ class ScopeReportingTest(unittest.TestCase):
             ("groups", "load_group_options"),
         ]:
             with patch("new_api_cockpit.app." + function, return_value=[]) as load:
-                response = self.get("usage/" + path, self.query + "&dev=2")
+                response = self.get("usage/" + path, self.query + "&include_failures=1")
                 self.assertEqual(response.json["scope"], TAG)
                 load.assert_called_once_with(
                     "2026-07-01",
@@ -137,7 +137,7 @@ class ScopeReportingTest(unittest.TestCase):
             self.assertNotIn("channel_ids", self.load.call_args.kwargs)
 
     def test_export_uses_scope_and_filename_without_diagnostics(self):
-        response = self.get("export", self.query + "&dev=2")
+        response = self.get("export", self.query + "&include_failures=1")
         self.assertEqual(response.status_code, 200)
         self.assertIn("esencloud", response.headers["Content-Disposition"])
         self.assertEqual(self.load.call_args.kwargs["channel_ids"], [11, 12])

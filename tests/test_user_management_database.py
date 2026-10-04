@@ -129,12 +129,48 @@ class UserManagementDatabaseTest(unittest.TestCase):
         self.assertEqual(
             manage.list_grouped("admin", {"user_statuses": [2]})["total"], 1
         )
-        self.assertEqual(
-            manage.search_key("admin", {"key": "sk-fixture-secret-one"})["user_id"], 2
-        )
-        self.assertFalse(
-            manage.search_key("admin", {"key": "fixture-does-not-exist"})["found"]
-        )
+
+    def test_quick_group_options_are_permission_checked_without_pat_or_audit_writes(
+        self,
+    ):
+        with (
+            patch.object(manage, "call_api") as upstream,
+            patch.object(manage, "owner_pat") as pat,
+        ):
+            result = manage.token_group_options("admin", 10)
+            self.assertEqual(
+                result,
+                {
+                    "id": 10,
+                    "group": "a",
+                    "user_status": 1,
+                    "available_groups": ["a", "b"],
+                },
+            )
+            self.assertEqual(manage.token_group_options("admin", 12)["user_status"], 2)
+            with self.assertRaises(manage.ManagementError):
+                manage.token_group_options("admin", 9999)
+            upstream.assert_not_called()
+            pat.assert_not_called()
+        with self.source() as conn:
+            self.assertIsNone(
+                conn.execute("SELECT access_token FROM users WHERE id=2").fetchone()[
+                    "access_token"
+                ]
+            )
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM user_management_operations"
+                ).fetchone()["n"],
+                0,
+            )
+        with psycopg.connect(DSN) as conn:
+            conn.execute(
+                "INSERT INTO tokens(id,user_id,key,name,status,\"group\") VALUES(20,1,'fixture-admin-key','admin-key',1,'admins')"
+            )
+        with self.assertRaises(manage.Forbidden):
+            manage.token_group_options("manager", 20)
 
     def test_pat_function_is_narrow_and_concurrent_creation_never_overwrites(self):
         candidates = [manage.generate_pat() for _ in range(10)]
@@ -178,6 +214,212 @@ class UserManagementDatabaseTest(unittest.TestCase):
         self.assertEqual(manage.owner_pat(self.operator, 2), "fixture-rotated")
         with self.assertRaises(manage.ManagementError):
             manage.owner_pat(self.operator, 4)
+
+    def test_pat_records_show_target_identity_and_preserve_legacy_user_ids(self):
+        pat = manage.owner_pat(self.operator, 2)
+        record = operation_records.list_records("admin", {"kind": "user"})["rows"][0]
+        self.assertEqual(record["operator_name"], "admin")
+        self.assertEqual(record["target_users"], [{"id": 2, "username": "alice"}])
+        self.assertEqual(record["target_user_count"], 1)
+        self.assertNotIn(pat, str(record))
+        with psycopg.connect(DSN) as conn:
+            conn.execute("UPDATE users SET username='alice-renamed' WHERE id=2")
+        renamed = operation_records.list_records("admin", {})["rows"][0]
+        self.assertEqual(renamed["target_users"][0]["username"], "alice")
+        details = operation_records.detail("admin", "management", record["id"])
+        self.assertEqual(details["rows"][0]["after_data"]["username"], "alice")
+        self.assertEqual(
+            details["rows"][0]["target_user"], {"id": 2, "username": "alice"}
+        )
+
+        # Existing rows have only an item user_id and the PAT-created flag.
+        with self.monitor() as conn:
+            conn.execute(
+                "UPDATE user_management_operations SET parameters='{}' WHERE id=%s",
+                (record["id"],),
+            )
+            conn.execute(
+                "UPDATE user_management_operation_items SET after_data='{\"pat_created\":true}' WHERE operation_id=%s",
+                (record["id"],),
+            )
+        with patch.object(manage, "owner_pat") as ensure:
+            legacy = operation_records.list_records("admin", {})["rows"][0]
+            self.assertEqual(
+                legacy["target_users"], [{"id": 2, "username": "alice-renamed"}]
+            )
+            with psycopg.connect(DSN) as conn:
+                conn.execute("DELETE FROM users WHERE id=2")
+            deleted = operation_records.list_records("admin", {})["rows"][0]
+            self.assertEqual(deleted["target_users"], [{"id": 2, "username": ""}])
+            ensure.assert_not_called()
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT parameters FROM user_management_operations WHERE id=%s",
+                    (record["id"],),
+                ).fetchone()["parameters"],
+                {},
+            )
+
+    def test_all_single_actions_snapshot_targets_without_substituting_the_actor(self):
+        actions = {
+            "user": ["edit", "password", "enable", "disable", "delete"],
+            "token": [
+                "edit",
+                "quota",
+                "enable",
+                "disable",
+                "delete",
+                "reveal",
+                "group",
+            ],
+        }
+        with patch.object(manage, "_perform", return_value=None):
+            for kind, kinds in actions.items():
+                for action in kinds:
+                    manage.single_action(
+                        "admin", kind, 2 if kind == "user" else 10, {"action": action}
+                    )
+            manage.single_action("admin", "token", 2, {"action": "create"})
+            new_user = manage.single_action(
+                "admin",
+                "user",
+                0,
+                {
+                    "action": "create",
+                    "changes": {"username": "new-user", "password": "fixture-password"},
+                },
+            )
+        with patch.object(manage, "_perform", side_effect=manage.Uncertain("需核对")):
+            with self.assertRaises(manage.Uncertain):
+                manage.single_action("admin", "token", 11, {"action": "group"})
+        with patch.object(quota, "_call_manage", return_value=None):
+            for mode in ("add", "subtract"):
+                quota.apply(
+                    "admin", {"user_ids": [2], "mode": mode, "amount_yuan": "1"}
+                )
+        with psycopg.connect(DSN) as conn:
+            conn.execute("DELETE FROM users WHERE id=2")
+        headers = operation_records.list_records("admin", {})["rows"]
+        self.assertEqual(len(headers), 17)
+        for header in headers:
+            with self.subTest(action=header["action"]):
+                identity = (
+                    {"id": None, "username": "new-user"}
+                    if header["action"] == "user.create"
+                    else {"id": 2, "username": "alice"}
+                )
+                self.assertEqual(header["target_users"], [identity])
+                self.assertEqual(header["target_user_count"], 1)
+                self.assertEqual(header["operator_name"], "admin")
+                item = operation_records.detail("admin", "management", header["id"])[
+                    "rows"
+                ][0]
+                self.assertEqual(item["target_user"], identity)
+                self.assertEqual(item["user_id"], identity["id"])
+                self.assertNotIn("fixture-password", str(item))
+        with self.monitor() as conn:
+            created = conn.execute(
+                "SELECT user_id FROM user_management_operation_items WHERE operation_id=%s",
+                (new_user["operation_id"],),
+            ).fetchone()
+            self.assertEqual(created["user_id"], 0)
+            # The previous format used the administrator as a placeholder ID.
+            # Reading it must not turn the administrator into the target user.
+            conn.execute(
+                "UPDATE user_management_operation_items SET user_id=1,after_data=after_data-'target_user' WHERE operation_id=%s",
+                (new_user["operation_id"],),
+            )
+        legacy = next(
+            r
+            for r in operation_records.list_records("admin", {})["rows"]
+            if r["id"] == new_user["operation_id"]
+        )
+        self.assertEqual(legacy["target_users"], [{"id": None, "username": "new-user"}])
+        self.assertIsNone(
+            operation_records.detail("admin", "management", legacy["id"])["rows"][0][
+                "user_id"
+            ]
+        )
+
+    def test_batch_targets_deduplicate_users_and_exclude_unsent_owners(self):
+        with psycopg.connect(DSN) as conn:
+            for user_id in (5, 6, 7):
+                conn.execute(
+                    "INSERT INTO users(id,username,role,status,\"group\") VALUES(%s,%s,1,1,'a')",
+                    (user_id, f"user-{user_id}"),
+                )
+            for token_id, owner in ((20, 3), (21, 5), (22, 6), (23, 7)):
+                conn.execute(
+                    "INSERT INTO tokens(id,user_id,key,name,status,\"group\") VALUES(%s,%s,%s,'fixture',1,'a')",
+                    (token_id, owner, f"fixture-batch-{token_id}"),
+                )
+        plan = manage.preview_group(
+            "admin", {"target_group": "b", "token_ids": [10, 11, 20, 21, 22, 23]}
+        )
+        with patch.object(manage, "_perform", return_value=None):
+            manage.apply_wave("admin", plan["operation_id"])
+        with psycopg.connect(DSN) as conn:
+            conn.execute("UPDATE users SET username='renamed' WHERE id=2")
+        header = operation_records.list_records("admin", {})["rows"][0]
+        self.assertEqual(header["target_user_count"], 4)
+        self.assertEqual(
+            header["target_users"],
+            [
+                {"id": 2, "username": "alice"},
+                {"id": 3, "username": "manager"},
+                {"id": 5, "username": "user-5"},
+            ],
+        )
+        self.assertEqual(header["counts"]["total"], 5)
+        items = operation_records.detail("admin", "management", plan["operation_id"])[
+            "rows"
+        ]
+        self.assertEqual([r["target_user"]["id"] for r in items], [2, 2, 3, 5, 6])
+        self.assertEqual(items[0]["target_user"]["username"], "alice")
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT user_id FROM user_management_operation_targets WHERE operation_id=%s",
+                    (plan["operation_id"],),
+                ).fetchone()["user_id"],
+                7,
+            )
+
+    def test_legacy_key_targets_use_one_name_lookup_and_keep_deleted_user_ids(self):
+        with patch.object(manage, "_perform", return_value=None):
+            for action in ("edit", "quota", "enable", "disable", "delete", "group"):
+                manage.single_action("admin", "token", 10, {"action": action})
+        with self.monitor() as conn:
+            conn.execute(
+                "UPDATE user_management_operation_items SET after_data=after_data-'target_user'"
+            )
+        with (
+            patch.object(quota, "connect", wraps=self.source) as source,
+            patch.object(manage, "owner_pat") as pat,
+        ):
+            headers = operation_records.list_records("admin", {})["rows"]
+            self.assertEqual(
+                source.call_count, 2
+            )  # Actor + one identity query for the whole page.
+            for row in headers:
+                self.assertEqual(row["target_users"], [{"id": 2, "username": "alice"}])
+            pat.assert_not_called()
+        with psycopg.connect(DSN) as conn:
+            conn.execute("DELETE FROM users WHERE id=2")
+        deleted = operation_records.list_records("admin", {})["rows"]
+        self.assertEqual(deleted[0]["target_users"], [{"id": 2, "username": ""}])
+        item = operation_records.detail("admin", "management", deleted[0]["id"])[
+            "rows"
+        ][0]
+        self.assertEqual(item["target_user"], {"id": 2, "username": ""})
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM user_management_operation_items WHERE after_data ? 'target_user'"
+                ).fetchone()["n"],
+                0,
+            )
 
     def test_special_group_empty_and_null_values_keep_normal_group_permissions(self):
         for value in ("", "null", '{"a":null}', '{"a":{}}'):
@@ -361,9 +603,9 @@ class UserManagementDatabaseTest(unittest.TestCase):
         self.assertFalse(operation_records.list_records("admin", {})["rows"])
 
     def test_admin_scope_expired_preview_and_source_group_permissions(self):
-        self.assertFalse(
-            manage.search_key("manager", {"key": "fixture-secret-one"})["found"]
-            is False
+        self.assertEqual(
+            manage.list_grouped("manager", {"search": "ask_copy"})["rows"][0]["id"],
+            2,
         )
         with self.assertRaises(manage.Forbidden):
             manage.target(manage.actor("manager"), 1)

@@ -24,7 +24,7 @@ function harness(){
   const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],new Element()]));
   const events={},calls=[];
   const ctx={URL,URLSearchParams,AbortController,DOMException,Event,console,Number,Date,Option:class extends Element {constructor(label,value){super();this.textContent=label;this.value=value;}},
-    location:{origin:'https://example.test',href:'https://example.test/statistics/?dev=2',search:'?dev=2'},history:{replaceState(){}},
+    location:{origin:'https://example.test',href:'https://example.test/cockpit/statistics/?scope_id=1',search:'?scope_id=1'},history:{replaceState(){}},
     document:{getElementById:id=>elements.get(id),createElement:()=>new Element(),querySelectorAll:selector=>selector==='#scope-tabs button'?elements.get('scope-tabs').children:[]},
     addEventListener:(name,fn)=>(events[name]??=[]).push(fn),dispatchEvent:event=>{for(const fn of events[event.type]||[])fn(event);},
     fetch:async(url,options={})=>{calls.push({url,options});return {ok:true,json:async()=>url==='/cockpit/statistics/api/scopes'?{rows:rows.map(r=>({...r}))}:state()};},
@@ -37,8 +37,9 @@ const settle=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 test('scope tabs are safely built and URLs preserve other filters',async()=>{
   const h=harness();await h.scope.init();
   assert.deepEqual(h.elements.get('scope-tabs').children.map(e=>e.textContent),['全部',rows[1].tag_value,'未分组']);
-  const u=new URL(h.scope.url('/cockpit/statistics/api/usage?group=auto&dev=2'),h.ctx.location.origin);
+  const u=new URL(h.scope.url('/cockpit/statistics/api/usage?group=auto&include_failures=1'),h.ctx.location.origin);
   assert.equal(u.searchParams.get('scope_id'),'1');assert.equal(u.searchParams.get('group'),'auto');
+  assert.equal(u.searchParams.get('include_failures'),'1');
   await h.elements.get('scope-tabs').children[1].fire('click');assert.equal(h.scope.current.id,3);
 });
 test('old response body rejected after switching scope, including A-B-A',async()=>{

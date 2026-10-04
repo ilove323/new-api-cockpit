@@ -290,7 +290,16 @@ def delete_rule(username, rule_id, body):
             admin,
             "schedule.delete",
             rule_id,
-            row,
+            {
+                **row,
+                "groups": [
+                    g["group_name"]
+                    for g in conn.execute(
+                        "SELECT group_name FROM quota_schedule_rule_groups WHERE rule_id=%s ORDER BY group_name",
+                        (rule_id,),
+                    )
+                ],
+            },
             {"enabled": False, "deleted_at": True},
         )
         _notify(conn)

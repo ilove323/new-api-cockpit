@@ -19,8 +19,9 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 2. 通过 PR 合并到 `main` 并通过 CI；准备发布说明，列明功能、升级要求和安全边界。
 3. 创建与版本完全匹配的 `vX.Y.Z` 标签并推送该标签。
 4. `release.yml` 复用 CI，校验版本与标签后构建 AMD64/ARM64 镜像，发布到 GHCR。
-5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、校验和及自动生成的变更列表。
-6. 在 GitHub Release 正文补充必要的升级、数据库与配置说明，不在当前文档目录积累按版本命名的历史文件。
+5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、源库 PAT 补建 SQL 和校验和。
+   如维护者已提前创建 Release，工作流只补充或更新附件，不覆盖手写发布说明，也不重复创建 Release。
+6. GitHub Release 正文包含功能、升级、数据库与配置说明，不在当前文档目录积累按版本命名的历史文件。
 
 目前只支持 `vX.Y.Z` 正式标签，预发布标签会被拒绝。
 镜像标签包括精确版本与 `latest`；生产部署应固定精确版本或 digest。
@@ -31,8 +32,10 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 
 ## 使用预构建镜像
 
-从目标 Release 下载 `compose.release.yml`、`.env.example`、`nginx.conf.example`，
+从目标 Release 下载 `compose.release.yml`、`.env.example`、`nginx.conf.example` 和 `SHA256SUMS`，
 配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
+需要补建用户 PAT 时，由源库表所有者安装同一 Release 的 `source_pat_function.sql` 并授权，
+不要将其作为监控库迁移执行；详见[用户与令牌管理](users.md#安装补建函数与最小权限)。
 
 ```ini
 IMAGE_TAG=<与配置模板对应的正式版本>

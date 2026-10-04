@@ -153,6 +153,91 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual(schedules.claim_due(self.now), [])
         self.assertEqual(schedules.next_due(), self.now + timedelta(days=1))
 
+    def test_all_rule_actions_identify_groups_and_never_target_the_executor(self):
+        rule_id = self.rule()
+        schedules.save_rule(
+            "admin",
+            {**self.body, "groups": ["team-a", "empty"], "version": 1},
+            rule_id,
+            self.now,
+        )
+        schedules.set_enabled("admin", rule_id, {"version": 2, "enabled": False})
+        schedules.set_enabled("admin", rule_id, {"version": 3, "enabled": True})
+        schedules.delete_rule("admin", rule_id, {"version": 4})
+        with patch.object(quota, "connect", wraps=self.source_connect) as source:
+            rows = operation_records.list_records("admin", {"kind": "schedule"})["rows"]
+            self.assertEqual(
+                source.call_count, 1
+            )  # Actor only; a rule doesn't freeze group members.
+        self.assertEqual(
+            {r["action"] for r in rows},
+            {
+                "schedule.create",
+                "schedule.edit",
+                "schedule.enable",
+                "schedule.disable",
+                "schedule.delete",
+            },
+        )
+        for row in rows:
+            groups = (
+                ["team-a"]
+                if row["action"] == "schedule.create"
+                else ["empty", "team-a"]
+            )
+            self.assertEqual(row["target_rule"], {"id": rule_id, "groups": groups})
+            self.assertEqual(row["target_users"], [])
+            self.assertEqual(row["target_user_count"], 0)
+            item = operation_records.detail("admin", "management", row["id"])["rows"][0]
+            self.assertIsNone(item["user_id"])
+            self.assertEqual(item["target_rule"], row["target_rule"])
+
+        # Legacy delete records lack group snapshots and incorrectly stored the actor ID.
+        deleted = next(r for r in rows if r["action"] == "schedule.delete")
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE user_management_operation_items SET user_id=1,before_data=before_data-'groups' WHERE operation_id=%s",
+                (deleted["id"],),
+            )
+        legacy = operation_records.list_records("admin", {"kind": "schedule"})["rows"][
+            0
+        ]
+        self.assertEqual(
+            legacy["target_rule"], {"id": rule_id, "groups": ["empty", "team-a"]}
+        )
+        self.assertIsNone(
+            operation_records.detail("admin", "management", deleted["id"])["rows"][0][
+                "user_id"
+            ]
+        )
+
+    def test_schedule_targets_keep_frozen_names_and_count_only_initiated_users(self):
+        run_id = self.queued()
+        with patch.object(quota, "_call_manage", return_value=None):
+            executor.execute(run_id, lambda: None)
+        with self.connect() as conn:
+            conn.execute("UPDATE users SET username='renamed' WHERE id=2")
+            conn.execute("DELETE FROM users WHERE id=3")
+        header = next(
+            r
+            for r in operation_records.list_records("admin", {"kind": "schedule"})[
+                "rows"
+            ]
+            if r["source"] == "schedule"
+        )
+        self.assertEqual(header["target_user_count"], 12)
+        self.assertEqual(
+            header["target_users"],
+            [{"id": n, "username": f"user-{n}"} for n in range(2, 5)],
+        )
+        items = operation_records.detail("admin", "schedule", str(run_id))["rows"]
+        self.assertEqual(
+            [r["target_user"] for r in items],
+            [{"id": n, "username": f"user-{n}"} for n in range(2, 14)],
+        )
+        with self.assertRaises(ValueError):
+            operation_records.detail("manager", "schedule", str(run_id))
+
     def test_missed_cycles_have_no_operation_record_and_are_never_replayed(self):
         self.rule()
         self.assertEqual(schedules.claim_due(self.now + timedelta(days=40)), [])
@@ -579,6 +664,11 @@ class ScheduleDatabaseTest(unittest.TestCase):
                 self.assertEqual(record["counts"]["uncertain"], 5)
                 self.assertEqual(record["counts"]["total"], 5)
                 self.assertNotIn("pending", record["counts"])
+                self.assertEqual(record["target_user_count"], 5)
+                self.assertEqual(
+                    record["target_users"],
+                    [{"id": n, "username": f"user-{n}"} for n in range(2, 5)],
+                )
                 barrier.wait(timeout=5)
 
         with patch.object(quota, "_call_manage", side_effect=mutate):

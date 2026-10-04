@@ -74,6 +74,14 @@ class UITest(unittest.TestCase):
                 self.assertEqual(page.stack, [])
                 links = [node for node in page.nodes if node["tag"] == "link"]
                 self.assertEqual(links[0]["attrs"]["href"], "/cockpit/static/ui.css")
+                self.assertEqual(
+                    sum(
+                        node["tag"] == "script"
+                        and node["attrs"].get("src") == "/cockpit/static/dropdowns.js"
+                        for node in page.nodes
+                    ),
+                    1,
+                )
                 ids = [
                     node["attrs"]["id"] for node in page.nodes if "id" in node["attrs"]
                 ]
@@ -84,6 +92,24 @@ class UITest(unittest.TestCase):
                 headings = [node for node in page.nodes if node["tag"] == "h1"]
                 self.assertEqual(len(headings), 1)
                 self.assertTrue(Page.under(headings[0], "page-heading"))
+
+    def test_statistics_optional_columns_are_unchecked_and_headers_hidden(self):
+        page = self.page("statistics")
+        for column in ("cache_hit_rate", "amount_per_million", "failure_requests"):
+            toggles = [
+                node
+                for node in page.nodes
+                if node["attrs"].get("data-column-toggle") == column
+            ]
+            headers = [
+                node
+                for node in page.nodes
+                if node["tag"] == "th" and node["attrs"].get("data-column") == column
+            ]
+            self.assertEqual(len(toggles), 1)
+            self.assertNotIn("checked", toggles[0]["attrs"])
+            self.assertEqual(len(headers), 1)
+            self.assertIn("hidden", headers[0]["attrs"])
 
     def test_lucide_sprite_references_and_local_fonts_are_valid_and_protected(self):
         sprite = ET.parse(ROOT / "static/icons.svg").getroot()

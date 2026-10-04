@@ -13,7 +13,10 @@ PAT 直接使用原值，包括其中的 + 等字符。PAT 更新或账号停用
 `GET /cockpit/statistics/api/balance`
 
 ```bash
-curl --fail-with-body   -H 'Authorization: Bearer <管理员PAT>'   -H 'Accept: application/json'   https://example.com/cockpit/statistics/api/balance
+curl --fail-with-body \
+  -H 'Authorization: Bearer <管理员PAT>' \
+  -H 'Accept: application/json' \
+  https://example.com/cockpit/statistics/api/balance
 ```
 
 ```json
@@ -47,7 +50,9 @@ curl --fail-with-body   -H 'Authorization: Bearer <管理员PAT>'   -H 'Accept: 
 `GET /cockpit/statistics/api/alert`
 
 ```bash
-curl --fail-with-body   -H 'Authorization: Bearer <管理员PAT>'   https://example.com/cockpit/statistics/api/alert
+curl --fail-with-body \
+  -H 'Authorization: Bearer <管理员PAT>' \
+  https://example.com/cockpit/statistics/api/alert
 ```
 
 每次调用执行即时检查、更新报警记录，低于阈值时调用已启用的通知渠道。
@@ -66,7 +71,7 @@ checked_at、timezone，金额为数字，时间为带时区 ISO 8601。
 `/cockpit/statistics/api/balance/status` 用于余额窗口的状态、报警和月度归档展示。
 网页及其内部管理接口使用管理员 Basic Auth，不向普通令牌开放管理权限；
 上述 `/cockpit/statistics/api/balance` 与 `/cockpit/statistics/api/alert` 对外接口仅使用管理员 PAT Bearer。
-现有 /cockpit/statistics/ Nginx 转发即可覆盖新接口。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
+统一 `/cockpit/` Nginx 转发覆盖页面、静态资源和 API。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
 
 这两个对外接口的 PAT 校验只读取 users（包含 access_token），不读取模型调用 KEY。
 完整应用的查询权限还包括 tokens 等表，见[部署](deployment.md)；无需新建 API 密钥表。

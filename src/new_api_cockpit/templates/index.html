@@ -14,6 +14,7 @@
   <script defer src="{{ url_for('static', filename='balance.js') }}"></script>
   <link rel="stylesheet" href="/cockpit/static/navigation.css">
   <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/dropdowns.js"></script>
 </head>
 <body class="app-layout">
   {% from "partials/header.html" import app_header %}
@@ -101,11 +102,14 @@
         <label><input type="checkbox" data-column-toggle="cache_price" checked>缓存读价格</label>
         <label><input type="checkbox" data-column-toggle="write_price" checked>缓存写价格</label>
         <label><input type="checkbox" data-column-toggle="amount" checked>消费金额</label>
+        <label><input type="checkbox" data-column-toggle="cache_hit_rate">缓存命中率</label>
+        <label><input type="checkbox" data-column-toggle="amount_per_million">每百万 Token 金额</label>
+        <label><input id="column-failure-requests" type="checkbox" data-column-toggle="failure_requests">失败请求</label>
         <button id="show-all-columns" type="button">全部显示</button>
       </div></details>
     </div></div>
       <div class="table-wrap" tabindex="0" aria-label="用户模型用量表，可横向滚动">
-        <table id="usage-table"><thead><tr><th data-column="username">用户名</th><th data-token-column hidden>令牌</th><th data-column="request_count">消费请求数</th><th data-column="model_name">模型</th><th data-column="tier_name">档位</th><th data-column="total_tokens">总 Token</th><th data-column="input_tokens">输入 Token</th><th data-column="output_tokens">输出 Token</th><th data-column="cache_read_tokens">缓存读取 Token</th><th data-column="cache_write_tokens">缓存写入 Token</th><th data-column="group_ratio">倍率</th><th data-column="input_price">输入价格</th><th data-column="output_price">输出价格</th><th data-column="cache_price">缓存读价格</th><th data-column="write_price">缓存写价格</th><th data-column="amount">消费金额</th></tr></thead><tbody id="rows"></tbody><tfoot id="totals"></tfoot></table>
+        <table id="usage-table"><thead><tr><th data-column="username">用户名</th><th data-token-column hidden>令牌</th><th data-column="request_count">消费请求数</th><th data-column="model_name">模型</th><th data-column="tier_name">档位</th><th data-column="total_tokens">总 Token</th><th data-column="input_tokens">输入 Token</th><th data-column="output_tokens">输出 Token</th><th data-column="cache_read_tokens">缓存读取 Token</th><th data-column="cache_write_tokens">缓存写入 Token</th><th data-column="group_ratio">倍率</th><th data-column="input_price">输入价格</th><th data-column="output_price">输出价格</th><th data-column="cache_price">缓存读价格</th><th data-column="write_price">缓存写价格</th><th data-column="amount">消费金额</th><th data-column="cache_hit_rate" hidden>缓存命中率</th><th data-column="amount_per_million" hidden>每百万 Token 金额</th><th data-column="failure_requests" hidden>失败请求</th></tr></thead><tbody id="rows"></tbody><tfoot id="totals"></tfoot></table>
       </div>
     </section>
   </main>

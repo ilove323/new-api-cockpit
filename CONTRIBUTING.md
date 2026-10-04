@@ -24,10 +24,11 @@ SQL 集成测试使用独立 PostgreSQL 库。在当前终端设置仅属于测�
 `PGHOST`、`PGPORT`、`PGUSER`、`PGPASSWORD`、`PGDATABASE` 和 `MONITOR_DATABASE_URL` 后运行：
 
 ```bash
+export TEST_SCHEDULE_DATABASE_URL="$MONITOR_DATABASE_URL"
 .venv/bin/python -m unittest discover -s tests
 ```
 
-定时配额集成测试也可通过 `TEST_SCHEDULE_DATABASE_URL` 指定独立测试库。
+定时配额与用户/KEY 管理集成测试使用 `TEST_SCHEDULE_DATABASE_URL`；与 CI 一样指向同一个隔离测试库。
 这些测试会创建和删除临时 schema，但不得指向生产库；真实 New API 配额变更均由 fixture/mock 替代。
 
 `test_internal_timers.py` 还包含真实 Gunicorn 双进程启动、领导者接管和退出回归：

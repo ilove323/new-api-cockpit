@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/cockpit/static/keys.css">
   <link rel="stylesheet" href="/cockpit/static/navigation.css">
   <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/dropdowns.js"></script>
   <script defer src="/cockpit/static/operations.js"></script>
 </head>
 <body class="app-layout">
@@ -25,6 +26,6 @@
     <div class="pagination"><button id="records-prev" type="button">{{ icon('chevron-left') }}上一页</button><span id="records-page"></span><button id="records-next" type="button">下一页{{ icon('chevron-right') }}</button></div>
     </section>
   </main>
-  <dialog id="records-dialog" class="management-wide" aria-labelledby="records-title"><h2 id="records-title">操作详情</h2><p id="records-detail-status" role="status"></p><div class="table-wrap"><table><thead><tr><th>对象 / ID</th><th>用户 ID</th><th>修改前</th><th>修改后 / 指令</th><th>状态</th><th>说明</th></tr></thead><tbody id="records-items"></tbody></table></div><button id="records-items-more" type="button" hidden>加载更多明细</button><div class="dialog-actions"><button id="records-close" type="button">关闭</button></div></dialog>
+  <dialog id="records-dialog" class="management-wide" aria-labelledby="records-title"><h2 id="records-title">操作详情</h2><p id="records-detail-status" role="status"></p><div class="table-wrap"><table><thead><tr><th>对象 / ID</th><th>目标用户 / 用户组</th><th>修改前</th><th>修改后 / 指令</th><th>状态</th><th>说明</th></tr></thead><tbody id="records-items"></tbody></table></div><button id="records-items-more" type="button" hidden>加载更多明细</button><div class="dialog-actions"><button id="records-close" type="button">关闭</button></div></dialog>
 </body>
 </html>

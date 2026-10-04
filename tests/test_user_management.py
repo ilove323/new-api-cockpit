@@ -195,12 +195,16 @@ class UserManagementTest(unittest.TestCase):
             "/cockpit/keys/",
             "/cockpit/static/keys.js",
             "/cockpit/static/navigation.js",
+            "/cockpit/static/dropdowns.js",
+            "/cockpit/keys/api/token/3/groups",
         ):
             self.assertEqual(client.get(path).status_code, 401)
         auth = {"Authorization": "Basic YWRtaW46Zml4dHVyZQ=="}
         with patch("new_api_cockpit.app.verify_admin", return_value=True):
             response = client.post(
-                "/cockpit/keys/api/search-key", json={"key": "fixture"}, headers=auth
+                "/cockpit/keys/api/query/grouped",
+                json={"search": "fixture"},
+                headers=auth,
             )
             self.assertEqual(response.status_code, 403)
             for extra in (
@@ -208,11 +212,50 @@ class UserManagementTest(unittest.TestCase):
                 {"Origin": "https://evil.invalid"},
             ):
                 response = client.post(
-                    "/cockpit/keys/api/search-key",
-                    json={"key": "fixture-key"},
+                    "/cockpit/keys/api/query/grouped",
+                    json={"search": "fixture-key"},
                     headers={**auth, "X-Management-Action": "confirm", **extra},
                 )
                 self.assertEqual(response.status_code, 403)
+
+    def test_standalone_key_lookup_route_is_not_available(self):
+        with (
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch.object(manage, "list_grouped") as query,
+        ):
+            response = app.test_client().post(
+                "/cockpit/keys/api/search-key",
+                json={"key": "fixture-secret"},
+                auth=("admin", "fixture"),
+                headers={"X-Management-Action": "confirm"},
+            )
+            self.assertEqual(response.status_code, 404)
+            query.assert_not_called()
+            self.assertFalse(hasattr(manage, "search_key"))
+            response.close()
+
+    def test_group_options_route_is_authenticated_read_only_and_owner_scoped(self):
+        with (
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch.object(
+                manage,
+                "token_group_options",
+                return_value={
+                    "id": 3,
+                    "group": "a",
+                    "user_status": 1,
+                    "available_groups": ["a", "b"],
+                },
+            ) as groups,
+            patch.object(manage, "single_action") as action,
+        ):
+            response = app.test_client().get(
+                "/cockpit/keys/api/token/3/groups", auth=("admin", "fixture")
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json["available_groups"], ["a", "b"])
+            groups.assert_called_once_with("admin", 3)
+            action.assert_not_called()
 
     def test_three_pages_share_relative_sidebar_and_no_old_switch_buttons(self):
         with (
