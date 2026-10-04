@@ -4,8 +4,8 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
-const root=path.join(__dirname,'../src/new_api_statistics');
-const html=fs.readFileSync(path.join(root,'templates/quota.html'),'utf8');
+const root=path.join(__dirname,'../src/new_api_cockpit');
+const html=fs.readFileSync(path.join(root,'templates/users.html'),'utf8');
 const js=fs.readFileSync(path.join(root,'static/quota.js'),'utf8');
 test('mode selector centers a compact text-and-arrow group without wide blank padding',()=>{
   const css=fs.readFileSync(path.join(root,'static/quota.css'),'utf8');
@@ -16,13 +16,14 @@ test('mode selector centers a compact text-and-arrow group without wide blank pa
 test('statistics and quota links and entry redirects preserve the current origin',()=>{
   const index=fs.readFileSync(path.join(root,'templates/index.html'),'utf8');
   const nginx=fs.readFileSync(path.join(__dirname,'../nginx.conf.example'),'utf8');
-  assert.match(index,/class="quota-nav" href="\/quota\/"/);
-  assert.match(html,/href="\/statistics\/"/);
-  for(const route of ['statistics','quota']){
-    const block=nginx.match(new RegExp(`location = /${route} \\{([^}]+)\\}`))[1];
-    assert.match(block,/absolute_redirect off;/);
-    assert.ok(block.includes(`return 302 /${route}/$is_args$args;`));
-  }
+  const sidebar=fs.readFileSync(path.join(root,'templates/partials/sidebar.html'),'utf8');
+  assert.match(index,/include "partials\/sidebar.html"/);
+  assert.match(html,/include "partials\/sidebar.html"/);
+  for(const route of ['statistics','users','keys','operations'])assert.ok(sidebar.includes(`href="/cockpit/${route}/"`));
+  assert.ok(nginx.includes('location ^~ /cockpit/ {'));
+  assert.ok(nginx.includes('proxy_set_header Host $http_host;'));
+  assert.ok(nginx.includes('return 302 /cockpit/statistics/$is_args$args;'));
+  for(const old of ['statistics','quota','users'])assert.ok(!nginx.includes(`location = /${old} `));
 });
 class Element{
   constructor(){this.children=[];this.events={};this.value='';this.checked=false;this.textContent='';this.open=false;this.classList={toggle(){},contains(){return false;}};}
@@ -121,7 +122,7 @@ test('more than 100 selected users stay enabled and execute in waves of at most 
   assert.equal(h.ids().length,103);assert.equal(h.elements.get('preview').disabled,false);
   confirmed(h,ids);const waves=[];
   h.ctx.fetch=async(url,options)=>{
-    if(url==='/quota/api/users')return {ok:true,json:async()=>({rows})};
+    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows})};
     const wave=JSON.parse(options.body).user_ids;waves.push(wave);
     return {ok:true,json:async()=>waveResponse(wave)};
   };
@@ -136,7 +137,7 @@ test('the next wave waits for the current HTTP response; duplicate clicks do not
   const h=await harness(),ids=Array.from({length:11},(_,i)=>i+1);confirmed(h,ids);
   let release;const waves=[];
   h.ctx.fetch=async(url,options)=>{
-    if(url==='/quota/api/users')return {ok:true,json:async()=>({rows:sample})};
+    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};
     const wave=JSON.parse(options.body).user_ids;waves.push(wave);
     return {ok:true,json:waves.length===1?()=>new Promise(resolve=>{release=()=>resolve(waveResponse(wave));}):async()=>waveResponse(wave)};
   };
@@ -147,7 +148,7 @@ test('the next wave waits for the current HTTP response; duplicate clicks do not
 test('a failed wave records all concurrent outcomes and leaves later users unstarted',async()=>{
   const h=await harness(),ids=Array.from({length:12},(_,i)=>i+1);confirmed(h,ids);const waves=[];
   h.ctx.fetch=async(url,options)=>{
-    if(url==='/quota/api/users')return {ok:true,json:async()=>({rows:sample})};
+    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};
     const wave=JSON.parse(options.body).user_ids;waves.push(wave);
     return {ok:true,json:async()=>waveResponse(wave,7)};
   };
@@ -159,7 +160,7 @@ test('a failed wave records all concurrent outcomes and leaves later users unsta
 });
 test('transport failure marks the sent wave uncertain and never retries',async()=>{
   const h=await harness();confirmed(h,[1,2,3,4,5,6]);let calls=0;
-  h.ctx.fetch=async(url)=>{if(url==='/quota/api/users')return {ok:true,json:async()=>({rows:sample})};calls++;throw new Error('断开');};
+  h.ctx.fetch=async(url)=>{if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};calls++;throw new Error('断开');};
   await h.elements.get('apply').fire('click');assert.equal(calls,1);
   assert.match(h.run('resultCells.get(1).textContent'),/结果待核对/);
   assert.equal(h.run('resultCells.get(6).textContent'),'未发起');
@@ -167,10 +168,34 @@ test('transport failure marks the sent wave uncertain and never retries',async()
 test('incomplete per-user response stops dispatch instead of treating the wave as successful',async()=>{
   const h=await harness();confirmed(h,[1,2,3,4,5,6]);let calls=0;
   h.ctx.fetch=async(url)=>{
-    if(url==='/quota/api/users')return {ok:true,json:async()=>({rows:sample})};
+    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};
     calls++;return {ok:true,json:async()=>({completed:true,results:[{id:1,ok:true}]})};
   };
   await h.elements.get('apply').fire('click');assert.equal(calls,1);
   assert.match(h.run('resultCells.get(1).textContent'),/结果待核对/);
   assert.equal(h.run('resultCells.get(6).textContent'),'未发起');
+});
+for(const change of ['amount','mode','clear','select-all','select-groups','deselect-groups','user-checkbox'])test(`late quota preview is discarded after ${change}`,async()=>{
+  const h=await harness();h.run("selected.add(1);selectedGroups.add('default');render()");h.elements.get('amount').value='10';h.elements.get('mode').value='add';
+  let release;h.ctx.fetch=async()=>({ok:true,json:()=>new Promise(resolve=>{release=resolve;})});
+  const request=h.elements.get('preview').fire('click');await settle();
+  if(change==='amount'){h.elements.get('amount').value='99';await h.elements.get('amount').fire('input');}
+  else if(change==='mode'){h.elements.get('mode').value='subtract';await h.elements.get('mode').fire('change');}
+  else if(change==='clear')await h.elements.get('clear-selection').fire('click');
+  else if(change==='select-all')await h.change('select-all',false);
+  else if(change==='user-checkbox'){const checkbox=h.elements.get('users').children[0].children[0].children[0];checkbox.checked=false;await checkbox.fire('change');}
+  else await h.elements.get(change).fire('click');
+  release({mode:'add',amount_yuan:'10',users:[]});await request;
+  assert.equal(h.elements.get('confirm-dialog').open,false);
+  assert.equal(h.run('pending'),null);
+});
+test('outdated preview errors do not erase a newer confirmation',async()=>{
+  const h=await harness();h.run('selected.add(1)');h.elements.get('amount').value='10';h.elements.get('mode').value='add';
+  let reject;h.ctx.fetch=()=>new Promise((_,r)=>{reject=r;});
+  const old=h.elements.get('preview').fire('click');await settle();
+  h.elements.get('amount').value='99';await h.elements.get('amount').fire('input');
+  h.ctx.fetch=async()=>({ok:true,json:async()=>({mode:'add',amount_yuan:'99',users:[]})});
+  await h.elements.get('preview').fire('click');reject(new Error('obsolete'));await old;
+  assert.equal(h.elements.get('confirm-dialog').open,true);
+  assert.equal(h.run('pending.amount_yuan'),'99');
 });

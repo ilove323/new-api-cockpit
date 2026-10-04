@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "new-api-statistics"
-version = "0.1.3"
-description = "Self-hosted New API usage reports, balance monitoring and quota management"
+name = "new-api-cockpit"
+version = "0.2.0"
+description = "Extended New API administration, usage reports, budgets and user/key management"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -14,8 +14,8 @@ authors = [{name = "ilove323"}]
 dynamic = ["dependencies"]
 
 [project.urls]
-Repository = "https://github.com/ilove323/new-api-statistics"
-Issues = "https://github.com/ilove323/new-api-statistics/issues"
+Repository = "https://github.com/ilove323/new-api-cockpit"
+Issues = "https://github.com/ilove323/new-api-cockpit/issues"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
@@ -24,7 +24,7 @@ dependencies = {file = ["requirements.txt"]}
 where = ["src"]
 
 [tool.setuptools.package-data]
-new_api_statistics = ["*.sql", "migrations/*.sql", "templates/*.html", "static/*"]
+new_api_cockpit = ["*.sql", "migrations/*.sql", "templates/*.html", "templates/partials/*.html", "static/*", "static/icons/*.svg", "static/fonts/*"]
 
 [tool.ruff]
 target-version = "py312"

@@ -1,84 +1,113 @@
-# 升级与备份
+# 升级、备份与回退
 
-## 升级到 0.1.3：定时用户配额
+本文描述当前单容器应用的升级操作，适用于源码或匹配的发布镜像。
+当前运行结构见[架构说明](architecture.md)，参数与探活见[部署](deployment.md)。
 
-新增 `007_quota_schedules.sql`，使用现有监控库增量创建四张定时配额表。
-无需清空数据库，也不修改 New API 数据库结构。网页与 `quota-worker` 必须使用包含本功能的同版镜像。
-`quota-worker` 为可选服务，需要显式启用 `quota-schedules` profile；未启用时只保存规则，不会执行增减。
-具体步骤、管理员 PAT 与不自动补发/重试的边界见[用户配额](quota.md#定时额度修改)。
-本版还引入请求历史价格拆行、手工批量配额管理和表格金额两位小数展示。
-升级时一并更新 Compose 与 Nginx 示例中的 `/quota/` 入口；发布步骤见[0.1.3 发布说明](releases/v0.1.3.md)。
+## 升级前检查
 
-## 通用升级与备份步骤
+- 记录当前 Git 提交、镜像 tag/digest、Compose 和私有 override；确保能恢复原应用。
+- 备份独立监控库、`.env` 及 `NOTIFICATION_ENCRYPTION_KEY`，保存在仓库外的受限目录。
+- 核对 New API 只读账号能读取[兼容范围](compatibility.md)中的字段；配额操作需可访问管理 API。
+- 更新应用镜像时同时使用配套 Compose，不把当前源码模板与不包含该实现的发布镜像混用。
+- 本文只操作统计项目；不对 New API、PostgreSQL、Redis 项目执行 `down` 或清空数据库。
 
-升级前记录应用版本或镜像 digest，并分别备份 New API 数据库、监控数据库、
-部署 .env 以及 NOTIFICATION_ENCRYPTION_KEY。备份应存放在仓库外。
-
-监控库可以使用 PostgreSQL 管理员导出：
+备份监控库（示例库名为 `new_api_cockpit`，应按自己的配置核对）：
 
 ```bash
+umask 077
 docker exec <PostgreSQL容器名> sh -lc \
-  'pg_dump -U "$POSTGRES_USER" -Fc new_api_statistics' > /安全备份目录/monitor.dump
+  'pg_dump -U "$POSTGRES_USER" -Fc new_api_cockpit' > /安全备份目录/monitor.dump
+
+docker exec -i <PostgreSQL容器名> pg_restore -l \
+  < /安全备份目录/monitor.dump > /安全备份目录/monitor.contents.txt
 ```
 
-维护者发布镜像后，修改 compose.release.yml 使用的 IMAGE_TAG，再执行：
+确认备份非空并能列出内容，再继续升级。New API 原库按其自身备份策略单独备份，
+不要将监控库恢复操作用于原库。通知加密密钥与数据库备份缺一不可。
+
+目录或仓库改名不要求重命名数据库、角色或源库 PAT 函数。保留现有 `.env`、连接串与
+Compose 项目名；需要固定项目名时使用 `COMPOSE_PROJECT_NAME` 或 `docker compose -p <现有项目名>`。
+应用服务名保持 `statistics`，避免升级产生另一组应用容器。
+
+## 停止与更新
+
+先在统计项目目录停止当前应用，避免升级中仍有额度请求发起：
 
 ```bash
-docker compose -f compose.release.yml pull
-docker compose -f compose.release.yml up -d
-docker compose -f compose.release.yml logs --tail=100 balance-worker
+docker compose stop -t 90 statistics
 ```
 
-监控库初始化在事务和 advisory lock 内运行。schema_migrations 保存已执行脚本名称；
-脚本只执行一次。001_initial.sql 同时兼容空库和此前无版本表的监控库。
-它保留原有预算、归档和渠道配置，并迁移旧通知表、清理已废弃的已读状态。
-已有未使用版本表的安装升级时仍需先备份。
+停止后确认同一监控库没有其他应用实例正在发起额度操作，再更新当前容器。
 
-后续数据库结构变更应新增编号递增的迁移文件。迁移失败回滚事务，不写入版本记录。
-此版本不提供自动降级 SQL；涉及删列等变更时，
-仅回退镜像可能不足以恢复服务，应同时恢复升级前监控库和原加密密钥。
+保留 `.env`、监听端口、Docker 网络和监控数据，更新到目标源码或配套发布配置。
+不要直接覆盖私有参数，也不应重建 New API 服务。
 
-应用对 New API 使用只读查询，监控迁移仅作用于 MONITOR_DATABASE_URL 指定库。
+### 源码构建
 
-## 升级到 0.1.1
+```bash
+docker compose up -d --build statistics
+docker compose logs --tail=100 statistics
+```
 
-`0.1.1` 会自动执行 `002` 至 `004` 迁移，增加渠道排除规则、逐渠道月度归档和
-钉钉 Webhook 配置表。首次余额检查或保存设置时，系统会尝试把已有月度总额拆分为
-“月份 + 渠道 ID”明细；因此升级前应确认 New API 消费日志仍覆盖累计起始月份。
-若重新读取的历史金额低于旧月度归档，自动拆分会失败并保留旧数据，避免静默覆盖。
-管理员仍可在页面通过“追溯历史计费”查看逐月差额，并在明确确认后使用当前完整数据覆盖。
+### 发布镜像
 
-旧版钉钉企业应用凭据无法转换成群机器人 Webhook。迁移会删除旧凭据表，并在旧钉钉渠道
-处于选中状态时切换到 `dingtalk_webhook`、关闭通知并提示重新配置。飞书配置、预算、警报和
-已有月度总额不会因此删除。重新启用前请在“报警渠道”中填写 Webhook URL，并按机器人安全
-设置决定是否填写加签密钥。
+将 `IMAGE_TAG` 设为目标正式版本，并下载该版本附带的配置：
 
-## 0.1.1 余额 API 变更
+```bash
+docker compose -f compose.release.yml pull statistics
+docker compose -f compose.release.yml up -d statistics
+docker compose -f compose.release.yml logs --tail=100 statistics
+```
 
-对外接口改用 New API 管理员 PAT：报警路径改为 /statistics/api/alert；
-/statistics/api/balance 返回实时余额，不再返回网页内部状态。网页状态已同步迁移。
-只读账号需具备 users.access_token 查询权限；无需数据库结构迁移。
-具体请求和权限范围见 [API 文档](api.md)。
+两种方式选一种；停止和启动必须使用相同的实际 Compose 项目/配置。
+如果使用发布配置，前面的停止命令也需加 `-f compose.release.yml`。
 
-## 升级到 0.1.2
+## 数据库迁移
 
-升级前备份独立监控库。启动时自动执行 `005_balance_scopes.sql` 和
-`006_scope_visibility.sql`，为“全部”、当前渠道标签和“未分组”建立独立账本与余额设置，
-并记录标签是否仍在 New API 中使用。既有预算、报警及设置归入“全部”；不清空旧归档。
+`MONITOR_DATABASE_URL` 必须指向独立监控库。
+Docker entrypoint 在启动网页前应用 `migrations/` 中尚未执行的脚本，按编号顺序处理。
+`schema_migrations` 保存文件名，已登记的脚本不会重复执行；当前结构由 `001`～`010` 构建。
+迁移在事务和数据库锁内运行，失败回滚且不登记版本，也不启动网页进程。
 
-月度逐渠道费用仍是历史账务的原始数据。各标签历史金额改为按**当前渠道归属**动态汇总；
-已归档月份不会重新拉取消费日志。渠道修改标签时，相应月份金额会在不同账本间移动，
-“全部”的金额保持不变。New API 中已不存在的标签从页面隐藏并停止独立告警，
-但保留账本和设置，同名标签出现后恢复。
+正常页面/API 请求不执行 DDL，仅在必要时检查迁移版本。
+不要为了应用迁移清空预算、归档、通知配置、规则或执行记录；不要把 SQL 执行到 New API 原库。
+迁移文件不得删除、改号或修改已发布脚本；新增结构使用下一编号。
+当前表及用途见[数据库职责](architecture.md#数据库职责)。
 
-已删除渠道无法再从 New API 取得标签；若统计库以前记录过其归属则保留，
-否则归入“未分组”。如需人工指定，只修改监控库的渠道库存归属，
-不要修改 New API 历史日志。升级不会自动猜测其原标签。
+非 Docker 部署使用统一入口，自动应用迁移和 Gunicorn 生命周期配置：
 
-## 0.1.3：历史价格明细
+```bash
+python -m new_api_cockpit.runtime gunicorn --bind 127.0.0.1:8000 new_api_cockpit.app:app
+```
 
-此改动不增加监控库迁移。部署前应确认 New API 只读账号可读取 `logs.other`、
-`logs.group` 和相关 `options`；升级后明细改按请求发生时的价格归并，
-因此同一用户模型可能由一行变成多行。已归档的月度费用、历史消费日志和实际金额不会被改写。
-若旧日志没有可还原的价格快照，相应 Token 单价留空；倍率变动但无法用当前匹配档位
-求得有效缓存读解时保留原始 Token。相关口径与限制见[统计口径](calculation.md)。
+`python -m new_api_cockpit.runtime` 不带命令时仅执行迁移，不启动网页或定时器。
+如使用自定义 Gunicorn 配置，须引入[定时器生命周期钩子](quota.md#部署与数据库)。
+
+## 升级后验证
+
+- `docker compose ps` 仅列出 `statistics` 一个统计应用服务；使用实际配置确认没有并行调度实例。
+- 根据[运行状态检查](deployment.md#运行状态检查)确认 `/healthz` 返回 `200`，两种定时器就绪。
+- 核对迁移版本、已归档月份、预算、通知配置和配额规则仍在；验证网页及 API 认证没有被放开。
+- 配额执行结果在 `/cockpit/operations/` 核对；探活和普通页面访问不会发额度。
+- 如需验证通知，管理员明确点击“发送测试消息”；不要用增减真实用户额度测试部署。
+- 确认 Nginx 转发完整 `/cockpit/` 前缀，四个页面及其 API/静态资源均可认证访问。
+
+首次渠道同步会进行一次完整渠道发现，之后只同步当前目录；显式发现命令及快照清理机制
+见[性能机制](performance.md)。展示快照不是历史账单，不能用它替代归档验证。
+
+重启会暂时停止两种定时器。余额启动安排未来的 10:00，不立即报警；
+配额按已有到期窗口处理，错过周期及中断/不明确请求不补发、不自动重试。
+
+## 回退
+
+1. 停止当前应用，确认调度器不再领取任务。
+2. 恢复已记录的原镜像与配套 Compose，保留 `.env` 和加密密钥；只启动目标统计应用。
+3. 核对该应用与现有监控结构是否兼容。回退镜像不会自动降级数据库，不能仅凭新增表就认定回退兼容；需要回退结构时恢复该版本的匹配备份。
+4. 确需数据库恢复时，只恢复目标监控库，并先评估备份后新增数据的损失；不得自动覆盖业务记录或动 New API 原库。
+5. 重新验证认证、归档、配置和任务状态；已经成功的额度操作不会因回退撤销。
+
+本项目没有自动降级 SQL，也不自动重放结果不明确的额度请求。
+遇到迁移或外部请求不确定状态，先保留证据、备份并人工核对，不以清库或反复重发作为修复手段。
+
+源库 PAT 补建函数单独安装与授权，见[用户管理](users.md#安装补建函数与最小权限)。
+升级不批量补建 PAT，不修改已有用户和 KEY。

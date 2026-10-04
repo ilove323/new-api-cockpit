@@ -10,10 +10,13 @@ PAT 直接使用原值，包括其中的 + 等字符。PAT 更新或账号停用
 
 ## 实时余额
 
-`GET /statistics/api/balance`
+`GET /cockpit/statistics/api/balance`
 
 ```bash
-curl --fail-with-body   -H 'Authorization: Bearer <管理员PAT>'   -H 'Accept: application/json'   https://example.com/statistics/api/balance
+curl --fail-with-body \
+  -H 'Authorization: Bearer <管理员PAT>' \
+  -H 'Accept: application/json' \
+  https://example.com/cockpit/statistics/api/balance
 ```
 
 ```json
@@ -44,10 +47,12 @@ curl --fail-with-body   -H 'Authorization: Bearer <管理员PAT>'   -H 'Accept: 
 
 ## 报警检查
 
-`GET /statistics/api/alert`
+`GET /cockpit/statistics/api/alert`
 
 ```bash
-curl --fail-with-body   -H 'Authorization: Bearer <管理员PAT>'   https://example.com/statistics/api/alert
+curl --fail-with-body \
+  -H 'Authorization: Bearer <管理员PAT>' \
+  https://example.com/cockpit/statistics/api/alert
 ```
 
 每次调用执行即时检查、更新报警记录，低于阈值时调用已启用的通知渠道。
@@ -61,30 +66,47 @@ checked_at、timezone，金额为数字，时间为带时区 ISO 8601。
 并发检查冲突返回 409，数据库失败返回 503，查询超时返回 504。
 认证失败返回 401。对外接口不接受 Basic Auth。
 
-## 升级与网页兼容
+## 网页内部接口与权限
 
-旧的 `/statistics/api/balance/alert` 已移至 `/statistics/api/alert`；
-调用方需同时把管理员 Basic Auth 改为 New API 管理员 PAT。
-原余额页面数据移至内部 `/statistics/api/balance/status`。
-网页及其内部管理接口仍使用管理员登录，不向普通令牌开放管理权限。
-现有 /statistics/ Nginx 转发即可覆盖新接口。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
+`/cockpit/statistics/api/balance/status` 用于余额窗口的状态、报警和月度归档展示。
+网页及其内部管理接口使用管理员 Basic Auth，不向普通令牌开放管理权限；
+上述 `/cockpit/statistics/api/balance` 与 `/cockpit/statistics/api/alert` 对外接口仅使用管理员 PAT Bearer。
+统一 `/cockpit/` Nginx 转发覆盖页面、静态资源和 API。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
 
-数据库只读账号需要 users 表（包含 access_token）的 SELECT 权限；
-无需 tokens 表权限，无需修改数据库结构或新建密钥表。
+这两个对外接口的 PAT 校验只读取 users（包含 access_token），不读取模型调用 KEY。
+完整应用的查询权限还包括 tokens 等表，见[部署](deployment.md)；无需新建 API 密钥表。
 
 ## 账本选择
 
-网页内部 `GET /statistics/api/scopes` 返回账本列表（管理员网页认证）。
+网页内部 `GET /cockpit/statistics/api/scopes` 返回账本列表（管理员网页认证）。
 `kind=all` 表示全部，`kind=tag` 的名称为 `tag_value`，`kind=ungrouped` 表示未分组。
 列表只展示 New API 当前仍存在的标签，以及“全部”“未分组”；隐藏账本的设置和历史费用不会删除。
 余额与报警接口增加可选查询参数 `scope_id`，省略时使用全部账本；无效 ID 不回退至全部。
 
 ```bash
 curl --fail-with-body -H 'Authorization: Bearer <管理员PAT>' \
-  'https://example.com/statistics/api/balance?scope_id=3'
+  'https://example.com/cockpit/statistics/api/balance?scope_id=3'
 curl --fail-with-body -H 'Authorization: Bearer <管理员PAT>' \
-  'https://example.com/statistics/api/alert?scope_id=3'
+  'https://example.com/cockpit/statistics/api/alert?scope_id=3'
 ```
 
 `/balance` 仅实时计算指定账本余额，不发送通知；`/alert` 只检查指定账本，
 关闭该账本监控后不发送余额告警。通知渠道配置仍为全局共用。
+
+## 网页报表的按需详情（管理员内部接口）
+
+这些接口仍使用网页管理员 Basic Auth，不属于上述 PAT 对外余额接口。
+
+- `/cockpit/statistics/api/usage`、`/cockpit/statistics/api/usage/by-token` 和
+  `/cockpit/statistics/api/usage/by-selection` 支持 `details=lazy`。
+- 配置监控库并完成迁移后，列表只保留显示字段；不携带 `cost_formula`、
+  `tier_usage`、`pricing_buckets`、`price_tiers`。新增 `report_id`、`row_id`、
+  `has_pricing_buckets` 和 `price_tier_count` 用于关联详情及显示提示。
+- 不传 `details=lazy` 保留完整响应，兼容已有内部调用方；未配置可选监控库时也返回完整数据。
+- 悬浮时调用 `POST /cockpit/statistics/api/usage/details?scope_id=<原账本ID>`：
+  请求为 `{"report_id":"<UUID>","row_ids":[0,1]}`，最多 500 行；要求 JSON 和
+  `X-Statistics-Request: 1`，不允许跨站调用。返回
+  `{"rows":[{"row_id":0,"detail":{"cost_formula":{...}}}]}`。
+- 详情只读取查询时保存的不可变结果，不重新拉日志或当前价格。按管理员账号和账本隔离，
+  有效期 15 分钟，每账号最多保留最近 10 份；过期、范围不符或已被替换返回 `410`，应重新查询。
+- 详情不改变消费、报警、月度归档或余额 API；Excel 仍独立实时查询，精度和工作表规则不变。

@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 from openpyxl import load_workbook
 
-from new_api_statistics.app import app
-from new_api_statistics.report import (
+from new_api_cockpit.app import app
+from new_api_cockpit.report import (
     current_prices,
     price_details,
     decorate,
@@ -375,7 +375,7 @@ class ReportTest(unittest.TestCase):
         self.assertTrue(cost_formula(row)["converted"])
 
     def test_site_name_database_and_fallback(self):
-        with patch("new_api_statistics.report.psycopg.connect") as connect:
+        with patch("new_api_cockpit.report.psycopg.connect") as connect:
             conn = connect.return_value.__enter__.return_value
             for value, expected in [
                 (("示例网关",), "示例网关"),
@@ -388,12 +388,14 @@ class ReportTest(unittest.TestCase):
 
     def test_site_name_rendered_and_escaped(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.app.load_site_name", return_value="示例网关<script>"
+                "new_api_cockpit.app.load_site_name", return_value="示例网关<script>"
             ),
         ):
-            response = app.test_client().get("/statistics/", auth=("admin", "test"))
+            response = app.test_client().get(
+                "/cockpit/statistics/", auth=("admin", "test")
+            )
             text = response.get_data(as_text=True)
             self.assertIn("示例网关&lt;script&gt;", text)
             self.assertIn("用量统计</title>", text)
@@ -424,8 +426,9 @@ class ReportTest(unittest.TestCase):
             self.assertIn("input.checked=false;input.disabled=true", script)
             presets = Path(app.static_folder, "presets.js").read_text()
             self.assertIn("preset === 'current-month'", presets)
-            stylesheet = Path(app.static_folder, "app.css").read_text()
-            self.assertIn(".filter-menu label[hidden]{display:none}", stylesheet)
+            stylesheet = Path(app.static_folder, "ui.css").read_text()
+            self.assertIn("/cockpit/static/ui.css", text)
+            self.assertIn("[hidden] { display: none !important; }", stylesheet)
 
     def setUp(self):
         self.rows = decorate(
@@ -733,92 +736,123 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(ws["F3"].value, 0)
         self.assertEqual(ws["P3"].value, 0)
 
-    def test_developer_mode_does_not_change_excel(self):
+    def test_optional_columns_do_not_change_excel_or_query_failures(self):
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch("new_api_statistics.app.load_report", return_value=self.rows),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_report", return_value=self.rows) as load,
         ):
             books = []
-            for suffix in ["", "&dev=0", "&dev=1", "&dev=2"]:
+            for suffix in ["", "&include_failures=0", "&include_failures=1", "&dev=2"]:
                 response = app.test_client().get(
-                    "/statistics/api/export?start=2026-07-26&end=2026-08-25" + suffix,
+                    "/cockpit/statistics/api/export?start=2026-07-26&end=2026-08-25"
+                    + suffix,
                     auth=("test_admin", "testing"),
                 )
                 self.assertEqual(response.status_code, 200)
                 wb = load_workbook(BytesIO(response.data))
                 self.assertEqual(wb.active.max_column, 16)
                 books.append([[list(row) for row in ws.values] for ws in wb.worksheets])
-            self.assertEqual(books[0], books[1])
-            self.assertEqual(books[0], books[2])
-            self.assertEqual(books[0], books[3])
+                self.assertNotIn("include_failures", load.call_args.kwargs)
+                response.close()
+            self.assertTrue(all(book == books[0] for book in books[1:]))
 
-    def test_developer_two_requests_failure_aggregation(self):
-        with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch(
-                "new_api_statistics.app.load_report", return_value=deepcopy(self.rows)
-            ) as load,
-        ):
-            response = app.test_client().get(
-                "/statistics/api/usage?start=2026-07-26&end=2026-08-25&dev=2",
-                auth=("test_admin", "testing"),
-            )
-            self.assertEqual(response.status_code, 200)
-            load.assert_called_once_with(
-                "2026-07-26", "2026-08-25", by_token=False, include_failures=True
-            )
+    def test_failure_aggregation_requires_explicit_selection_on_all_report_routes(self):
+        routes = [
+            ("usage", "load_report", {"by_token": False}),
+            ("usage/by-token", "load_report", {"by_token": True}),
+            (
+                "usage/by-selection&token_id=1&group=default",
+                "load_report",
+                {"by_token": False, "token_ids": [1], "groups": ["default"]},
+            ),
+            ("usage/tokens", "load_token_options", {}),
+            ("usage/groups", "load_group_options", {}),
+        ]
+        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+            for route, loader, kwargs in routes:
+                path, _, filters = route.partition("&")
+                for flag in (
+                    "",
+                    "&include_failures=0",
+                    "&dev=1",
+                    "&dev=2",
+                    "&include_failures=1",
+                ):
+                    with (
+                        self.subTest(route=route, flag=flag),
+                        patch("new_api_cockpit.app." + loader, return_value=[]) as load,
+                    ):
+                        response = app.test_client().get(
+                            "/cockpit/statistics/api/"
+                            + path
+                            + "?start=2026-07-26&end=2026-08-25&"
+                            + filters
+                            + flag,
+                            auth=("test_admin", "testing"),
+                        )
+                        self.assertEqual(response.status_code, 200)
+                        expected = dict(kwargs)
+                        if flag == "&include_failures=1":
+                            expected["include_failures"] = True
+                        load.assert_called_once_with(
+                            "2026-07-26", "2026-08-25", **expected
+                        )
+                        response.close()
 
     def test_auth_and_user_model_filters(self):
         with patch(
-            "new_api_statistics.app.verify_admin",
+            "new_api_cockpit.app.verify_admin",
             side_effect=lambda u, p: u == "test_admin" and p == "testing",
         ):
             client = app.test_client()
-            self.assertEqual(client.get("/statistics/api/usage").status_code, 401)
+            self.assertEqual(
+                client.get("/cockpit/statistics/api/usage").status_code, 401
+            )
             with patch(
-                "new_api_statistics.app.load_report", return_value=deepcopy(self.rows)
+                "new_api_cockpit.app.load_report", return_value=deepcopy(self.rows)
             ):
                 response = client.get(
-                    "/statistics/api/usage?start=2026-07-26&end=2026-08-25",
+                    "/cockpit/statistics/api/usage?start=2026-07-26&end=2026-08-25",
                     auth=("test_admin", "testing"),
                 )
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json["totals"]["amount"], "11")
                 self.assertEqual(response.json["totals"]["request_count"], 6)
                 response = client.get(
-                    "/statistics/api/usage?user=absent&start=2026-07-26&end=2026-08-25",
+                    "/cockpit/statistics/api/usage?user=absent&start=2026-07-26&end=2026-08-25",
                     auth=("test_admin", "testing"),
                 )
                 self.assertEqual(response.json["rows"], [])
                 self.assertEqual(response.json["totals"]["rpm"], "0")
                 response = client.get(
-                    "/statistics/api/usage?model=gpt-b&start=2026-07-26&end=2026-08-25",
+                    "/cockpit/statistics/api/usage?model=gpt-b&start=2026-07-26&end=2026-08-25",
                     auth=("test_admin", "testing"),
                 )
                 self.assertEqual(len(response.json["rows"]), 1)
                 self.assertEqual(response.json["rows"][0]["model_name"], "gpt-b")
                 self.assertEqual(response.json["totals"]["amount"], "1")
                 response = client.get(
-                    "/statistics/api/export?user=%3Ddanger&model=claude-a&start=2026-07-26&end=2026-08-25",
+                    "/cockpit/statistics/api/export?user=%3Ddanger&model=claude-a&start=2026-07-26&end=2026-08-25",
                     auth=("test_admin", "testing"),
                 )
                 workbook = load_workbook(BytesIO(response.data))
                 self.assertEqual(workbook.active["D3"].value, "claude-a")
                 self.assertEqual(workbook.active.max_row, 4)
             self.assertEqual(
-                client.get("/statistics/", auth=("admin", "testing")).status_code, 401
+                client.get(
+                    "/cockpit/statistics/", auth=("admin", "testing")
+                ).status_code,
+                401,
             )
 
     def test_token_detail_endpoint_is_separate_from_excel(self):
         token_rows = [dict(self.rows[0], token_id=7, token_name="key-a")]
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
-            patch(
-                "new_api_statistics.app.load_report", return_value=token_rows
-            ) as load,
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.load_report", return_value=token_rows) as load,
         ):
             response = app.test_client().get(
-                "/statistics/api/usage/by-token?start=2026-07-26&end=2026-08-25",
+                "/cockpit/statistics/api/usage/by-token?start=2026-07-26&end=2026-08-25",
                 auth=("test_admin", "testing"),
             )
             self.assertEqual(response.status_code, 200)
@@ -828,31 +862,31 @@ class ReportTest(unittest.TestCase):
     def test_token_group_options_and_filtered_summary_endpoints(self):
         token_rows = [dict(token_id=7, token_name="key-a")]
         with (
-            patch("new_api_statistics.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.verify_admin", return_value=True),
             patch(
-                "new_api_statistics.app.load_token_options", return_value=token_rows
+                "new_api_cockpit.app.load_token_options", return_value=token_rows
             ) as options,
             patch(
-                "new_api_statistics.app.load_group_options",
+                "new_api_cockpit.app.load_group_options",
                 return_value=[{"group_name": "auto"}],
             ) as groups,
-            patch("new_api_statistics.app.load_report", return_value=self.rows) as load,
+            patch("new_api_cockpit.app.load_report", return_value=self.rows) as load,
         ):
             client = app.test_client()
             response = client.get(
-                "/statistics/api/usage/tokens?start=2026-07-26&end=2026-08-25",
+                "/cockpit/statistics/api/usage/tokens?start=2026-07-26&end=2026-08-25",
                 auth=("test_admin", "testing"),
             )
             self.assertEqual(response.json["rows"], token_rows)
             options.assert_called_once_with("2026-07-26", "2026-08-25")
             response = client.get(
-                "/statistics/api/usage/groups?start=2026-07-26&end=2026-08-25",
+                "/cockpit/statistics/api/usage/groups?start=2026-07-26&end=2026-08-25",
                 auth=("test_admin", "testing"),
             )
             self.assertEqual(response.json["rows"], [{"group_name": "auto"}])
             groups.assert_called_once_with("2026-07-26", "2026-08-25")
             response = client.get(
-                "/statistics/api/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=9&token_id=7&group=auto&by_token=1",
+                "/cockpit/statistics/api/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=9&token_id=7&group=auto&by_token=1",
                 auth=("test_admin", "testing"),
             )
             self.assertEqual(response.status_code, 200)
@@ -864,7 +898,7 @@ class ReportTest(unittest.TestCase):
                 groups=["auto"],
             )
             response = client.get(
-                "/statistics/api/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=bad",
+                "/cockpit/statistics/api/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=bad",
                 auth=("test_admin", "testing"),
             )
             self.assertEqual(response.status_code, 400)

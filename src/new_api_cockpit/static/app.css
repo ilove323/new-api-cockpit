@@ -1,0 +1,59 @@
+.statistics-page { display: grid; gap: 16px; }
+#query { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+#query label { min-width: 250px; }
+#query input { width: 100%; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.presets button { height: 28px; min-height: 28px; font-size: 12px; border-radius: 13px; }
+.presets button[aria-pressed=true] { background: var(--ui-accent); color: var(--ui-primary-text); border-color: transparent; }
+.scope-tabs { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--ui-border); }
+.scope-tabs button { background: transparent; border-color: transparent; color: var(--ui-muted-text); }
+.scope-tabs button[aria-selected=true] { background: var(--ui-accent); color: var(--ui-primary-text); }
+#scope-status { margin-block: 0 12px; }
+#status { margin-bottom: 0; }
+.metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.metrics > div { min-width: 0; padding: 16px; border: 1px solid var(--ui-border); border-radius: 16px; background: var(--ui-background); }
+.metrics span { display: block; font-size: 12px; color: var(--ui-muted-text); margin-bottom: 8px; }
+.metrics strong { font-size: 24px; font-weight: 600; line-height: 1.35; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metrics > div:first-child { background: var(--ui-accent); border-color: transparent; }
+.metrics > div:first-child strong { color: var(--ui-primary-text); }
+.ranking-tabs, .detail-mode { display: flex; align-items: center; gap: 2px; width: fit-content; padding: 3px; border-radius: 16px; background: var(--ui-muted); }
+.ranking-tabs { margin-bottom: 16px; flex-wrap: wrap; }
+.ranking-tabs button, .detail-mode button { background: transparent; border-color: transparent; color: var(--ui-muted-text); height: 28px; min-height: 28px; padding: 0 10px; border-radius: 13px; font-size: 12px; }
+.ranking-tabs button[aria-selected=true], .detail-mode button[aria-pressed=true] { color: var(--ui-foreground); background: var(--ui-background); box-shadow: 0 1px 3px #00000014; }
+#chart { display: grid; gap: 12px; max-height: 420px; overflow: auto; padding-right: 8px; }
+.bar-row { display: grid; grid-template-columns: minmax(120px,220px) minmax(0,1fr) 200px; align-items: center; gap: 16px; font-size: 14px; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { height: 8px; border-radius: 999px; background: var(--ui-muted); overflow: hidden; }
+.bar { height: 100%; border-radius: inherit; background: var(--ui-primary); }
+.bar-row:nth-child(3n+2) .bar { background: oklch(0.65 0.15 200); }
+.bar-row:nth-child(3n) .bar { background: oklch(0.7 0.12 280); }
+.bar-value { text-align: right; font-variant-numeric: tabular-nums; }
+.table-heading { display: grid; gap: 12px; margin-bottom: 12px; }
+.detail-title { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.detail-title h2 { margin-right: auto; }
+.detail-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.detail-filter { min-width: 0; }
+.detail-controls > .price-unit { margin-left: auto; color: var(--ui-muted-text); font-size: 12px; }
+.column-picker { margin-left: 4px; }
+#usage-table { min-width: var(--usage-table-min-width,1600px); }
+.statistics-page .table-wrap { max-height: 620px; }
+#usage-table th, #usage-table td { text-align: right; white-space: nowrap; }
+#usage-table td.username, #usage-table td.model, #usage-table td.token-name, #usage-table th:first-child, #usage-table th[data-column=model_name], #usage-table th[data-token-column], #usage-table td[data-column=tier_name], #usage-table th[data-column=tier_name], #usage-table tfoot td:first-child { text-align: left; }
+#usage-table td.username { vertical-align: middle; border-right: 1px solid var(--ui-border); background: var(--ui-background); }
+.failure-requests, .price-breakdown { white-space: pre-line !important; line-height: 1.7; }
+.money-cell { cursor: help; text-decoration: underline dotted var(--ui-muted-text); text-underline-offset: 4px; }
+.money-tooltip { position: fixed; z-index: 1000; width: 480px; max-width: calc(100vw - 16px); max-height: min(520px,calc(100dvh - 16px)); overflow: auto; padding: 16px; border: 1px solid var(--ui-border); border-radius: 16px; background: var(--ui-background); box-shadow: 0 8px 24px #0000001a; color: var(--ui-foreground); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.money-tooltip p { margin: 6px 0; }
+.money-tooltip .money-title { font-weight: 600; font-size: 14px; margin-top: 0; }
+@media (max-width:700px) {
+  #query label { flex: 1 1 100%; min-width: 0; }
+  .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .metrics > div { padding: 12px; }
+  .metrics strong { font-size: 20px; }
+  .bar-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+  .bar-track { grid-column: 1/-1; grid-row: 2; }
+  .bar-value { overflow-wrap: anywhere; }
+  .detail-title { gap: 8px; }
+  .detail-title h2 { width: 100%; }
+  .detail-controls > .price-unit { width: 100%; margin: 0; }
+}

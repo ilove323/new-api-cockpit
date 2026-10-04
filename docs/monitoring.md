@@ -12,21 +12,20 @@
 - 余额 = 当前账本额度 - 该账本起始月份以来已归档费用 - 该账本本月实时费用。金额取消费日志 `SUM(quota)/500000`，不以模型现价重新计费，也不受页面时间、用户等临时筛选影响。
 - 监控库按“月份 + 渠道 ID”保留原始费用。历史月份与当月均按渠道**当前归属**汇总；渠道改标签后历史账本金额随之变化，不重读历史日志，也不改动原始费用。不要把“全部”与各分组金额再相加。
 - 只显示 New API 当前渠道中存在的标签；已不存在的标签隐藏且不再独立检查告警，其历史数据、额度设置仍保留。同名标签重新出现后恢复展示。“全部”和“未分组”始终显示。
-- 渠道删除后保留最后同步到的标签和名称。首次升级无法恢复未曾保存的历史标签：现存渠道历史按当前标签归类，无法确定标签的历史渠道归入“未分组”。升级保留费用，不将未知标签猜测成某上游。
-- 现有余额配置、状态、报警和设置审计迁入“全部”。迁移不清空月度费用。通过版本化 SQL 增量升级，仅操作独立监控库，不更改 New API 原库。
+- 渠道删除后保留最后同步到的标签和名称。未曾保存的历史标签无法恢复：现存渠道历史按当前标签归类，无法确定标签的历史渠道归入“未分组”。不将未知标签猜测成某上游。
 - 保存余额设置时补齐起始月份至上月所需归档，失败不将费用当零。历史追溯用于重新读取原始渠道费用：先预览前后金额并确认，才覆盖所选月份的共用渠道归档；仅调整标签不需要追溯。
-- `balance-worker` 每天北京时间 10:00 检查所有已启用的账本；月初补齐上月归档。没有每分钟轮询，不在进程启动时立即报警。各账本分别记录每日运行状态，某个账本失败不应阻断其他账本。
+- 主程序内置余额定时器每天北京时间 10:00 检查所有已启用的账本；月初补齐上月归档。没有每分钟轮询，不在进程启动时立即报警。各账本分别记录每日运行状态，某个账本失败不应阻断其他账本。
 - 点击铃铛手动检查当前账本，不占用每日定时检查。关闭该账本余额监控后不进行余额告警检查或发送通知，用量统计和导出不受影响。
 - 剩余额度严格小于阈值时报警；每个账本最多保留一条当前报警，下次检查恢复至阈值以上或等于阈值则删除。无已读/未读状态。
 - 查询失败保留旧结果并显示失败状态，不显示为零消费。月度归档取决于原日志保留情况，无法恢复已经删除且从未归档的数据。
 - 余额设置、警报、月度归档不混入用量 Excel 导出。导出仅包含当前账本的用量数据。
 
-### 升级说明
+### 表结构与初始化
 
-程序通过 `schema_migrations` 自动顺序执行未应用的迁移。`005_balance_scopes.sql`
-增加账本和逐账本设置；`006_scope_visibility.sql` 增加标签可见性状态。
-`007_quota_schedules.sql` 为可选的[定时用户配额](quota.md#定时额度修改)增加四张规则及执行记录表，
-与余额检查分开运行，不改变余额归档或每天 10:00 的告警时间。
+程序启动入口通过 `schema_migrations` 自动顺序应用未执行的迁移；正常 API 请求不执行迁移。
+监控库保存账本和渠道库存、各账本预算/审计/检查状态、逐渠道月度费用、通知配置、
+定时配额规则与执行记录，以及限时展示快照。完整表职责见[架构说明](architecture.md#数据库职责)。
+余额与配额定时器独立调度，但同属一个应用容器；余额检查时间为每天 10:00。
 首次同步渠道标签后建立账本；查询历史账本金额时使用保存的逐渠道费用与当前渠道归属。
 无需清空数据库。上线前备份监控库，勿把迁移 SQL 执行到 New API 原库。
 
@@ -42,20 +41,20 @@ docker exec -it <PostgreSQL容器名> sh -lc 'psql -U "$POSTGRES_USER" -d postgr
 进入 `psql` 后执行以下 SQL。将 `<random-password>` 替换为强随机密码；不要使用示例占位符：
 
 ```sql
-CREATE ROLE statistics_monitor LOGIN PASSWORD '<random-password>' NOSUPERUSER NOCREATEDB NOCREATEROLE;
-CREATE DATABASE new_api_statistics OWNER statistics_monitor;
-REVOKE CONNECT ON DATABASE new_api_statistics FROM PUBLIC;
-GRANT CONNECT ON DATABASE new_api_statistics TO statistics_monitor;
+CREATE ROLE cockpit_monitor LOGIN PASSWORD '<random-password>' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+CREATE DATABASE new_api_cockpit OWNER cockpit_monitor;
+REVOKE CONNECT ON DATABASE new_api_cockpit FROM PUBLIC;
+GRANT CONNECT ON DATABASE new_api_cockpit TO cockpit_monitor;
 ```
 
 `CREATE DATABASE` 必须在 `postgres` 等其他数据库中执行，不能先连接尚未创建的
-`new_api_statistics`。上述 SQL 用于首次创建；如果角色或数据库已经存在，不要重复执行
+`new_api_cockpit`。上述 SQL 用于首次创建；如果角色或数据库已经存在，不要重复执行
 `CREATE ROLE` 或 `CREATE DATABASE`，应核对现有 owner 和密码。
 
 在 `.env` 添加监控库连接串。连接串中的密码含 `@`、`:`、`/`、`#` 等特殊字符时必须 URL 编码：
 
 ```ini
-MONITOR_DATABASE_URL=postgresql://statistics_monitor:<random-password>@postgres:5432/new_api_statistics
+MONITOR_DATABASE_URL=postgresql://cockpit_monitor:<random-password>@postgres:5432/new_api_cockpit
 ```
 
 生成一次通知凭据加密密钥，并把命令输出写入同一个 `.env`。不要把密钥提交到 Git：
@@ -69,22 +68,23 @@ docker run --rm python:3.12-slim \
 NOTIFICATION_ENCRYPTION_KEY=<上一步生成的值>
 ```
 
-`PG*` 仍指向 New API 原库，查询使用只读事务。`MONITOR_DATABASE_URL` 必须指向新建的独立库；服务账号不需要建库权限。新库由 worker 自动建表，需可创建表及读写自己拥有的表。管理员登录仍读取 New API 的用户和密码，不建立另一套登录账号。
+`PG*` 仍指向 New API 原库，查询使用只读事务。`MONITOR_DATABASE_URL` 必须指向新建的独立库；服务账号不需要建库权限。新库由容器启动入口自动建表，需可创建表及读写自己拥有的表。管理员登录仍读取 New API 的用户和密码，不建立另一套登录账号。
 
 ```bash
 chmod 600 .env
-docker compose up -d --build statistics balance-worker
+docker compose up -d --build statistics
 docker compose ps
-docker compose logs --tail=50 balance-worker
+docker compose logs --tail=50 statistics
 ```
 
 首次启动后，应用会自动创建监控表。可使用 PostgreSQL 管理员验证，正常应能看到
 `balance_*`、`notification_settings`、`notification_feishu_settings` 和
-`notification_dingtalk_webhook_settings` 等表；应用 `007` 后还会出现四张 `quota_schedule_*` 表：
+`notification_dingtalk_webhook_settings`、`quota_schedule_*` 表，以及
+`user_management_*`、`channel_catalog_sync_state`、`report_snapshots`、`report_snapshot_rows`：
 
 ```bash
 docker exec <PostgreSQL容器名> sh -lc \
-  'psql -U "$POSTGRES_USER" -d new_api_statistics -c "\\dt"'
+  'psql -U "$POSTGRES_USER" -d new_api_cockpit -c "\\dt"'
 ```
 
-Nginx 原有 `/statistics/` 转发不需变更，也不暴露新的服务端口。未配置连接串时原统计功能照常使用，监控不可用。请将独立库与 New API 库分别纳入数据库备份。
+Nginx 统一转发 `/cockpit/`，监控不需要新端口。未配置连接串时原统计功能照常使用，监控不可用。请将独立库与 New API 库分别纳入数据库备份。

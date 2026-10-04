@@ -59,8 +59,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           sha256sum compose.release.yml .env.example nginx.conf.example > SHA256SUMS
-          notes=()
-          if [ -f "docs/releases/$RELEASE_TAG.md" ]; then
-            notes=(--notes-file "docs/releases/$RELEASE_TAG.md")
+          (cd sql && sha256sum source_pat_function.sql) >> SHA256SUMS
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" compose.release.yml .env.example nginx.conf.example sql/source_pat_function.sql SHA256SUMS --clobber
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG" compose.release.yml .env.example nginx.conf.example sql/source_pat_function.sql SHA256SUMS
           fi
-          gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${notes[@]}" --title "$RELEASE_TAG" compose.release.yml .env.example nginx.conf.example SHA256SUMS

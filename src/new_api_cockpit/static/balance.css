@@ -1,0 +1,33 @@
+.icon-button.alert-active { color: var(--ui-danger); background: color-mix(in oklch, var(--ui-danger) 10%, white); }
+.balance-dialog { width: 560px; }
+.balance-wide { width: 720px; }
+.balance-dialog form { display: grid; gap: 16px; }
+.balance-dialog label { min-width: 0; }
+.balance-dialog input, .balance-dialog select { width: 100%; }
+.balance-dialog .balance-toggle { flex-direction: row; align-items: center; color: var(--ui-foreground); font-size: 14px; }
+.balance-toggle input { width: 16px; }
+.balance-dialog p { font-size: 12px; line-height: 1.6; }
+#balance-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; padding: 18px 0; border-block: 1px solid var(--ui-border); }
+#balance-summary dt { font-size: 12px; color: var(--ui-muted-text); margin-bottom: 6px; }
+#balance-summary dd { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 0; overflow-wrap: anywhere; }
+.balance-alert { padding: 12px; border: 1px solid color-mix(in oklch, var(--ui-danger) 20%, white); border-radius: 16px; background: color-mix(in oklch, var(--ui-danger) 4%, white); }
+.balance-alert strong { font-size: 14px; color: var(--ui-danger); }
+.balance-alert p { margin: 6px 0; }
+.balance-dialog table { min-width: 0; }
+.balance-dialog td, .balance-dialog th { white-space: normal; }
+.balance-dialog td:not(:first-child), .balance-dialog th:not(:first-child) { text-align: right; }
+#balance-alert-list:empty::after { content: '暂无警报'; color: var(--ui-muted-text); font-size: 12px; }
+.settings-tabs { display: flex; gap: 16px; margin-bottom: 20px; border-bottom: 1px solid var(--ui-border); }
+.settings-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 0 2px 8px; height: auto; color: var(--ui-muted-text); }
+.settings-tabs button[aria-selected=true] { border-bottom-color: var(--ui-primary-text); color: var(--ui-primary-text); }
+.usage-channel-fieldset { padding: 14px; margin: 0; }
+.usage-channel-fieldset p { margin: 0 0 10px; color: var(--ui-muted-text); }
+.usage-channel-options { display: grid; gap: 4px; max-height: 260px; overflow: auto; }
+.channel-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; }
+.usage-channel-name { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.usage-channel-status.enabled { color: var(--ui-success); background: color-mix(in oklch, var(--ui-success) 10%, white); }
+.usage-channel-status.disabled { color: var(--ui-warning); background: color-mix(in oklch, var(--ui-warning) 10%, white); }
+.usage-channel-status.deleted { color: var(--ui-muted-text); background: var(--ui-muted); }
+.usage-channel-empty { color: var(--ui-muted-text); font-size: 12px; }
+.usage-channel-fieldset .danger-button { width: 100%; margin-top: 12px; }
+@media (max-width:700px) { #balance-summary dd { font-size: 20px; } }

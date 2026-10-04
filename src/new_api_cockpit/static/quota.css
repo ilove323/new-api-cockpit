@@ -1,0 +1,47 @@
+/* User quota workflows only; shared controls and tables are defined in ui.css. */
+.toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.toolbar label { display: grid; gap: 6px; }
+.toolbar label:has(#mode){justify-items:center}
+/* Center the compact text-and-arrow group without an unused blank reservation. */
+#mode {
+  text-align: center;
+  text-align-last: center;
+  width: calc(4em + 41px);
+  padding: 4px 28px 4px 11px;
+  background-position: right 11px center;
+  background-size: 12px 8px;
+}
+.batch-panel { background: var(--ui-muted); border-radius: 16px; padding: 12px; margin: 12px 0; }
+.batch-selection { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.selection-count { font-size: 12px; color: var(--ui-muted-text); margin-right: auto; }
+.batch-panel .hint { margin-bottom: 0; }
+#amount { width: 190px; }
+#preview, #apply, #schedule-save { background: var(--ui-primary); color: #fff; border-color: transparent; }
+#preview:hover:not(:disabled), #apply:hover:not(:disabled), #schedule-save:hover:not(:disabled) { background: color-mix(in oklch, var(--ui-primary) 85%, white); }
+.users-page .table-wrap { max-height: 650px; }
+.users-page table { min-width: 1050px; }
+.users-page th:nth-child(6), .users-page th:nth-child(7), #users td:nth-child(6), #users td:nth-child(7) { text-align: right; }
+#users td:first-child, .users-page th:first-child { width: 40px; text-align: center; }
+#users td:nth-child(3) { min-width: 160px; }
+#users .row-actions { min-width: 145px; white-space: nowrap; text-align: right; }
+.users-page th:last-child { text-align: right; }
+#users td:nth-child(9) { max-width: 260px; overflow-wrap: anywhere; font-size: 12px; color: var(--ui-muted-text); }
+.schedule-dialog { width: 1180px; }
+.schedule-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.schedule-actions button:first-child { margin-right: auto; }
+.schedule-table { min-width: 840px; }
+.schedule-table td, .schedule-table th { text-align: left; }
+.schedule-table button { margin: 2px; height: 28px; min-height: 28px; font-size: 12px; }
+#schedule-form { margin-top: 20px; border-top: 1px solid var(--ui-border); padding-top: 12px; }
+.schedule-groups { display: flex; flex-wrap: wrap; gap: 12px; }
+.schedule-groups label, .schedule-enabled { flex-direction: row; align-items: center; gap: 6px; }
+.schedule-fields { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 16px; }
+.schedule-fields input[type=number] { max-width: 200px; }
+#confirm-dialog { width: 720px; }
+@media (max-width:700px) {
+  .toolbar label { flex: 1 1 100%; min-width: 0; }
+  #amount { width: 100%; }
+  .batch-selection button { font-size: 12px; }
+  .batch-panel .toolbar button { width: 100%; }
+  .schedule-actions { flex-wrap: wrap; }
+}

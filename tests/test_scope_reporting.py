@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import psycopg
 from psycopg.rows import dict_row
-from new_api_statistics.app import app
-from new_api_statistics import report
+from new_api_cockpit.app import app
+from new_api_cockpit import report
 
 TAG = {"id": 3, "kind": "tag", "tag_value": "esencloud"}
 
@@ -21,25 +21,25 @@ class ScopeReportingTest(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(
-            patch("new_api_statistics.app.verify_admin", return_value=True)
+            patch("new_api_cockpit.app.verify_admin", return_value=True)
         )
         self.stack.enter_context(
-            patch("new_api_statistics.app.verify_api_key", return_value=True)
+            patch("new_api_cockpit.app.verify_api_key", return_value=True)
         )
         self.stack.enter_context(
-            patch("new_api_statistics.app.balance.configured", return_value=True)
+            patch("new_api_cockpit.app.balance.configured", return_value=True)
         )
         self.resolve = self.stack.enter_context(
-            patch("new_api_statistics.app.scope_backend.get_scope", return_value=TAG)
+            patch("new_api_cockpit.app.scope_backend.get_scope", return_value=TAG)
         )
         self.channels = self.stack.enter_context(
             patch(
-                "new_api_statistics.app.scope_backend.channel_filter",
+                "new_api_cockpit.app.scope_backend.channel_filter",
                 return_value=[11, 12],
             )
         )
         self.load = self.stack.enter_context(
-            patch("new_api_statistics.app.load_report", return_value=[])
+            patch("new_api_cockpit.app.load_report", return_value=[])
         )
         self.client = app.test_client()
         self.headers = {"Authorization": "Basic YTpi", "X-Statistics-Request": "1"}
@@ -47,25 +47,25 @@ class ScopeReportingTest(unittest.TestCase):
 
     def get(self, path, query=None):
         return self.client.get(
-            "/statistics/api/" + path + "?" + (query or self.query),
+            "/cockpit/statistics/api/" + path + "?" + (query or self.query),
             headers=self.headers,
         )
 
     def test_scope_catalog_is_public_shape_only(self):
         with patch(
-            "new_api_statistics.app.scope_backend.list_scopes",
+            "new_api_cockpit.app.scope_backend.list_scopes",
             return_value=[dict(TAG, enabled=True)],
         ):
             self.assertEqual(self.get("scopes").json, {"rows": [TAG]})
 
-    def test_all_report_paths_propagate_scope_and_failure_mode(self):
+    def test_all_report_paths_propagate_scope_and_failure_selection(self):
         for path, extra, by_token in [
             ("usage", "", False),
             ("usage/by-token", "", True),
             ("usage/by-selection", "&token_id=2&group=auto&by_token=1", True),
         ]:
             with self.subTest(path=path):
-                response = self.get(path, self.query + extra + "&dev=2")
+                response = self.get(path, self.query + extra + "&include_failures=1")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json["scope"], TAG)
                 kwargs = self.load.call_args.kwargs
@@ -78,8 +78,8 @@ class ScopeReportingTest(unittest.TestCase):
             ("tokens", "load_token_options"),
             ("groups", "load_group_options"),
         ]:
-            with patch("new_api_statistics.app." + function, return_value=[]) as load:
-                response = self.get("usage/" + path, self.query + "&dev=2")
+            with patch("new_api_cockpit.app." + function, return_value=[]) as load:
+                response = self.get("usage/" + path, self.query + "&include_failures=1")
                 self.assertEqual(response.json["scope"], TAG)
                 load.assert_called_once_with(
                     "2026-07-01",
@@ -110,7 +110,7 @@ class ScopeReportingTest(unittest.TestCase):
         self.load.assert_not_called()
 
     def test_without_monitor_all_catalog_and_explicit_all_still_report(self):
-        with patch("new_api_statistics.app.balance.configured", return_value=False):
+        with patch("new_api_cockpit.app.balance.configured", return_value=False):
             self.assertEqual(
                 self.get("scopes").json["rows"],
                 [{"id": 1, "kind": "all", "tag_value": ""}],
@@ -127,7 +127,7 @@ class ScopeReportingTest(unittest.TestCase):
 
     def test_ungrouped_excludes_tagged_not_unknown_historical_channels(self):
         self.resolve.return_value = {"id": 2, "kind": "ungrouped", "tag_value": ""}
-        with patch("new_api_statistics.app.balance.connect") as connect:
+        with patch("new_api_cockpit.app.balance.connect") as connect:
             connect.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = [
                 {"channel_id": 11}
             ]
@@ -137,7 +137,7 @@ class ScopeReportingTest(unittest.TestCase):
             self.assertNotIn("channel_ids", self.load.call_args.kwargs)
 
     def test_export_uses_scope_and_filename_without_diagnostics(self):
-        response = self.get("export", self.query + "&dev=2")
+        response = self.get("export", self.query + "&include_failures=1")
         self.assertEqual(response.status_code, 200)
         self.assertIn("esencloud", response.headers["Content-Disposition"])
         self.assertEqual(self.load.call_args.kwargs["channel_ids"], [11, 12])
@@ -156,11 +156,11 @@ class ScopeReportingTest(unittest.TestCase):
             with (
                 self.subTest(path=path),
                 patch(
-                    "new_api_statistics.app.balance." + function, return_value=result
+                    "new_api_cockpit.app.balance." + function, return_value=result
                 ) as call,
             ):
                 response = getattr(self.client, method)(
-                    "/statistics/api/" + path + "?scope_id=3",
+                    "/cockpit/statistics/api/" + path + "?scope_id=3",
                     headers=self.headers,
                     json={},
                 )
@@ -168,15 +168,11 @@ class ScopeReportingTest(unittest.TestCase):
                 self.assertEqual(call.call_args.kwargs["scope_id"], 3)
                 self.assertEqual(response.json["scope"], TAG)
         with (
-            patch(
-                "new_api_statistics.app.balance.check_once", return_value=True
-            ) as check,
-            patch(
-                "new_api_statistics.app.balance.snapshot", return_value={}
-            ) as snapshot,
+            patch("new_api_cockpit.app.balance.check_once", return_value=True) as check,
+            patch("new_api_cockpit.app.balance.snapshot", return_value={}) as snapshot,
         ):
             response = self.client.post(
-                "/statistics/api/balance/check?scope_id=3",
+                "/cockpit/statistics/api/balance/check?scope_id=3",
                 json={},
                 headers=self.headers,
             )
@@ -198,12 +194,12 @@ class ScopeReportingTest(unittest.TestCase):
         }
         with (
             patch(
-                "new_api_statistics.app.balance.snapshot", return_value=fixture
+                "new_api_cockpit.app.balance.snapshot", return_value=fixture
             ) as snapshot,
-            patch("new_api_statistics.app.load_site_name", return_value="test"),
+            patch("new_api_cockpit.app.load_site_name", return_value="test"),
         ):
             response = self.client.get(
-                "/statistics/api/balance?scope_id=3",
+                "/cockpit/statistics/api/balance?scope_id=3",
                 headers={"Authorization": "Bearer fixture"},
             )
             self.assertEqual(response.status_code, 200)
@@ -211,14 +207,14 @@ class ScopeReportingTest(unittest.TestCase):
             self.assertEqual(response.json["data"]["remaining_quota"], 5)
             snapshot.assert_called_once_with(live=True, scope_id=3)
         with (
-            patch("new_api_statistics.app.balance.check_once") as check,
+            patch("new_api_cockpit.app.balance.check_once") as check,
             patch(
-                "new_api_statistics.app.notifications.current_alert_record",
+                "new_api_cockpit.app.notifications.current_alert_record",
                 return_value=None,
             ) as alert,
         ):
             response = self.client.get(
-                "/statistics/api/alert?scope_id=3",
+                "/cockpit/statistics/api/alert?scope_id=3",
                 headers={"Authorization": "Bearer fixture"},
             )
             self.assertEqual(
@@ -234,7 +230,13 @@ class ScopeReportingTest(unittest.TestCase):
             report.load_report(
                 "2026-07-01", "2026-07-31", channel_ids=[11], include_failures=True
             )
-            for call in conn.execute.call_args_list[:2]:
+            scoped_calls = [
+                call
+                for call in conn.execute.call_args_list
+                if "channel_id = ANY" in call.args[0]
+            ]
+            self.assertEqual(len(scoped_calls), 2)
+            for call in scoped_calls:
                 query, params = call.args
                 self.assertIn("channel_id = ANY", query)
                 self.assertEqual(params["channel_ids"], [11])
@@ -244,7 +246,7 @@ class ScopeReportingTest(unittest.TestCase):
 
     def test_notifications_remain_global(self):
         with patch(
-            "new_api_statistics.app.notifications.snapshot", return_value={}
+            "new_api_cockpit.app.notifications.snapshot", return_value={}
         ) as load:
             response = self.get("balance/channel")
             self.assertEqual(response.status_code, 200)

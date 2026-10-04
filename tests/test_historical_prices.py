@@ -2,8 +2,8 @@ import base64
 import unittest
 from decimal import Decimal
 
-from new_api_statistics.historical_prices import matching_current_price, request_prices
-from new_api_statistics.report import decorate, totals
+from new_api_cockpit.historical_prices import matching_current_price, request_prices
+from new_api_cockpit.report import decorate, totals
 
 
 class HistoricalPricesTest(unittest.TestCase):

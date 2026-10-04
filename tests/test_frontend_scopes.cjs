@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
-const root=path.join(__dirname,'../src/new_api_statistics');
+const root=path.join(__dirname,'../src/new_api_cockpit');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const html=read('templates/index.html');
 class Element {
@@ -24,10 +24,10 @@ function harness(){
   const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],new Element()]));
   const events={},calls=[];
   const ctx={URL,URLSearchParams,AbortController,DOMException,Event,console,Number,Date,Option:class extends Element {constructor(label,value){super();this.textContent=label;this.value=value;}},
-    location:{origin:'https://example.test',href:'https://example.test/statistics/?dev=2',search:'?dev=2'},history:{replaceState(){}},
+    location:{origin:'https://example.test',href:'https://example.test/cockpit/statistics/?scope_id=1',search:'?scope_id=1'},history:{replaceState(){}},
     document:{getElementById:id=>elements.get(id),createElement:()=>new Element(),querySelectorAll:selector=>selector==='#scope-tabs button'?elements.get('scope-tabs').children:[]},
     addEventListener:(name,fn)=>(events[name]??=[]).push(fn),dispatchEvent:event=>{for(const fn of events[event.type]||[])fn(event);},
-    fetch:async(url,options={})=>{calls.push({url,options});return {ok:true,json:async()=>url==='/statistics/api/scopes'?{rows:rows.map(r=>({...r}))}:state()};},
+    fetch:async(url,options={})=>{calls.push({url,options});return {ok:true,json:async()=>url==='/cockpit/statistics/api/scopes'?{rows:rows.map(r=>({...r}))}:state()};},
     $:id=>elements.get(id),number:n=>String(n),cell:(tr,value)=>{const el=new Element();el.textContent=value;tr.append(el);return el;}};
   ctx.window=ctx;vm.createContext(ctx);vm.runInContext(read('static/scopes.js'),ctx);
   const scope=vm.runInContext('Scope',ctx);
@@ -37,19 +37,20 @@ const settle=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 test('scope tabs are safely built and URLs preserve other filters',async()=>{
   const h=harness();await h.scope.init();
   assert.deepEqual(h.elements.get('scope-tabs').children.map(e=>e.textContent),['全部',rows[1].tag_value,'未分组']);
-  const u=new URL(h.scope.url('/statistics/api/usage?group=auto&dev=2'),h.ctx.location.origin);
+  const u=new URL(h.scope.url('/cockpit/statistics/api/usage?group=auto&include_failures=1'),h.ctx.location.origin);
   assert.equal(u.searchParams.get('scope_id'),'1');assert.equal(u.searchParams.get('group'),'auto');
+  assert.equal(u.searchParams.get('include_failures'),'1');
   await h.elements.get('scope-tabs').children[1].fire('click');assert.equal(h.scope.current.id,3);
 });
 test('old response body rejected after switching scope, including A-B-A',async()=>{
   const h=harness();await h.scope.init();let release;
   h.ctx.fetch=async()=>({ok:true,json:()=>new Promise(r=>release=r)});
-  const response=await h.scope.request('/statistics/api/usage');const body=response.json();
+  const response=await h.scope.request('/cockpit/statistics/api/usage');const body=response.json();
   await h.elements.get('scope-tabs').children[1].fire('click');await h.elements.get('scope-tabs').children[0].fire('click');
   release({rows:[]});await assert.rejects(body,e=>e.name==='AbortError');
 });
 test('scope switches abort old HTTP requests',async()=>{
-  const h=harness();await h.scope.init();await h.scope.request('/statistics/api/usage');const signal=h.calls.at(-1).options.signal;
+  const h=harness();await h.scope.init();await h.scope.request('/cockpit/statistics/api/usage');const signal=h.calls.at(-1).options.signal;
   await h.elements.get('scope-tabs').children[1].fire('click');assert.equal(signal.aborted,true);
 });
 test('disabled monitor retains monthly view but never checks or shows stale alert',async()=>{
@@ -64,9 +65,9 @@ test('enabled monitor checks only current scope; notification API is global',asy
   const h=harness();h.balance();await h.scope.init();await settle();
   h.ctx.fetch=async(url,options={})=>{h.calls.push({url,options});return {ok:true,json:async()=>state(true)};};
   await h.elements.get('balance-bell').fire('click');
-  assert.ok(h.calls.some(c=>c.url==='/statistics/api/balance/check?scope_id=1'));
+  assert.ok(h.calls.some(c=>c.url==='/cockpit/statistics/api/balance/check?scope_id=1'));
   await h.run("balanceRequest('/channel/test',balanceWrite('POST',{}))");
-  assert.equal(h.calls.at(-1).url,'/statistics/api/balance/channel/test');
+  assert.equal(h.calls.at(-1).url,'/cockpit/statistics/api/balance/channel/test');
 });
 test('settings store enabled flag and read-only channels, without exclusions',async()=>{
   const h=harness();h.balance();await h.scope.init();await settle();
@@ -86,8 +87,8 @@ test('template static IDs, script order, scoped reports/export and global notifi
   for(const file of ['static/app.js','static/balance.js']){
     for(const match of read(file).matchAll(/\$\('([^']+)'\)/g))assert.ok(ids.includes(match[1]),`missing DOM id ${match[1]}`);
   }
-  const app=read('static/app.js');assert.ok(!app.includes("fetch('/statistics/api/usage"));
-  assert.ok(app.includes("Scope.url('/statistics/api/export?"));
+  const app=read('static/app.js');assert.ok(!app.includes("fetch('/cockpit/statistics/api/usage"));
+  assert.ok(app.includes("Scope.url('/cockpit/statistics/api/export?"));
   assert.ok(!app.includes('balance-enabled'));assert.ok(app.includes("DOMContentLoaded"));
   assert.ok(html.indexOf("filename='scopes.js'")<html.indexOf("filename='app.js'"));
   assert.match(html,/id="balance-enabled" type="checkbox"/);assert.ok(!html.includes('usage-channels-all'));
@@ -120,7 +121,7 @@ test('disabling and saving monitor retains selected ledger and all navigation',a
   h.elements.get('balance-enabled').checked=false;
   await h.elements.get('balance-form').fire('submit');
   const put=h.calls.find(c=>c.options.method==='PUT');
-  assert.equal(put.url,'/statistics/api/balance/settings?scope_id=3');assert.equal(JSON.parse(put.options.body).enabled,false);
+  assert.equal(put.url,'/cockpit/statistics/api/balance/settings?scope_id=3');assert.equal(JSON.parse(put.options.body).enabled,false);
   assert.equal(h.scope.current.id,3);
   assert.equal(h.elements.get('scope-tabs').children[1].attrs['aria-selected'],'true');
   assert.ok(h.elements.get('scope-tabs').children.every(tab=>!tab.disabled));
@@ -162,9 +163,9 @@ test('delayed old balance read cannot overwrite new ledger monthly data',async()
 });
 test('unconfigured monitoring fallback catalog still selects all and emits report scopechange',async()=>{
   const h=harness();h.balance();let reportEvents=0;h.ctx.addEventListener('scopechange',()=>reportEvents++);
-  h.ctx.fetch=async url=>({ok:true,json:async()=>url==='/statistics/api/scopes'?{rows:[{id:1,kind:'all',tag_value:''}]}:{configured:false}});
+  h.ctx.fetch=async url=>({ok:true,json:async()=>url==='/cockpit/statistics/api/scopes'?{rows:[{id:1,kind:'all',tag_value:''}]}:{configured:false}});
   await h.scope.init();await settle();
   assert.equal(reportEvents,1);assert.equal(h.scope.current.kind,'all');
-  assert.equal(h.scope.url('/statistics/api/export?start=2026-01-01'),'/statistics/api/export?start=2026-01-01&scope_id=1');
+  assert.equal(h.scope.url('/cockpit/statistics/api/export?start=2026-01-01'),'/cockpit/statistics/api/export?start=2026-01-01&scope_id=1');
   assert.equal(h.elements.get('scope-tabs').children[0].disabled,false);
 });

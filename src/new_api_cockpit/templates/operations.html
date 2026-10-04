@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 操作记录</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/quota.css">
+  <link rel="stylesheet" href="/cockpit/static/keys.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/dropdowns.js"></script>
+  <script defer src="/cockpit/static/operations.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main class="operations-page">
+    <section class="page-panel" aria-labelledby="operations-title">
+    <div class="page-heading"><h1 id="operations-title">操作记录</h1></div>
+    <p class="hint">集中查看已发起的用户、KEY、手工配额、定时规则修改与定时配额执行记录。只预览、未发送的请求不进入操作记录。</p>
+    <div class="table-toolbar"><label><span class="sr-only">操作类型</span><select id="records-kind" aria-label="操作类型"><option value="">全部操作类型</option><option value="user">用户操作</option><option value="token">KEY 操作</option><option value="quota">手工配额</option><option value="schedule">定时规则与配额</option></select></label><button id="records-refresh" class="toolbar-end icon-button button-ghost" type="button" title="刷新" aria-label="刷新">{{ icon('refresh-cw') }}</button></div>
+    <p id="records-status" role="status" aria-live="polite"></p>
+    <div class="table-wrap"><table><thead><tr><th>时间（北京时间）</th><th>管理员</th><th>操作</th><th>金额 / 参数</th><th>状态</th><th>成功 / 失败 / 待核对</th><th>详情</th></tr></thead><tbody id="records-rows"></tbody></table></div>
+    <div class="pagination"><button id="records-prev" type="button">{{ icon('chevron-left') }}上一页</button><span id="records-page"></span><button id="records-next" type="button">下一页{{ icon('chevron-right') }}</button></div>
+    </section>
+  </main>
+  <dialog id="records-dialog" class="management-wide" aria-labelledby="records-title"><h2 id="records-title">操作详情</h2><p id="records-detail-status" role="status"></p><div class="table-wrap"><table><thead><tr><th>对象 / ID</th><th>目标用户 / 用户组</th><th>修改前</th><th>修改后 / 指令</th><th>状态</th><th>说明</th></tr></thead><tbody id="records-items"></tbody></table></div><button id="records-items-more" type="button" hidden>加载更多明细</button><div class="dialog-actions"><button id="records-close" type="button">关闭</button></div></dialog>
+</body>
+</html>
