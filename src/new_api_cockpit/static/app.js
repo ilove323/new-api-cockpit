@@ -9,16 +9,24 @@ let detailMode = 'summary';
 let modelMode = 'model';
 let ranking = 'model_amount';
 const tokenFields = ['total_tokens','input_tokens','output_tokens','cache_read_tokens','cache_write_tokens'];
-const detailColumns = ['username','request_count','model_name','tier_name',...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount','cache_hit_rate','amount_per_million','failure_requests'];
-const modelSummaryColumns = ['group_ratio','input_price','output_price','cache_price','write_price'];
+const priceFields = ['input_price','output_price','cache_price','write_price'];
+const modelSummaryColumns = ['group_ratio',...priceFields];
+const numericDetailColumns = [...tokenFields,...modelSummaryColumns,'amount'];
+const detailColumns = new Set(['username','request_count','model_name','tier_name',...numericDetailColumns,'cache_hit_rate','amount_per_million','failure_requests']);
 const columnStorageKey = 'new-api-cockpit.visible-columns.v2';
 let modelColumnSelection = null;
 let snapshotIncludesFailures = false;
 const failureMode = () => $('column-failure-requests').checked;
 const failureOnly = row => Number(row.request_count)===0&&Number(row.failure_count)>0;
-const number = (n, digits=6) => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{maximumFractionDigits:digits});
+const numberFormats = new Map();
+function number(n,digits=6){
+  if(n===null||n===undefined)return '—';
+  if(!numberFormats.has(digits))numberFormats.set(digits,new Intl.NumberFormat('zh-CN',{maximumFractionDigits:digits}));
+  return numberFormats.get(digits).format(Number(n));
+}
 // Presentation only: never round the source values used by calculations or tooltips.
-const tableMoney = n => n === null || n === undefined ? '—' : Number(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const moneyFormat = new Intl.NumberFormat('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const tableMoney = n => n === null || n === undefined ? '—' : moneyFormat.format(Number(n));
 function priceDisplay(row,key){
   return !(row.pricing_buckets||row.has_pricing_buckets)&&row.pricing_mode==='expression'&&!(row.price_tiers?.length||row.price_tier_count)?'无法拆分':tableMoney(row[key]);
 }
@@ -28,12 +36,40 @@ const userCell = (tr,row) => {
   if(row.display_name){const name=document.createElement('span');name.className='display-name';name.textContent=row.display_name;td.append(name);}
   return td;
 };
+function reportBoundaryMilliseconds(value,isEnd=false){
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?$/.test(value))return NaN;
+  let time=value.replace(' ','T');
+  if(time.length===10)time+=isEnd?'T23:59:59':'T00:00:00';
+  return Date.parse(time+'+08:00');
+}
+function reportLogBounds(){
+  // Use the displayed report snapshot, not unsubmitted inputs or browser timezone.
+  // New API uses milliseconds in its URL and includes the selected end second.
+  const start=reportBoundaryMilliseconds(snapshot?.start),end=reportBoundaryMilliseconds(snapshot?.end,true);
+  return Number.isFinite(start)&&Number.isFinite(end)&&end>=start?{start,end}:null;
+}
+function newApiLogsURL(row,bounds=reportLogBounds()){
+  if(typeof row.username!=='string'||!row.username.trim()||!bounds)return null;
+  const {start,end}=bounds;
+  const params=new URLSearchParams({username:row.username,type:'0',page:'1',startTime:String(start),endTime:String(end)});
+  if(row.model_name)params.set('model',row.model_name);
+  return '/usage-logs/common?'+params;
+}
+function logsCell(tr,row,bounds){
+  const td=cell(tr,'','','logs'),url=newApiLogsURL(row,bounds);
+  if(!url){td.textContent='—';return;}
+  const link=document.createElement('a');
+  link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.className='usage-log-link';link.textContent='查看日志';
+  link.title=`查看 ${row.username}${row.model_name?' · '+row.model_name:''} 在当前统计周期内的全部日志，不限档位或令牌`;
+  link.setAttribute('aria-label',`${link.title}（新标签页）`);
+  td.append(link);
+}
 function aggregateModels(data){
-  const grouped=new Map(),priceFields=['group_ratio','input_price','output_price','cache_price','write_price'];
+  const grouped=new Map();
   for(const row of data){
     const key=[row.user_id,row.username,detailMode==='token'?row.token_id:''].join('\u0000');
     if(!grouped.has(key)){
-      grouped.set(key,{...row,model_name:'',amount:0,request_count:0,failure_count:0,failure_codes:{},...Object.fromEntries(tokenFields.map(field=>[field,0])),...Object.fromEntries(priceFields.map(field=>[field,null])),_sourceRows:[]});
+      grouped.set(key,{...row,model_name:'',amount:0,request_count:0,failure_count:0,failure_codes:{},...Object.fromEntries(tokenFields.map(field=>[field,0])),...Object.fromEntries(modelSummaryColumns.map(field=>[field,null])),_sourceRows:[]});
     }
     const total=grouped.get(key);
     total.amount+=Number(row.amount);total.request_count+=Number(row.request_count);
@@ -60,18 +96,20 @@ function saveVisibleColumns(){
   if(modelMode==='summary'&&modelColumnSelection)modelColumnSelection.forEach(column=>visible.add(column));
   try{localStorage.setItem(columnStorageKey,JSON.stringify([...visible]));}catch{}
 }
-function visibleColumnCount(){
-  const hidden=new Set(modelMode==='summary'?['model_name','tier_name',...modelSummaryColumns]:[]);
-  return Math.max(1,[...visibleColumns()].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0));
+function hiddenModelColumns(){
+  return new Set(modelMode==='summary'?['model_name','tier_name',...modelSummaryColumns]:[]);
+}
+function visibleColumnCount(visible=visibleColumns(),hidden=hiddenModelColumns()){
+  return [...visible].filter(column=>!hidden.has(column)).length+(detailMode==='token'?1:0)+1;
 }
 function applyColumnVisibility(){
   const visible=visibleColumns();
-  const hiddenByMode=new Set(modelMode==='summary'?['model_name','tier_name',...modelSummaryColumns]:[]);
+  const hiddenByMode=hiddenModelColumns();
   document.querySelectorAll('#usage-table [data-column]').forEach(element=>{
-    if(detailColumns.includes(element.dataset.column))element.hidden=!visible.has(element.dataset.column)||hiddenByMode.has(element.dataset.column);
+    if(detailColumns.has(element.dataset.column))element.hidden=!visible.has(element.dataset.column)||hiddenByMode.has(element.dataset.column);
   });
   document.querySelectorAll('#usage-table [data-token-column]').forEach(element=>element.hidden=detailMode!=='token');
-  const columns=visibleColumnCount();
+  const columns=visibleColumnCount(visible,hiddenByMode);
   document.querySelectorAll('#usage-table .empty').forEach(element=>element.colSpan=columns);
   $('usage-table').style.setProperty('--usage-table-min-width',Math.max(480,columns*115)+'px');
 }
@@ -124,7 +162,6 @@ function populateFilter(id,placeholder,values,label,change=()=>{if(snapshot)rend
   });
   updateFilterSummary(id,placeholder);
 }
-const tokenFilterValue = row => String(row.token_id);
 function populateTokenFilter(){
   const counts=new Map();
   tokenOptions.forEach(row=>counts.set(row.token_name,(counts.get(row.token_name)||0)+1));
@@ -161,11 +198,11 @@ function renderSummary(data) {
   $('rpm').textContent=number(total.request_count*60/seconds,4);
   $('counts').textContent=`${new Set(data.map(r=>r.user_id)).size} / ${new Set(data.map(r=>r.model_name)).size}`;
 }
-function renderDetails() {
+function renderDetails(data=selectedRows()) {
   hideMoneyTooltip();
-  const data=selectedRows();
   const total=sumRows(data);
-  $('rows').replaceChildren();$('totals').replaceChildren();
+  const rows=$('rows'),totals=$('totals'),bounds=reportLogBounds();
+  rows.replaceChildren();totals.replaceChildren();
   for(let i=0;i<data.length;i++) {
     const r=data[i],tr=document.createElement('tr');
     if(i===0 || data[i-1].user_id!==r.user_id || data[i-1].username!==r.username) {
@@ -174,20 +211,22 @@ function renderDetails() {
     }
     if(detailMode==='token')cell(tr,r.token_name||'未知令牌','token-name');
     cell(tr,number(r.request_count,0),'','request_count');cell(tr,r.model_name,'model','model_name');cell(tr,r.tier_name||'-','','tier_name');
-    for(const key of [...tokenFields,'group_ratio','input_price','output_price','cache_price','write_price','amount']){
-      const price=['input_price','output_price','cache_price','write_price'].includes(key);
+    for(const key of numericDetailColumns){
+      const price=priceFields.includes(key);
       const td=cell(tr,price?priceDisplay(r,key):key==='amount'?tableMoney(r[key]):number(r[key],tokenFields.includes(key)?0:6),price?'price-breakdown':'',key);
       if(key==='amount')bindMoneyTooltip(td,()=>modelMode==='summary'?totalMoneyFormula(r._sourceRows,r.amount):(r.report_id?lazyRowMoneyFormula(r):rowMoneyFormula(r)));
     }
     optionalCells(tr,r);
-    $('rows').append(tr);
+    logsCell(tr,r,bounds);
+    rows.append(tr);
   }
-  if(!data.length){const tr=document.createElement('tr');cell(tr,failureMode()?'该时间范围内暂无消费或失败请求':'该时间范围内暂无消费记录','empty').colSpan=visibleColumnCount();$('rows').append(tr);}
+  if(!data.length){const tr=document.createElement('tr');cell(tr,failureMode()?'该时间范围内暂无消费或失败请求':'该时间范围内暂无消费记录','empty').colSpan=visibleColumnCount();rows.append(tr);}
   const tr=document.createElement('tr');cell(tr,'总计','','username');if(detailMode==='token')cell(tr,'','token-name');cell(tr,number(total.request_count,0),'','request_count');cell(tr,'','','model_name');cell(tr,'','','tier_name');tokenFields.forEach(k=>cell(tr,number(total[k],0),'',k));
-  for(const key of ['group_ratio','input_price','output_price','cache_price','write_price'])cell(tr,'','',key);
+  for(const key of modelSummaryColumns)cell(tr,'','',key);
   bindMoneyTooltip(cell(tr,tableMoney(total.amount),'','amount'),()=>totalMoneyFormula(data,total.amount));
   optionalCells(tr,total);
-  $('totals').append(tr);
+  cell(tr,'','','logs');
+  totals.append(tr);
   applyColumnVisibility();
 }
 function setDetailMode(mode){
@@ -206,15 +245,18 @@ function setModelMode(mode){
   modelMode=mode;
   document.querySelectorAll('[data-model-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.modelMode===mode)));
 }
-function updateReportStatus(){
-  const rows=selectedRows();
+function updateReportStatus(rows=selectedRows()){
   const label=modelMode==='summary'?(detailMode==='token'?'用户令牌汇总':'用户汇总'):(detailMode==='token'?'用户令牌模型汇总':'用户模型汇总');
   $('status').className='';
   $('status').textContent=`${snapshot.start.replace('T',' ')} 至 ${snapshot.end.replace('T',' ')} · ${rows.length} 条${label}`;
   if(snapshot.rows.some(r=>r.metadata_error_count))$('status').textContent+=' · 部分日志元数据损坏：金额保留，无法确认的用量显示为 —';
   if(modelMode==='model'&&snapshot.rows.some(r=>(r.pricing_buckets||r.has_pricing_buckets)&&r.input_price===null))$('status').textContent+=' · 部分请求的历史价格无法还原，显示为 —';
   else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode==='expression'&&!(r.price_tiers?.length||r.price_tier_count)))$('status').textContent+=' · 部分表达式无法拆分价格';
-  else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode!=='expression'&&r.pricing_mode!=='unknown'&&['input_price','output_price','cache_price','write_price'].some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
+  else if(modelMode==='model'&&snapshot.rows.some(r=>!(r.pricing_buckets||r.has_pricing_buckets)&&r.pricing_mode!=='expression'&&r.pricing_mode!=='unknown'&&priceFields.some(k=>r[k]===null)))$('status').textContent+=' · 部分当前价格未配置，显示为 —';
+}
+function renderDetailView(){
+  const rows=selectedRows();
+  renderDetails(rows);updateReportStatus(rows);
 }
 function reportParams(){
   const params=new URLSearchParams({start:snapshot.start,end:snapshot.end});
@@ -266,7 +308,7 @@ async function refreshSelection(){
   filteredSelectionSnapshot=null;
   if(!snapshot)return;
   $('status').className='';$('status').textContent='正在应用筛选…';
-  try{await loadFilteredSelection();Scope.guard(ticket);renderDetails();updateReportStatus();}
+  try{await loadFilteredSelection();Scope.guard(ticket);renderDetailView();}
   catch(error){if(ticket!==Scope.epoch)return;$('status').className='error';$('status').textContent=error.message;}
 }
 document.querySelectorAll('[data-detail-mode]').forEach(button=>button.addEventListener('click',async()=>{
@@ -280,7 +322,7 @@ document.querySelectorAll('[data-detail-mode]').forEach(button=>button.addEventL
   try{
     if(selectedFilterValues('token').size||selectedFilterValues('group').size)await loadFilteredSelection();
     else if(mode==='token')await loadTokenDetails();
-    Scope.guard(ticket);renderDetails();updateReportStatus();
+    Scope.guard(ticket);renderDetailView();
   }
   catch(error){if(ticket!==Scope.epoch)return;setDetailMode('summary');renderDetails();$('status').className='error';$('status').textContent=error.message;}
   finally{if(ticket===Scope.epoch)document.querySelectorAll('[data-detail-mode]').forEach(item=>item.disabled=false);}
@@ -289,16 +331,15 @@ document.querySelectorAll('[data-model-mode]').forEach(button=>button.addEventLi
   const mode=button.dataset.modelMode;
   if(mode===modelMode)return;
   setModelMode(mode);
-  if(snapshot){renderDetails();updateReportStatus();}
+  if(snapshot)renderDetailView();
   else applyColumnVisibility();
 }));
 function render() {
   // Failure-only dimensions belong to the optional detail column, not usage metrics/rankings.
   const data=snapshot.rows.filter(row=>!failureOnly(row));
   renderSummary(data);
-  renderDetails();
+  renderDetailView();
   renderRanking(data);
-  updateReportStatus();
 }
 function renderRanking(data) {
   const models=new Map();data.forEach(r=>models.set(r.model_name,(models.get(r.model_name)||0)+Number(r.amount)));
@@ -382,7 +423,7 @@ document.querySelectorAll('[data-column-toggle]').forEach(input=>input.addEventL
   return columnSelectionChanged();
 }));
 $('show-all-columns').addEventListener('click',()=>{document.querySelectorAll('[data-column-toggle]:not(:disabled)').forEach(input=>input.checked=true);return columnSelectionChanged();});
-$('export').addEventListener('click',()=>{if(snapshot)window.location.assign(Scope.url('/cockpit/statistics/api/export?'+new URLSearchParams({start:snapshot.start,end:snapshot.end})));});
+$('export').addEventListener('click',async()=>{if(!snapshot)return;try{await window.CockpitAuth?.ensure();if(snapshot)window.location.assign(Scope.url('/cockpit/statistics/api/export?'+new URLSearchParams({start:snapshot.start,end:snapshot.end})));}catch(error){$('status').className='error';$('status').textContent=error.message;}});
 loadVisibleColumns();applyColumnVisibility();
 // Reset every ledger-dependent view before starting requests for the next ledger.
 window.addEventListener('scopechange',()=>{

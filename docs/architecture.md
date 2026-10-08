@@ -1,11 +1,11 @@
-# 当前架构
+# 架构
 
 ## 运行拓扑
 
 ```text
-浏览器 / API 调用方
+浏览器
         |
-   Nginx（可选）
+   同源 HTTPS 入口（Nginx 等反向代理）
         |
 statistics：一个应用容器
   ├─ Gunicorn：网页与 API
@@ -19,7 +19,7 @@ statistics：一个应用容器
 ```
 
 两个数据库可以位于同一 PostgreSQL 实例，但必须分库配置。
-应用不使用 Redis、消息队列或单独的调度容器。所有时间边界使用北京时间。
+余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。所有时间边界使用北京时间。
 四个页面为 `/cockpit/statistics/`、`/cockpit/users/`、`/cockpit/keys/`、`/cockpit/operations/`，共用顶栏与侧边栏。
 部署参数见[部署](deployment.md)，视觉规范见[界面](ui.md)。
 
@@ -81,8 +81,10 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 
 ## 认证与审计
 
-网页、静态资源和内部接口使用 New API 管理员 Basic Auth；对外余额与报警接口使用管理员 PAT Bearer。
-每次请求核对角色、启用和未删除状态；敏感写请求检查同源 JSON 与对应请求头。
+网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，业务页面与内部 API 每次经官方 `/api/user/self` 验证会话及管理员身份。
+浏览器在官方路径刷新 HttpOnly Cookie，再将短期访问凭据交给 Cockpit 保存为 `/cockpit` 范围的 HttpOnly Cookie；会话由 New API 管理。
+对外余额与报警接口使用管理员 PAT Bearer 认证，与浏览器会话分开校验。
+敏感写请求检查同源 JSON 与对应请求头；前端不自动重发写请求，账号切换时阻止旧页面继续提交。详见[登录与会话](authentication.md)。
 PAT 每次从源库读取，不放在浏览器、配置或监控库；缺失时才经受限函数补建。
 通知 Secret 用独立密钥加密，密钥与监控库均需备份。
 完整 KEY 仅在明确查看后显示，窗口关闭后清除，不进入 URL 或持久缓存。

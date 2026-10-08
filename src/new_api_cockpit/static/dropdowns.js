@@ -1,7 +1,7 @@
 (function(){
   'use strict';
   // Only transient picker menus dismiss; explanatory <details> stay expanded.
-  const selector='details.filter-picker, details.column-picker, details.user-picker, details.management-picker, details.key-group-picker';
+  const selector='details.filter-picker, details.column-picker, details.user-picker, details.management-picker, details.key-group-picker, details.user-group-picker';
   function install(document){
     const opened=()=>Array.from(document.querySelectorAll(selector)).filter(picker=>picker.open);
     const outside=event=>{

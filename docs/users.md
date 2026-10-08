@@ -12,6 +12,7 @@
 ## 页面与操作
 
 - 用户管理显示用户 ID、用户名/显示名、用户组、启禁状态、余额、已用金额、KEY 数量及备注。
+- “用户组”列可点击展开分组菜单，输入关键词筛选，选择目标组后确认一次再切换；成功后刷新用户列表与按组选择选项。
 - 最后一列支持编辑用户名、显示名、用户组、备注，重置密码、启停与软删除；新建用户仅限超级管理员，创建普通用户。
 - 用户配额保留按组选择、预览确认与五人并发原子增减，不通过资料编辑覆盖余额，见[用户配额](quota.md)。
 - 令牌管理每个 KEY 一行，同一用户的第一列通过 `rowspan` 合并，显示归属用户与新增 KEY 操作；用户资料与余额在用户管理页操作。
@@ -27,7 +28,8 @@
 
 普通管理员只管理权限范围内用户，超级管理员可管理全站；不能禁用或删除超级管理员。
 密码只重置，不读取或保存到审计；KEY 明文只在明确查看后显示，窗口关闭后清除，不持久缓存。
-页面、静态文件和 API 均要求管理员认证，敏感写请求必须是同源 JSON 和对应请求头。
+业务页面和内部 API 要求管理员登录会话；登录页与静态资源公开。
+敏感写请求必须是同源 JSON 和对应请求头。
 
 ## 使用所属用户 PAT
 
@@ -100,6 +102,21 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 实际请求进入统一操作记录。
 执行中禁止重复提交；失败、网络中断或结果不明确不会自动重试，须关闭窗口、刷新并核对实际结果。
 
+### 单个用户快捷改组
+
+点击用户管理的“用户组”单元格时，`GET /cockpit/users/api/user/<id>/groups` 校验管理员权限，
+只读取当前用户组和 New API 全局 `GroupRatio` 配置，不调用上游、不补建 PAT、不生成操作记录。
+用户组不同于 KEY 可用分组，不受 `UserUsableGroups` 限制，也不提供“跟随用户组”或“自动分组”选项。
+菜单支持字面关键词筛选、点击外部或按 Escape 收起；当前组不可重复选择。
+
+选中后弹窗列出目标用户名、用户 ID、原组与目标组，取消不写入。
+确认通过现有 `POST /cockpit/users/api/user/<id>/action` 提交 `action=group` 与唯一变更字段 `group`。
+服务端重新校验权限和分组配置，用实际管理员 PAT 读取最新用户资料并调用官方用户修改接口，
+保留其他资料与角色，不覆盖额度、密码、PAT 或启禁状态，不直接写源库，也不改写固定分组的 KEY。
+“跟随用户组”的 KEY 后续调用按 New API 规则使用新的用户组。
+实际修改记录为“用户改组”，包含目标用户与原组/目标组；执行中禁止重复提交，失败或中断不自动重试。
+操作使用统一审计表保存执行结果。
+
 ## 统一操作记录与数据库
 
 写操作需要 `MONITOR_DATABASE_URL`。监控库存储：
@@ -133,7 +150,7 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 
 ### 操作记录接口
 
-网页管理员 Basic Auth：`GET /cockpit/operations/api/records`。
+网页管理员登录会话：`GET /cockpit/operations/api/records`。
 可选 `kind=user|token|quota|schedule`，后续页传回响应中的 `next_before` 作为 `before`；
 游标同时包含时间、来源和记录 ID，不使用单一时间戳翻页。
 明细为 `GET /cockpit/operations/api/records/<source>/<record_id>?after=<target_id>`，

@@ -1,5 +1,7 @@
 """Run with unittest discovery; all notification requests are mocked, never sent."""
 
+from session_fixture import fixture_identity, session_auth
+
 import json
 import io
 import unittest
@@ -225,14 +227,14 @@ class NotificationsTest(unittest.TestCase):
         client = app.test_client()
         base = "/cockpit/statistics/api/balance/channel"
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.notifications.save") as save,
             patch(
                 "new_api_cockpit.notifications.snapshot", return_value={"version": 2}
             ),
             patch("new_api_cockpit.notifications.deliver") as send,
         ):
-            args = dict(auth=("fixture_admin", "fixture"), json={"version": 2})
+            args = dict(auth=session_auth("fixture_admin"), json={"version": 2})
             self.assertEqual(client.put(base, **args).status_code, 403)
             self.assertEqual(client.post(base + "/test", **args).status_code, 403)
             save.assert_not_called()

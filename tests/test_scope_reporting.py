@@ -1,5 +1,7 @@
 """Scope API isolation; optional PostgreSQL tests use read-only synthetic logs."""
 
+from session_fixture import fixture_identity
+
 import json
 import os
 from datetime import datetime
@@ -21,7 +23,7 @@ class ScopeReportingTest(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(
-            patch("new_api_cockpit.app.verify_admin", return_value=True)
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity)
         )
         self.stack.enter_context(
             patch("new_api_cockpit.app.verify_api_key", return_value=True)
@@ -42,7 +44,10 @@ class ScopeReportingTest(unittest.TestCase):
             patch("new_api_cockpit.app.load_report", return_value=[])
         )
         self.client = app.test_client()
-        self.headers = {"Authorization": "Basic YTpi", "X-Statistics-Request": "1"}
+        self.headers = {
+            "Authorization": "Bearer fixture-session-a",
+            "X-Statistics-Request": "1",
+        }
         self.query = "start=2026-07-01&end=2026-07-31&scope_id=3"
 
     def get(self, path, query=None):
@@ -261,7 +266,12 @@ class ScopeReportingTest(unittest.TestCase):
                 function("2026-07-01", "2026-07-31", channel_ids=[])
                 sql, args = conn.execute.call_args.args
                 self.assertIn("channel_id = ANY", sql)
-                self.assertEqual(args[3:6], ([], [], []))
+                self.assertEqual(args["channel_ids"], [])
+                self.assertEqual(args["types"], [2])
+                self.assertEqual(
+                    (args["start"], args["end"]),
+                    report.period("2026-07-01", "2026-07-31"),
+                )
             self.assertIn(
                 "default_transaction_read_only=on", connect.call_args.kwargs["options"]
             )
@@ -276,8 +286,8 @@ class ScopeSQLTest(unittest.TestCase):
                 created_at=i,
                 user_id=1,
                 username="u",
-                token_id=1,
-                token_name="key",
+                token_id=i,
+                token_name=f"key-{i}",
                 model_name="gpt",
                 quota=500000,
                 prompt_tokens=10,
@@ -332,6 +342,43 @@ class ScopeSQLTest(unittest.TestCase):
                             ),
                         ).fetchall()
                         self.assertEqual(sum(row[field] for row in rows), count)
+                # Exercise both public option loaders against the same SQL
+                # fixtures, including all/empty/NULL channels and error logs.
+                for include_failures in (False, True):
+                    for load in (report.load_token_options, report.load_group_options):
+                        with (
+                            self.subTest(
+                                loader=load.__name__,
+                                channels=channel_ids,
+                                excluded=excluded_ids,
+                                failures=include_failures,
+                            ),
+                            patch.object(report.psycopg, "connect") as connect,
+                        ):
+                            mocked = connect.return_value.__enter__.return_value
+                            load(
+                                "1970-01-01T08:00:00",
+                                "1970-01-01T08:00:19",
+                                include_failures=include_failures,
+                                channel_ids=channel_ids,
+                                excluded_channel_ids=excluded_ids,
+                            )
+                            query, params = mocked.execute.call_args.args
+                            rows = conn.execute(
+                                prefix.removesuffix(", ") + " " + query,
+                                dict(params, fixtures=json.dumps(fixtures)),
+                            ).fetchall()
+                            expected = (
+                                count * (2 if include_failures else 1)
+                                if load is report.load_token_options
+                                else int(count > 0)
+                            )
+                            self.assertEqual(len(rows), expected)
+                            if load is report.load_token_options:
+                                for row in rows:
+                                    self.assertEqual(
+                                        row["token_name"], f"key-{row['token_id']}"
+                                    )
 
 
 @unittest.skipUnless(

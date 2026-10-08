@@ -1,0 +1,5 @@
+{% if current_user %}
+<meta name="cockpit-session" content="{{ current_user.session_id }}">
+<meta name="cockpit-expires" content="{{ current_user.expires_at }}">
+{% endif %}
+<script defer src="/cockpit/static/auth.js"></script>

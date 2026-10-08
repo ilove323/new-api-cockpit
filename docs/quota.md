@@ -1,6 +1,6 @@
 # 用户管理与配额
 
-`/cockpit/users/` 是用户管理页面，合并用户资料与配额列表。四个页面通过统一侧边栏切换，
+`/cockpit/users/` 提供用户资料与配额管理。四个页面通过统一侧边栏切换，
 Nginx 统一转发 `/cockpit/`，见[部署文档](deployment.md)。
 最后一列支持用户资料编辑、重置密码、启停和删除；列表提供新增用户、KEY 数量链接与备注。
 KEY 配置在 `/cockpit/keys/` 管理，所有用户/KEY/配额记录在 `/cockpit/operations/` 查看。
@@ -102,7 +102,7 @@ New API 增减接口不提供本功能所需的请求幂等键。因此不能承
 
 ### 管理接口
 
-以下接口用于管理员设置页面，不是模型调用接口；使用相同的管理员 Basic Auth。
+以下接口用于管理员设置页面，不是模型调用接口；使用相同的 New API 管理员登录会话。
 写请求须包含 `Content-Type: application/json` 和 `X-Quota-Action: schedule`。
 
 | 方法 | 路径 | 用途 |

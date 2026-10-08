@@ -206,6 +206,130 @@ class UserManagementDatabaseTest(unittest.TestCase):
                         (operator, target, manage.generate_pat()),
                     )
 
+    def test_user_group_options_use_global_groups_without_upstream_pat_or_audit(self):
+        with (
+            patch.object(manage, "call_api") as upstream,
+            patch.object(manage, "owner_pat") as pat,
+        ):
+            self.assertEqual(
+                manage.user_group_options("admin", 2),
+                {
+                    "id": 2,
+                    "username": "alice",
+                    "group": "a",
+                    "available_groups": ["a", "admins", "b"],
+                    "persistence": True,
+                },
+            )
+            self.assertEqual(manage.user_group_options("admin", 4)["group"], "a")
+            for username, target, error in (
+                ("manager", 1, manage.Forbidden),
+                ("alice", 2, manage.Forbidden),
+                ("admin", 9999, manage.ManagementError),
+            ):
+                with self.subTest(username=username, target=target):
+                    with self.assertRaises(error):
+                        manage.user_group_options(username, target)
+            upstream.assert_not_called()
+            pat.assert_not_called()
+        with self.source() as conn:
+            self.assertIsNone(
+                conn.execute("SELECT access_token FROM users WHERE id=2").fetchone()[
+                    "access_token"
+                ]
+            )
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM user_management_operations"
+                ).fetchone()["n"],
+                0,
+            )
+
+    def test_user_groups_distinguish_empty_configuration_and_absent_defaults(self):
+        with psycopg.connect(DSN) as conn:
+            conn.execute("UPDATE options SET value='{}' WHERE key='GroupRatio'")
+        self.assertEqual(manage.user_group_options("admin", 2)["available_groups"], [])
+        with psycopg.connect(DSN) as conn:
+            conn.execute("DELETE FROM options WHERE key='GroupRatio'")
+        self.assertEqual(
+            manage.user_group_options("admin", 2)["available_groups"],
+            ["default", "svip", "vip"],
+        )
+
+    def test_user_group_action_changes_only_group_and_records_target_and_before_after(
+        self,
+    ):
+        with psycopg.connect(DSN) as conn:
+            conn.execute("UPDATE users SET quota=250000,used_quota=750000 WHERE id=4")
+        with self.source() as conn:
+            before = conn.execute("SELECT * FROM users WHERE id=4").fetchone()
+        calls = []
+
+        def api(operator, user_id, path, **kwargs):
+            calls.append((operator["id"], user_id, path, kwargs))
+            if kwargs.get("method") == "PUT":
+                with psycopg.connect(DSN) as conn:
+                    conn.execute(
+                        'UPDATE users SET "group"=%s WHERE id=%s',
+                        (kwargs["body"]["group"], kwargs["body"]["id"]),
+                    )
+                return None
+            return before
+
+        with patch.object(manage, "call_api", side_effect=api):
+            result = manage.single_action(
+                "admin", "user", 4, {"action": "group", "changes": {"group": "b"}}
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [c[:3] for c in calls], [(1, 1, "/api/user/4"), (1, 1, "/api/user/")]
+        )
+        self.assertEqual(set(calls[-1][3]["body"]), {*manage.USER_FIELDS, "id", "role"})
+        with self.source() as conn:
+            after = conn.execute("SELECT * FROM users WHERE id=4").fetchone()
+            self.assertEqual(after, {**before, "group": "b"})
+            self.assertEqual(
+                conn.execute('SELECT "group" FROM tokens WHERE id=12').fetchone()[
+                    "group"
+                ],
+                "a",
+            )
+        record = operation_records.list_records("admin", {})["rows"][0]
+        self.assertEqual(record["action"], "user.group")
+        self.assertEqual(record["target_users"], [{"id": 4, "username": "disabled"}])
+        item = operation_records.detail("admin", "management", result["operation_id"])[
+            "rows"
+        ][0]
+        self.assertEqual(item["before_data"]["group"], "a")
+        self.assertEqual(item["after_data"]["group"], "b")
+        self.assertEqual(item["state"], "success")
+
+    def test_invalid_or_unchanged_user_group_does_not_initiate_a_write(self):
+        with patch.object(manage, "call_api") as upstream:
+            for changes in (
+                {"group": "b", "quota": 1},
+                {"group": ""},
+                {"group": "auto"},
+                {"group": "unknown"},
+                {"group": 3},
+                {},
+                {"group": "a"},
+            ):
+                with self.subTest(changes=changes):
+                    with self.assertRaises(manage.ManagementError):
+                        manage.single_action(
+                            "admin", "user", 2, {"action": "group", "changes": changes}
+                        )
+            upstream.assert_not_called()
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM user_management_operations"
+                ).fetchone()["n"],
+                0,
+            )
+
     def test_owner_pat_missing_created_then_latest_rotation_read(self):
         pat = manage.owner_pat(self.operator, 2)
         self.assertTrue(pat)
@@ -304,7 +428,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
 
     def test_all_single_actions_snapshot_targets_without_substituting_the_actor(self):
         actions = {
-            "user": ["edit", "password", "enable", "disable", "delete"],
+            "user": ["edit", "group", "password", "enable", "disable", "delete"],
             "token": [
                 "edit",
                 "quota",
@@ -319,7 +443,15 @@ class UserManagementDatabaseTest(unittest.TestCase):
             for kind, kinds in actions.items():
                 for action in kinds:
                     manage.single_action(
-                        "admin", kind, 2 if kind == "user" else 10, {"action": action}
+                        "admin",
+                        kind,
+                        2 if kind == "user" else 10,
+                        {
+                            "action": action,
+                            "changes": {"group": "b"}
+                            if kind == "user" and action == "group"
+                            else {},
+                        },
                     )
             manage.single_action("admin", "token", 2, {"action": "create"})
             new_user = manage.single_action(
@@ -342,7 +474,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
         with psycopg.connect(DSN) as conn:
             conn.execute("DELETE FROM users WHERE id=2")
         headers = operation_records.list_records("admin", {})["rows"]
-        self.assertEqual(len(headers), 17)
+        self.assertEqual(len(headers), 18)
         for header in headers:
             with self.subTest(action=header["action"]):
                 identity = (

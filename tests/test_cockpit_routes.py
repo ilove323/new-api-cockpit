@@ -1,5 +1,7 @@
 """Canonical pages/assets and absence of retired routes, no network."""
 
+from session_fixture import fixture_identity, session_auth
+
 import re
 import unittest
 from unittest.mock import patch
@@ -10,11 +12,11 @@ from new_api_cockpit.app import app
 class CockpitRoutesTest(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
-        self.auth = ("admin", "fixture-password")
+        self.auth = session_auth("admin")
 
-    def test_all_four_pages_and_their_assets_are_authenticated(self):
+    def test_four_pages_require_session_and_static_assets_are_public(self):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Fixture"),
         ):
             for route, title in (
@@ -25,7 +27,7 @@ class CockpitRoutesTest(unittest.TestCase):
             ):
                 with self.subTest(route=route):
                     path = "/cockpit/" + route + "/"
-                    self.assertEqual(self.client.get(path).status_code, 401)
+                    self.assertEqual(self.client.get(path).status_code, 302)
                     response = self.client.get(path, auth=self.auth)
                     self.assertEqual(response.status_code, 200)
                     body = response.get_data(as_text=True)
@@ -33,7 +35,8 @@ class CockpitRoutesTest(unittest.TestCase):
                     for asset in re.findall(
                         r'(?:src|href)="(/cockpit/[^"?#]+\.(?:js|css))"', body
                     ):
-                        self.assertEqual(self.client.get(asset).status_code, 401, asset)
+                        with self.client.get(asset) as public_asset:
+                            self.assertEqual(public_asset.status_code, 200, asset)
                         with self.client.get(asset, auth=self.auth) as asset_response:
                             self.assertEqual(asset_response.status_code, 200, asset)
                     active = re.findall(r'<a href="([^"]+)" aria-current="page"', body)
@@ -47,7 +50,9 @@ class CockpitRoutesTest(unittest.TestCase):
                 or rule.rule.startswith("/cockpit/"),
                 rule.rule,
             )
-        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+        with patch(
+            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+        ):
             for old in (
                 "/statistics",
                 "/statistics/",
@@ -84,7 +89,10 @@ class CockpitRoutesTest(unittest.TestCase):
                 for prefix in ("/cockpit/statistics",):
                     path = prefix + "/api/" + suffix
                     self.assertEqual(
-                        self.client.get(path, auth=self.auth).status_code, 401
+                        self.client.get(
+                            path, auth=("admin", "fixture-password")
+                        ).status_code,
+                        401,
                     )
                     self.assertEqual(
                         self.client.get(path).headers["WWW-Authenticate"], "Bearer"
@@ -93,7 +101,7 @@ class CockpitRoutesTest(unittest.TestCase):
 
     def test_operation_records_are_read_only_and_profile_writes_check_origin(self):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.app.operation_records.list_records",
                 return_value={"rows": [], "next_before": None},

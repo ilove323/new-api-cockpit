@@ -1,5 +1,7 @@
 """Run: .venv/bin/python -m unittest discover -s tests."""
 
+from session_fixture import fixture_identity, session_auth
+
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
@@ -56,9 +58,11 @@ class BalanceTest(unittest.TestCase):
 
     def test_external_balance_api_rejects_basic_and_unavailable_data(self):
         client = app.test_client()
-        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+        with patch(
+            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+        ):
             response = client.get(
-                "/cockpit/statistics/api/balance", auth=("test_admin", "test")
+                "/cockpit/statistics/api/balance", auth=("test_admin", "fixture")
             )
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
@@ -120,7 +124,7 @@ class BalanceTest(unittest.TestCase):
 
     def test_manual_check_endpoint(self):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.balance.check_once", return_value=True) as check,
             patch(
                 "new_api_cockpit.balance.snapshot", return_value={"configured": True}
@@ -129,13 +133,14 @@ class BalanceTest(unittest.TestCase):
             client = app.test_client()
             url = "/cockpit/statistics/api/balance/check"
             self.assertEqual(
-                client.post(url, json={}, auth=("test_admin", "test")).status_code, 403
+                client.post(url, json={}, auth=session_auth("test_admin")).status_code,
+                403,
             )
             check.assert_not_called()
             response = client.post(
                 url,
                 json={},
-                auth=("test_admin", "test"),
+                auth=session_auth("test_admin"),
                 headers={"X-Statistics-Request": "1"},
             )
             self.assertEqual(response.status_code, 200)
@@ -146,7 +151,7 @@ class BalanceTest(unittest.TestCase):
                 client.post(
                     url,
                     json={},
-                    auth=("test_admin", "test"),
+                    auth=session_auth("test_admin"),
                     headers={"X-Statistics-Request": "1"},
                 ).status_code,
                 409,
@@ -190,7 +195,7 @@ class BalanceTest(unittest.TestCase):
             }
         ]
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.balance.usage_channels_snapshot",
                 return_value=rows,
@@ -198,7 +203,7 @@ class BalanceTest(unittest.TestCase):
         ):
             response = app.test_client().get(
                 "/cockpit/statistics/api/balance/usage-channels",
-                auth=("test_admin", "test"),
+                auth=session_auth("test_admin"),
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"rows": rows})
@@ -208,7 +213,7 @@ class BalanceTest(unittest.TestCase):
         body = self.body()
         preview_rows = [{"month": "2026-01", "before": "10", "after": "12"}]
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.balance.history_preview",
                 return_value={"version": 1, "rows": preview_rows},
@@ -222,14 +227,14 @@ class BalanceTest(unittest.TestCase):
             apply_url = "/cockpit/statistics/api/balance/recalculate-history"
             self.assertEqual(
                 client.post(
-                    preview_url, json=body, auth=("test_admin", "test")
+                    preview_url, json=body, auth=session_auth("test_admin")
                 ).status_code,
                 403,
             )
             response = client.post(
                 preview_url,
                 json=body,
-                auth=("test_admin", "test"),
+                auth=session_auth("test_admin"),
                 headers={"X-Statistics-Request": "1"},
             )
             self.assertEqual(response.get_json()["rows"], preview_rows)
@@ -238,7 +243,7 @@ class BalanceTest(unittest.TestCase):
             response = client.post(
                 apply_url,
                 json=payload,
-                auth=("test_admin", "test"),
+                auth=session_auth("test_admin"),
                 headers={"X-Statistics-Request": "1"},
             )
             self.assertEqual(
@@ -251,7 +256,7 @@ class BalanceTest(unittest.TestCase):
                 client.post(
                     apply_url,
                     json=payload,
-                    auth=("test_admin", "test"),
+                    auth=session_auth("test_admin"),
                     headers={"X-Statistics-Request": "1"},
                 ).status_code,
                 409,
@@ -265,7 +270,7 @@ class BalanceTest(unittest.TestCase):
 
     def test_api_writes_require_auth_and_custom_header(self):
         client = app.test_client()
-        with patch("new_api_cockpit.app.verify_admin", return_value=False):
+        with patch("new_api_cockpit.app.browser_identity", return_value=None):
             self.assertEqual(
                 client.put(
                     "/cockpit/statistics/api/balance/settings", json=self.body()
@@ -273,10 +278,10 @@ class BalanceTest(unittest.TestCase):
                 401,
             )
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.balance.save_settings") as save,
         ):
-            args = dict(auth=("test_admin", "test"), json=self.body())
+            args = dict(auth=session_auth("test_admin"), json=self.body())
             self.assertEqual(
                 client.put(
                     "/cockpit/statistics/api/balance/settings", **args

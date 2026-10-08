@@ -67,7 +67,9 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8091/healthz
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/statistics/)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/statistics/)" = 302
+          curl -fsS http://127.0.0.1:8091/cockpit/login >/dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/auth/session)" = 401
       - if: always()
         run: docker logs cockpit-ci || true
 

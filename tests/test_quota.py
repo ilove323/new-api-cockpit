@@ -1,5 +1,7 @@
 """No test in this module makes a real quota mutation."""
 
+from session_fixture import fixture_identity, session_auth
+
 import json
 import threading
 import unittest
@@ -206,19 +208,19 @@ class QuotaTest(unittest.TestCase):
 
     def test_page_auth_and_mutation_header(self):
         client = app.test_client()
-        self.assertEqual(client.get("/cockpit/users/").status_code, 401)
+        self.assertEqual(client.get("/cockpit/users/").status_code, 302)
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Test"),
             patch.object(quota, "preview", return_value={"users": []}) as preview,
         ):
             self.assertEqual(
-                client.get("/cockpit/users/", auth=("admin", "password")).status_code,
+                client.get("/cockpit/users/", auth=session_auth("admin")).status_code,
                 200,
             )
             self.assertIn(
                 "用户组",
-                client.get("/cockpit/users/", auth=("admin", "password")).get_data(
+                client.get("/cockpit/users/", auth=session_auth("admin")).get_data(
                     as_text=True
                 ),
             )
@@ -226,7 +228,7 @@ class QuotaTest(unittest.TestCase):
                 client.post(
                     "/cockpit/users/api/preview",
                     json=self.body,
-                    auth=("admin", "password"),
+                    auth=session_auth("admin"),
                 ).status_code,
                 403,
             )
@@ -234,7 +236,7 @@ class QuotaTest(unittest.TestCase):
                 "/cockpit/users/api/preview",
                 json=self.body,
                 headers={"X-Quota-Action": "preview"},
-                auth=("admin", "password"),
+                auth=session_auth("admin"),
             )
             self.assertEqual(response.status_code, 200)
             preview.assert_called_once()

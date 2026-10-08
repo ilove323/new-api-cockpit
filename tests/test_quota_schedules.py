@@ -1,5 +1,7 @@
 """Pure schedule/API boundary tests. Never make a real quota mutation."""
 
+from session_fixture import fixture_identity, session_auth
+
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
@@ -88,23 +90,25 @@ class ScheduleTest(unittest.TestCase):
             with self.assertRaises(schedules.ScheduleConflict):
                 schedules._version({"version": version}, row)
 
-    def test_all_settings_assets_apis_require_basic_admin_auth(self):
+    def test_settings_apis_require_session_but_static_assets_are_public(self):
         client = app.test_client()
         for path in [
             "/cockpit/users/api/schedules",
             "/cockpit/static/quota-schedule.js",
         ]:
-            self.assertEqual(client.get(path).status_code, 401)
-            self.assertEqual(
-                client.get(
-                    path, headers={"Authorization": "Bearer fixture-pat"}
-                ).status_code,
-                401,
-            )
+            expected = 200 if "/static/" in path else 401
+            with client.get(path) as response:
+                self.assertEqual(response.status_code, expected)
+            with client.get(
+                path, headers={"Authorization": "Bearer fixture-pat"}
+            ) as response:
+                self.assertEqual(response.status_code, expected)
 
     def test_write_headers_and_error_status_codes(self):
         client = app.test_client()
-        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+        with patch(
+            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+        ):
             for method, path in [
                 ("POST", "/cockpit/users/api/schedules"),
                 ("PUT", "/cockpit/users/api/schedules/1"),
@@ -113,7 +117,7 @@ class ScheduleTest(unittest.TestCase):
             ]:
                 self.assertEqual(
                     client.open(
-                        path, method=method, json={}, auth=("admin", "password")
+                        path, method=method, json={}, auth=session_auth("admin")
                     ).status_code,
                     403,
                 )
@@ -122,7 +126,7 @@ class ScheduleTest(unittest.TestCase):
                         path,
                         method=method,
                         json={},
-                        auth=("admin", "password"),
+                        auth=session_auth("admin"),
                         headers={
                             "X-Quota-Action": "schedule",
                             "Sec-Fetch-Site": "cross-site",
@@ -140,7 +144,7 @@ class ScheduleTest(unittest.TestCase):
                         client.post(
                             "/cockpit/users/api/schedules",
                             json={},
-                            auth=("admin", "password"),
+                            auth=session_auth("admin"),
                             headers={"X-Quota-Action": "schedule"},
                         ).status_code,
                         code,
@@ -150,13 +154,13 @@ class ScheduleTest(unittest.TestCase):
                 "/cockpit/users/api/schedule-runs/1?after=bad",
             ]:
                 self.assertEqual(
-                    client.get(path, auth=("admin", "password")).status_code, 404
+                    client.get(path, auth=session_auth("admin")).status_code, 404
                 )
 
     def test_creating_rule_does_not_execute_or_expose_pat(self):
         client = app.test_client()
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch.object(
                 schedules,
                 "save_rule",
@@ -167,7 +171,7 @@ class ScheduleTest(unittest.TestCase):
             response = client.post(
                 "/cockpit/users/api/schedules",
                 json={"enabled": True},
-                auth=("admin", "password"),
+                auth=session_auth("admin"),
                 headers={"X-Quota-Action": "schedule"},
             )
             self.assertEqual(response.status_code, 201)

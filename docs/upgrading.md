@@ -7,7 +7,8 @@
 
 - 记录当前 Git 提交、镜像 tag/digest、Compose 和私有 override；确保能恢复原应用。
 - 备份独立监控库、`.env` 及 `NOTIFICATION_ENCRYPTION_KEY`，保存在仓库外的受限目录。
-- 核对 New API 只读账号能读取[兼容范围](compatibility.md)中的字段；配额操作需可访问管理 API。
+- 核对 New API 查询账号能读取[兼容范围](compatibility.md)中的字段；配额操作需可访问管理 API。
+- 确认 New API 支持当前登录协议，浏览器入口同源，后台内部地址可用，见[登录与会话](authentication.md)。
 - 更新应用镜像时同时使用配套 Compose，不把当前源码模板与不包含该实现的发布镜像混用。
 - 本文只操作统计项目；不对 New API、PostgreSQL、Redis 项目执行 `down` 或清空数据库。
 
@@ -25,8 +26,8 @@ docker exec -i <PostgreSQL容器名> pg_restore -l \
 确认备份非空并能列出内容，再继续升级。New API 原库按其自身备份策略单独备份，
 不要将监控库恢复操作用于原库。通知加密密钥与数据库备份缺一不可。
 
-目录或仓库改名不要求重命名数据库、角色或源库 PAT 函数。保留现有 `.env`、连接串与
-Compose 项目名；需要固定项目名时使用 `COMPOSE_PROJECT_NAME` 或 `docker compose -p <现有项目名>`。
+保留现有数据库、角色、`.env`、连接串与 Compose 项目名。
+需要固定项目名时使用 `COMPOSE_PROJECT_NAME` 或 `docker compose -p <现有项目名>`。
 应用服务名保持 `statistics`，避免升级产生另一组应用容器。
 
 ## 停止与更新
@@ -90,7 +91,7 @@ python -m new_api_cockpit.runtime gunicorn --bind 127.0.0.1:8000 new_api_cockpit
 - 核对迁移版本、已归档月份、预算、通知配置和配额规则仍在；验证网页及 API 认证没有被放开。
 - 配额执行结果在 `/cockpit/operations/` 核对；探活和普通页面访问不会发额度。
 - 如需验证通知，管理员明确点击“发送测试消息”；不要用增减真实用户额度测试部署。
-- 确认 Nginx 转发完整 `/cockpit/` 前缀，四个页面及其 API/静态资源均可认证访问。
+- 确认 Nginx 转发完整 `/cockpit/` 前缀；登录后四个页面及内部 API 可用，未登录时可加载登录页和静态资源，业务请求仍受保护。
 
 首次渠道同步会进行一次完整渠道发现，之后只同步当前目录；显式发现命令及快照清理机制
 见[性能机制](performance.md)。展示快照不是历史账单，不能用它替代归档验证。

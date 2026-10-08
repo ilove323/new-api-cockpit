@@ -1,5 +1,7 @@
 """Selected audit repairs only; no remote quota/notification calls."""
 
+from session_fixture import fixture_identity, session_auth
+
 import json
 import os
 import unittest
@@ -67,12 +69,14 @@ class RepairUnitTest(unittest.TestCase):
         ):
             with (
                 self.subTest(value=value),
-                patch("new_api_cockpit.app.verify_admin", return_value=True),
+                patch(
+                    "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+                ),
                 patch.object(quota, "connect") as connect,
             ):
                 response = app.test_client().post(
                     "/cockpit/users/api/preview",
-                    auth=("admin", "fixture"),
+                    auth=session_auth("admin"),
                     headers={"X-Quota-Action": "preview"},
                     json=dict(user_ids=[1], mode="add", amount_yuan=value),
                 )
@@ -375,13 +379,13 @@ class PerformanceDatabaseTest(unittest.TestCase):
         rows = report.decorate(fallback.aggregate([log()], False), {})
         client = app.test_client()
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_report", return_value=rows),
         ):
             url = "/cockpit/statistics/api/usage?start=2026-09-01&end=2026-09-01"
-            normal = client.get(url, auth=("alice", "fixture"))
+            normal = client.get(url, auth=session_auth("alice"))
             self.assertIn("cost_formula", normal.json["rows"][0])
-            lazy = client.get(url + "&details=lazy", auth=("alice", "fixture"))
+            lazy = client.get(url + "&details=lazy", auth=session_auth("alice"))
             self.assertEqual(lazy.status_code, 200)
             row = lazy.json["rows"][0]
             self.assertNotIn("cost_formula", row)
@@ -390,14 +394,16 @@ class PerformanceDatabaseTest(unittest.TestCase):
             payload = dict(report_id=row["report_id"], row_ids=[row["row_id"]])
             route = "/cockpit/statistics/api/usage/details"
             self.assertEqual(
-                client.post(route, json=payload, auth=("alice", "fixture")).status_code,
+                client.post(
+                    route, json=payload, auth=session_auth("alice")
+                ).status_code,
                 403,
             )
             for username, expected in [("alice", 200), ("bob", 410)]:
                 response = client.post(
                     route,
                     json=payload,
-                    auth=(username, "fixture"),
+                    auth=session_auth(username),
                     headers={"X-Statistics-Request": "1"},
                 )
                 self.assertEqual(response.status_code, expected)
@@ -405,14 +411,14 @@ class PerformanceDatabaseTest(unittest.TestCase):
                 response = client.post(
                     route,
                     json=dict(payload, row_ids=ids),
-                    auth=("alice", "fixture"),
+                    auth=session_auth("alice"),
                     headers={"X-Statistics-Request": "1"},
                 )
                 self.assertEqual(response.status_code, 400)
             cross = client.post(
                 route,
                 json=payload,
-                auth=("alice", "fixture"),
+                auth=session_auth("alice"),
                 headers={"X-Statistics-Request": "1", "Sec-Fetch-Site": "cross-site"},
             )
             self.assertEqual(cross.status_code, 403)

@@ -1,5 +1,7 @@
 """User/owner-PAT boundaries with isolated data and mocked upstream writes."""
 
+from session_fixture import fixture_identity, session_auth
+
 import base64
 import json
 import unittest
@@ -162,6 +164,58 @@ class UserManagementTest(unittest.TestCase):
                 )
             self.assertEqual(api.call_count, 1)
 
+    def test_user_group_change_uses_admin_and_preserves_latest_profile_not_quotas(self):
+        latest = {
+            "username": "alice-renamed",
+            "display_name": "Latest",
+            "remark": "Latest remark",
+            "group": "a",
+            "role": 10,
+            "quota": 400000,
+            "used_quota": 100000,
+            "status": 2,
+            "password": "fixture-hash",
+            "access_token": "fixture-secret",
+        }
+        with (
+            patch.object(manage, "target", return_value=self.user) as target,
+            patch.object(manage, "available_user_groups", return_value=["a", "b"]),
+            patch.object(manage, "call_api", side_effect=[latest, None]) as api,
+        ):
+            manage._perform(self.operator, "user", 2, "group", {"group": "b"})
+        target.assert_called_once_with(self.operator, 2)
+        self.assertEqual(api.call_args_list[0].args, (self.operator, 1, "/api/user/2"))
+        sent = api.call_args_list[1]
+        self.assertEqual(sent.args, (self.operator, 1, "/api/user/"))
+        self.assertEqual(sent.kwargs["method"], "PUT")
+        self.assertEqual(
+            sent.kwargs["body"],
+            {
+                "id": 2,
+                "username": latest["username"],
+                "display_name": latest["display_name"],
+                "remark": latest["remark"],
+                "group": "b",
+                "role": 10,
+            },
+        )
+
+    def test_user_group_rechecks_upstream_group_and_role_before_put(self):
+        operator = {**self.operator, "role": 10}
+        for latest, exception in (
+            ({"group": "b", "role": 1}, manage.Conflict),
+            ({"group": "a", "role": 100}, manage.Forbidden),
+        ):
+            with (
+                self.subTest(latest=latest),
+                patch.object(manage, "target", return_value=self.user),
+                patch.object(manage, "available_user_groups", return_value=["a", "b"]),
+                patch.object(manage, "call_api", return_value=latest) as api,
+            ):
+                with self.assertRaises(exception):
+                    manage._perform(operator, "user", 2, "group", {"group": "b"})
+                self.assertEqual(api.call_count, 1)
+
     def test_quota_subtraction_cannot_be_negative_or_apply_to_unlimited(self):
         for data in (self.token, {**self.token, "unlimited_quota": True}):
             with (
@@ -200,10 +254,17 @@ class UserManagementTest(unittest.TestCase):
             "/cockpit/static/navigation.js",
             "/cockpit/static/dropdowns.js",
             "/cockpit/keys/api/token/3/groups",
+            "/cockpit/users/api/user/2/groups",
         ):
-            self.assertEqual(client.get(path).status_code, 401)
-        auth = {"Authorization": "Basic YWRtaW46Zml4dHVyZQ=="}
-        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+            with client.get(path) as response:
+                self.assertEqual(
+                    response.status_code,
+                    200 if "/static/" in path else 401 if "/api/" in path else 302,
+                )
+        auth = {"Authorization": "Bearer fixture-session-admin"}
+        with patch(
+            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+        ):
             response = client.post(
                 "/cockpit/keys/api/query/grouped",
                 json={"search": "fixture"},
@@ -223,13 +284,13 @@ class UserManagementTest(unittest.TestCase):
 
     def test_standalone_key_lookup_route_is_not_available(self):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch.object(manage, "list_grouped") as query,
         ):
             response = app.test_client().post(
                 "/cockpit/keys/api/search-key",
                 json={"key": "fixture-secret"},
-                auth=("admin", "fixture"),
+                auth=session_auth("admin"),
                 headers={"X-Management-Action": "confirm"},
             )
             self.assertEqual(response.status_code, 404)
@@ -239,7 +300,7 @@ class UserManagementTest(unittest.TestCase):
 
     def test_group_options_route_is_authenticated_read_only_and_owner_scoped(self):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch.object(
                 manage,
                 "token_group_options",
@@ -253,21 +314,70 @@ class UserManagementTest(unittest.TestCase):
             patch.object(manage, "single_action") as action,
         ):
             response = app.test_client().get(
-                "/cockpit/keys/api/token/3/groups", auth=("admin", "fixture")
+                "/cockpit/keys/api/token/3/groups", auth=session_auth("admin")
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json["available_groups"], ["a", "b"])
             groups.assert_called_once_with("admin", 3)
             action.assert_not_called()
 
+    def test_user_group_options_route_is_read_only_and_write_requires_confirmation(
+        self,
+    ):
+        client = app.test_client()
+        with (
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch.object(
+                manage,
+                "user_group_options",
+                return_value={
+                    "id": 2,
+                    "username": "alice",
+                    "group": "a",
+                    "available_groups": ["a", "b"],
+                    "persistence": True,
+                },
+            ) as groups,
+            patch.object(manage, "single_action", return_value={"ok": True}) as action,
+        ):
+            response = client.get(
+                "/cockpit/users/api/user/2/groups", auth=session_auth("admin")
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json["available_groups"], ["a", "b"])
+            groups.assert_called_once_with("admin", 2)
+            action.assert_not_called()
+            body = {"action": "group", "changes": {"group": "b"}}
+            for headers in (
+                {},
+                {"X-Management-Action": "confirm", "Sec-Fetch-Site": "cross-site"},
+                {"X-Management-Action": "confirm", "Origin": "https://evil.invalid"},
+            ):
+                response = client.post(
+                    "/cockpit/users/api/user/2/action",
+                    json=body,
+                    auth=session_auth("admin"),
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 403)
+                action.assert_not_called()
+            response = client.post(
+                "/cockpit/users/api/user/2/action",
+                json=body,
+                auth=session_auth("admin"),
+                headers={"X-Management-Action": "confirm"},
+            )
+            self.assertEqual(response.status_code, 200)
+            action.assert_called_once_with("admin", "user", 2, body)
+
     def test_three_pages_share_relative_sidebar_and_no_old_switch_buttons(self):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Fixture Gateway"),
         ):
             for path in ("/cockpit/statistics/", "/cockpit/users/", "/cockpit/keys/"):
                 response = app.test_client().get(
-                    path, headers={"Authorization": "Basic YWRtaW46Zml4dHVyZQ=="}
+                    path, headers={"Authorization": "Bearer fixture-session-admin"}
                 )
                 self.assertEqual(response.status_code, 200)
                 html = response.get_data(as_text=True)

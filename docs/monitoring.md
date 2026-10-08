@@ -68,7 +68,7 @@ docker run --rm python:3.12-slim \
 NOTIFICATION_ENCRYPTION_KEY=<上一步生成的值>
 ```
 
-`PG*` 仍指向 New API 原库，查询使用只读事务。`MONITOR_DATABASE_URL` 必须指向新建的独立库；服务账号不需要建库权限。新库由容器启动入口自动建表，需可创建表及读写自己拥有的表。管理员登录仍读取 New API 的用户和密码，不建立另一套登录账号。
+`PG*` 仍指向 New API 原库，查询使用只读事务。`MONITOR_DATABASE_URL` 必须指向新建的独立库；服务账号不需要建库权限。新库由容器启动入口自动建表，需可创建表及读写自己拥有的表。管理员登录复用 New API 官方会话，不读取密码、不建立另一套登录账号。
 
 ```bash
 chmod 600 .env

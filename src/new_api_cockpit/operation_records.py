@@ -216,20 +216,20 @@ def _identity(user_id, *snapshots):
 
 
 def _resolve_users(targets):
-    """Batch-resolve missing legacy names, without PAT access or history writes."""
+    """Batch-resolve missing names, without PAT access or history writes."""
     from new_api_cockpit import quota
 
-    legacy = [u for u in targets if not u["username"] and u["id"] is not None]
-    if legacy:
+    missing_names = [u for u in targets if not u["username"] and u["id"] is not None]
+    if missing_names:
         with quota.connect() as conn:
             users = {
                 user["id"]: user["username"]
                 for user in conn.execute(
                     "SELECT id,username FROM users WHERE id=ANY(%s)",
-                    (sorted({user["id"] for user in legacy}),),
+                    (sorted({user["id"] for user in missing_names}),),
                 )
             }
-        for user in legacy:
+        for user in missing_names:
             user["username"] = users.get(user["id"], "")
 
 

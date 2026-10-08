@@ -5,8 +5,10 @@
 
 import os
 import re
+import time
 from datetime import date, datetime
 from decimal import Decimal
+from urllib.parse import quote, urlsplit
 
 from flask import (
     Flask,
@@ -16,6 +18,7 @@ from flask import (
     request,
     send_file,
     redirect,
+    make_response,
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg
@@ -42,7 +45,15 @@ from new_api_cockpit.report import (
     rankings,
     load_site_name,
 )
-from new_api_cockpit.auth import verify_admin, verify_api_key
+from new_api_cockpit.auth import (
+    COOKIE_NAME,
+    COOKIE_PATH,
+    LoginRequired,
+    LoginForbidden,
+    AuthUnavailable,
+    verify_session,
+    verify_api_key,
+)
 
 app = Flask(__name__, static_url_path="/cockpit/static")
 
@@ -59,9 +70,103 @@ class JSONProvider(DefaultJSONProvider):
 app.json = JSONProvider(app)
 
 
+def safe_next(value):
+    """Only return to known local pages/downloads, never a supplied origin."""
+    default = "/cockpit/statistics/"
+    if not isinstance(value, str) or len(value) > 4096:
+        return default
+    if (
+        "\\" in value
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        or not value.startswith("/cockpit")
+    ):
+        return default
+    parsed = urlsplit(value)
+    paths = {
+        "/cockpit",
+        "/cockpit/",
+        "/cockpit/statistics",
+        "/cockpit/statistics/",
+        "/cockpit/users",
+        "/cockpit/users/",
+        "/cockpit/keys",
+        "/cockpit/keys/",
+        "/cockpit/operations",
+        "/cockpit/operations/",
+        "/cockpit/statistics/api/export",
+    }
+    return value if not parsed.netloc and parsed.path in paths else default
+
+
+def login_url():
+    return "/cockpit/login?next=" + quote(
+        safe_next(request.full_path.rstrip("?")), safe=""
+    )
+
+
+def browser_identity():
+    authorization = request.authorization
+    token = request.cookies.get(COOKIE_NAME)
+    if authorization is not None and authorization.type == "bearer":
+        token = authorization.token
+    elif authorization is not None and not token:
+        raise LoginRequired("请通过登录页面登录。")
+    # Only Bearer overrides the session cookie; other schemes grant no access.
+    if not token:
+        return None
+    return verify_session(token)
+
+
+def same_origin_request():
+    if request.headers.get("Sec-Fetch-Site") == "cross-site":
+        return False
+    origin = request.headers.get("Origin")
+    if not origin:
+        # Browser writes also require a non-simple per-feature header and JSON.
+        return True
+    try:
+        parsed = urlsplit(origin)
+        return (
+            parsed.scheme in {"http", "https"}
+            and parsed.netloc == request.host
+            and not parsed.username
+            and parsed.path in {"", "/"}
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
+def auth_failure(message="登录已失效，请重新登录。", status=401, code="AUTH_REQUIRED"):
+    is_page = request.endpoint in {
+        "cockpit_home",
+        "index",
+        "users_page",
+        "keys_page",
+        "operations_page",
+        "export",
+    }
+    if is_page and status == 401:
+        response = redirect(login_url(), 302)
+    else:
+        response = make_response(
+            jsonify(error=message, code=code, login_url=login_url()), status
+        )
+    if status in {401, 403}:
+        response.delete_cookie(
+            COOKIE_NAME, path=COOKIE_PATH, httponly=True, samesite="Strict"
+        )
+    return response
+
+
 @app.before_request
 def authenticate():
-    if request.path == "/healthz":
+    if request.endpoint is None or request.endpoint in {
+        "static",
+        "health",
+        "login_page",
+    }:
         return None
     if request.path in {
         "/cockpit/statistics/api/balance",
@@ -76,17 +181,81 @@ def authenticate():
             401,
             {"WWW-Authenticate": "Bearer"},
         )
-    auth = request.authorization
-    if (
-        not auth
-        or auth.type != "basic"
-        or not verify_admin(auth.username, auth.password)
-    ):
-        return (
-            "请使用 New API 管理员用户名和密码登录。",
-            401,
-            {"WWW-Authenticate": 'Basic realm="new-api-cockpit", charset="UTF-8"'},
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and not same_origin_request():
+        return jsonify(error="请求来源不匹配。", code="AUTH_ORIGIN_FORBIDDEN"), 403
+    if request.endpoint == "browser_session" and request.method in {"POST", "DELETE"}:
+        return None
+    try:
+        user = browser_identity()
+    except LoginRequired as exc:
+        return auth_failure(str(exc))
+    except LoginForbidden as exc:
+        return auth_failure(str(exc), 403, "AUTH_FORBIDDEN")
+    except AuthUnavailable as exc:
+        return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
+    if not user:
+        return auth_failure()
+    expected = request.headers.get("X-Cockpit-Session")
+    if expected and expected != user["session_id"]:
+        return auth_failure(
+            "登录账号已切换，请重新加载页面。", 409, "AUTH_SESSION_CHANGED"
         )
+    g.current_user = user
+
+
+@app.context_processor
+def login_context():
+    return {"current_user": getattr(g, "current_user", None)}
+
+
+@app.get("/cockpit/login")
+def login_page():
+    try:
+        name = load_site_name()
+    except psycopg.Error:
+        name = "New API Cockpit"
+    return render_template(
+        "login.html", site_name=name, next_path=safe_next(request.args.get("next"))
+    )
+
+
+@app.route("/cockpit/auth/session", methods=["GET", "POST", "DELETE"])
+def browser_session():
+    if request.method == "GET":
+        return jsonify(g.current_user)
+    if request.headers.get("X-Cockpit-Auth") != "1" or not request.is_json:
+        return jsonify(error="不允许的登录请求。"), 403
+    if request.method == "DELETE":
+        response = jsonify(ok=True)
+        response.delete_cookie(
+            COOKIE_NAME, path=COOKIE_PATH, httponly=True, samesite="Strict"
+        )
+        return response
+    if request.content_length is not None and request.content_length > 8192:
+        return jsonify(error="登录请求过大。"), 413
+    request.max_content_length = 8192
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {"access_token"}:
+        return jsonify(error="登录请求无效。"), 400
+    try:
+        user = verify_session(body["access_token"])
+    except LoginRequired as exc:
+        return auth_failure(str(exc))
+    except LoginForbidden as exc:
+        return auth_failure(str(exc), 403, "AUTH_FORBIDDEN")
+    except AuthUnavailable as exc:
+        return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
+    response = jsonify(user)
+    response.set_cookie(
+        COOKIE_NAME,
+        body["access_token"],
+        max_age=max(1, user["expires_at"] - int(time.time())),
+        path=COOKIE_PATH,
+        httponly=True,
+        secure=os.environ.get("COCKPIT_COOKIE_SECURE", "true").lower() != "false",
+        samesite="Strict",
+    )
+    return response
 
 
 @app.after_request
@@ -135,7 +304,7 @@ def operations_page():
 @app.get("/cockpit/operations/api/records")
 def operations_list():
     return jsonify(
-        operation_records.list_records(request.authorization.username, request.args)
+        operation_records.list_records(g.current_user["username"], request.args)
     )
 
 
@@ -143,7 +312,7 @@ def operations_list():
 def operations_detail(source, record_id):
     return jsonify(
         operation_records.detail(
-            request.authorization.username,
+            g.current_user["username"],
             source,
             record_id,
             request.args.get("after", -1),
@@ -154,7 +323,14 @@ def operations_detail(source, record_id):
 @app.get("/cockpit/users/api/user/<int:target_id>")
 def user_profile_detail(target_id):
     return jsonify(
-        user_management.detail(request.authorization.username, "user", target_id)
+        user_management.detail(g.current_user["username"], "user", target_id)
+    )
+
+
+@app.get("/cockpit/users/api/user/<int:target_id>/groups")
+def user_profile_groups(target_id):
+    return jsonify(
+        user_management.user_group_options(g.current_user["username"], target_id)
     )
 
 
@@ -162,7 +338,7 @@ def user_profile_detail(target_id):
 def user_profile_action(target_id):
     return jsonify(
         user_management.single_action(
-            request.authorization.username, "user", target_id, management_body()
+            g.current_user["username"], "user", target_id, management_body()
         )
     )
 
@@ -197,9 +373,7 @@ def quota_preview():
     if request.headers.get("X-Quota-Action") != "preview":
         return jsonify(error="请求来源无效。"), 403
     return jsonify(
-        quota_backend.preview(
-            request.authorization.username, request.get_json(silent=True)
-        )
+        quota_backend.preview(g.current_user["username"], request.get_json(silent=True))
     )
 
 
@@ -208,9 +382,7 @@ def quota_apply():
     if request.headers.get("X-Quota-Action") != "confirm":
         return jsonify(error="请先确认额度调整。"), 403
     return jsonify(
-        quota_backend.apply(
-            request.authorization.username, request.get_json(silent=True)
-        )
+        quota_backend.apply(g.current_user["username"], request.get_json(silent=True))
     )
 
 
@@ -224,7 +396,7 @@ def quota_schedule_write_allowed():
 
 @app.get("/cockpit/users/api/schedules")
 def quota_schedules_list():
-    return jsonify(quota_schedule.list_rules(request.authorization.username))
+    return jsonify(quota_schedule.list_rules(g.current_user["username"]))
 
 
 @app.post("/cockpit/users/api/schedules")
@@ -233,7 +405,7 @@ def quota_schedule_create():
         return jsonify(error="不允许的定时规则请求。"), 403
     return jsonify(
         quota_schedule.save_rule(
-            request.authorization.username, request.get_json(silent=True)
+            g.current_user["username"], request.get_json(silent=True)
         )
     ), 201
 
@@ -246,15 +418,13 @@ def quota_schedule_change(rule_id):
         return jsonify(error="不允许的定时规则请求。"), 403
     body = request.get_json(silent=True)
     if request.method == "DELETE":
-        quota_schedule.delete_rule(request.authorization.username, rule_id, body)
+        quota_schedule.delete_rule(g.current_user["username"], rule_id, body)
         return jsonify(deleted=True)
     if request.method == "PATCH":
         return jsonify(
-            quota_schedule.set_enabled(request.authorization.username, rule_id, body)
+            quota_schedule.set_enabled(g.current_user["username"], rule_id, body)
         )
-    return jsonify(
-        quota_schedule.save_rule(request.authorization.username, body, rule_id)
-    )
+    return jsonify(quota_schedule.save_rule(g.current_user["username"], body, rule_id))
 
 
 @app.errorhandler(quota_schedule.ScheduleConflict)
@@ -299,13 +469,13 @@ def management_body():
 
 @app.get("/cockpit/keys/api/options")
 def management_options():
-    return jsonify(user_management.options(request.authorization.username))
+    return jsonify(user_management.options(g.current_user["username"]))
 
 
 @app.post("/cockpit/keys/api/query/grouped")
 def management_query():
     return jsonify(
-        user_management.list_grouped(request.authorization.username, management_body())
+        user_management.list_grouped(g.current_user["username"], management_body())
     )
 
 
@@ -313,15 +483,13 @@ def management_query():
 def management_detail(kind, target_id):
     if kind != "token":
         return jsonify(error="Not Found"), 404
-    return jsonify(
-        user_management.detail(request.authorization.username, kind, target_id)
-    )
+    return jsonify(user_management.detail(g.current_user["username"], kind, target_id))
 
 
 @app.get("/cockpit/keys/api/token/<int:token_id>/groups")
 def management_token_groups(token_id):
     return jsonify(
-        user_management.token_group_options(request.authorization.username, token_id)
+        user_management.token_group_options(g.current_user["username"], token_id)
     )
 
 
@@ -331,7 +499,7 @@ def management_action(kind, target_id):
         return jsonify(error="Not Found"), 404
     return jsonify(
         user_management.single_action(
-            request.authorization.username, kind, target_id, management_body()
+            g.current_user["username"], kind, target_id, management_body()
         )
     )
 
@@ -339,16 +507,14 @@ def management_action(kind, target_id):
 @app.post("/cockpit/keys/api/groups/preview")
 def management_group_preview():
     return jsonify(
-        user_management.preview_group(request.authorization.username, management_body())
+        user_management.preview_group(g.current_user["username"], management_body())
     )
 
 
 @app.post("/cockpit/keys/api/operations/<uuid:operation_id>/apply")
 def management_group_apply(operation_id):
     management_body()
-    return jsonify(
-        user_management.apply_wave(request.authorization.username, operation_id)
-    )
+    return jsonify(user_management.apply_wave(g.current_user["username"], operation_id))
 
 
 @app.errorhandler(user_management.Forbidden)
@@ -396,7 +562,7 @@ def scope_context():
 
 
 def scope_kwargs():
-    """Leave legacy default calls unchanged; pass explicit ledger IDs otherwise."""
+    """Pass an explicit ledger ID only when the caller selected one."""
     scope = scope_context()
     return {"scope_id": scope["id"]} if "scope_id" in request.args else {}
 
@@ -459,7 +625,7 @@ def selected(*, by_token=False, include_failures=False):
 def report_rows(rows):
     if request.args.get("details") == "lazy" and balance.configured():
         return report_snapshots.create(
-            rows, request.authorization.username, scope_context()["id"]
+            rows, g.current_user["username"], scope_context()["id"]
         )
     return rows
 
@@ -470,7 +636,7 @@ def usage_details():
         return jsonify(error="不允许的详情请求。"), 403
     return jsonify(
         rows=report_snapshots.fetch(
-            request.get_json(), request.authorization.username, scope_context()["id"]
+            request.get_json(), g.current_user["username"], scope_context()["id"]
         )
     )
 
@@ -585,7 +751,7 @@ def export():
 
 
 def monitor_write_allowed():
-    # Basic credentials are ambient. A custom header plus JSON blocks cross-site forms.
+    # Session cookies are ambient. A custom header plus JSON blocks cross-site forms.
     return (
         request.headers.get("X-Statistics-Request") == "1"
         and request.is_json
@@ -647,7 +813,7 @@ def balance_settings():
         return jsonify(error="不允许的设置请求。"), 403
     try:
         balance.save_settings(
-            request.get_json(), request.authorization.username, **scope_kwargs()
+            request.get_json(), g.current_user["username"], **scope_kwargs()
         )
     except balance.SettingsConflict:
         return jsonify(error="设置已被其他管理员修改，请重新打开设置。"), 409
@@ -681,7 +847,7 @@ def balance_recalculate_history():
         result = balance.recalculate_history(
             payload.get("settings"),
             payload.get("preview"),
-            request.authorization.username,
+            g.current_user["username"],
             **scope_kwargs(),
         )
     except balance.SettingsConflict:
@@ -730,7 +896,7 @@ def notification_settings():
     if not monitor_write_allowed():
         return jsonify(error="不允许的设置请求。"), 403
     try:
-        notifications.save(request.get_json(), request.authorization.username)
+        notifications.save(request.get_json(), g.current_user["username"])
     except balance.SettingsConflict:
         return jsonify(error="渠道配置已改变，请重新打开设置。"), 409
     return jsonify(notifications.snapshot())

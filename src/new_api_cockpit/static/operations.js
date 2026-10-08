@@ -3,7 +3,7 @@
   'use strict';
   const $=id=>document.getElementById(id);
   const states={running:'执行中',completed:'全部成功',partial:'部分完成',sending:'请求中（需核对）',success:'成功',failed:'失败',unknown:'结果不明确',conflict:'配置冲突'};
-  const labels={'user.create':'新增用户','user.edit':'编辑用户','user.password':'重置密码','user.enable':'启用用户','user.disable':'禁用用户','user.delete':'删除用户','user.pat_create':'补建用户 PAT','token.create':'新增 KEY','token.edit':'编辑 KEY','token.quota':'KEY 额度调整','token.enable':'启用 KEY','token.disable':'禁用 KEY','token.delete':'删除 KEY','token.reveal':'查看 KEY','token.group':'KEY 改组','token.batch_group':'批量 KEY 改组','quota.add':'增加用户额度','quota.subtract':'减少用户额度','schedule.create':'新增定时规则','schedule.edit':'编辑定时规则','schedule.enable':'启用定时规则','schedule.disable':'停用定时规则','schedule.delete':'删除定时规则','schedule.execute':'定时额度执行'};
+  const labels={'user.create':'新增用户','user.edit':'编辑用户','user.group':'用户改组','user.password':'重置密码','user.enable':'启用用户','user.disable':'禁用用户','user.delete':'删除用户','user.pat_create':'补建用户 PAT','token.create':'新增 KEY','token.edit':'编辑 KEY','token.quota':'KEY 额度调整','token.enable':'启用 KEY','token.disable':'禁用 KEY','token.delete':'删除 KEY','token.reveal':'查看 KEY','token.group':'KEY 改组','token.batch_group':'批量 KEY 改组','quota.add':'增加用户额度','quota.subtract':'减少用户额度','schedule.create':'新增定时规则','schedule.edit':'编辑定时规则','schedule.enable':'启用定时规则','schedule.disable':'停用定时规则','schedule.delete':'删除定时规则','schedule.execute':'定时额度执行'};
   const money=value=>Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
   const time=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';
   let cursors=[null],page=0,next=null,busy=false,epoch=0,detailBusy=false,detailEpoch=0,current=null,after=null;

@@ -7,5 +7,6 @@
     <a href="/cockpit/keys/" {% if request.path.startswith('/cockpit/keys') %}aria-current="page"{% endif %} title="令牌管理">{{ icon('key-round') }}<span class="nav-label">令牌管理</span></a>
     <a href="/cockpit/operations/" {% if request.path.startswith('/cockpit/operations') %}aria-current="page"{% endif %} title="操作记录">{{ icon('scroll-text') }}<span class="nav-label">操作记录</span></a>
   </nav>
+  <div class="sidebar-account"><span class="nav-label">{{ current_user.username if current_user else "" }}</span><button id="logout" class="button-ghost" type="button" title="退出当前浏览器的 New API 登录">{{ icon('power') }}<span class="nav-label">退出登录</span></button><p id="logout-status" role="status" class="nav-label"></p></div>
 </aside>
 <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="关闭导航" hidden></button>

@@ -490,6 +490,50 @@ def token_group_options(username, token_id):
     }
 
 
+def available_user_groups():
+    """Account groups use global ratios, not a KEY owner's usable-group policy."""
+    with quota.connect() as conn:
+        values = {
+            row["key"]: row["value"]
+            for row in conn.execute(
+                "SELECT key,value FROM options WHERE key='GroupRatio'"
+            )
+        }
+    return sorted(
+        group
+        for group in config_map(values, "GroupRatio", DEFAULT_GROUP_RATIO)
+        if isinstance(group, str)
+        and group.strip()
+        and group != "auto"
+        and len(group) <= 64
+    )
+
+
+def user_group_options(username, user_id):
+    """Opening the user-group menu never calls New API or provisions a PAT."""
+    operator = actor(username)
+    user = target(operator, user_id)
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "group": user["group"] or "",
+        "available_groups": available_user_groups(),
+        "persistence": balance.configured(),
+    }
+
+
+def validate_user_group(changes):
+    group = changes.get("group")
+    if (
+        set(changes) != {"group"}
+        or not isinstance(group, str)
+        or len(group) > 64
+        or group not in available_user_groups()
+    ):
+        raise ManagementError("请选择 New API 已配置的用户组，只能修改用户组字段。")
+    return group
+
+
 def amount_units(value):
     # Reuse exact, bounded Decimal validation, including pathological inputs.
     raw = str(value)
@@ -563,6 +607,8 @@ def _perform(operator, kind, object_id, action, changes, before=None):
                 method="POST",
                 body={"id": user["id"], "action": action},
             )
+        if action == "group":
+            group = validate_user_group(changes)
         data = call_api(operator, operator["id"], f"/api/user/{user['id']}")
         payload = {k: data.get(k, "") for k in USER_FIELDS}
         payload.update(id=user["id"], role=user["role"])
@@ -588,6 +634,21 @@ def _perform(operator, kind, object_id, action, changes, before=None):
                 or len(payload["remark"]) > 255
             ):
                 raise ManagementError("用户名、显示名或备注长度无效。")
+        elif action == "group":
+            if data.get("group") == group:
+                raise Conflict("用户已在目标组，请刷新用户列表。")
+            # Preserve the latest role as well as other profile fields; the
+            # group shortcut must never reset a concurrent role modification.
+            role = data.get("role", user["role"])
+            if type(role) is not int:
+                raise ManagementError("New API 用户资料响应无效。")
+            if (
+                operator["role"] != 100
+                and operator["role"] <= role
+                and operator["id"] != user["id"]
+            ):
+                raise Forbidden("无权管理同级或更高权限用户。")
+            payload.update(group=group, role=role)
         else:
             raise ManagementError("用户操作无效。")
         return call_api(
@@ -774,6 +835,9 @@ def single_action(username, kind, object_id, body):
         user, target_id = token_owner(operator, object_id)
         user_id = user["id"]
         identity = {"id": user_id, "username": user["username"]}
+    if kind == "user" and action == "group":
+        if validate_user_group(changes) == user["group"]:
+            raise Conflict("用户已在目标组，请刷新用户列表。")
     _audit_ready()
     operation_id = uuid.uuid4()
     safe = _safe_changes(changes)

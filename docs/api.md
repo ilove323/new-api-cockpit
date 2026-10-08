@@ -64,12 +64,12 @@ alert 包含 title、site_name、budget、spent、remaining、threshold、curren
 checked_at、timezone，金额为数字，时间为带时区 ISO 8601。
 无报警返回 `{"has_alert":false,"alert":null}`。
 并发检查冲突返回 409，数据库失败返回 503，查询超时返回 504。
-认证失败返回 401。对外接口不接受 Basic Auth。
+认证失败返回 401；请检查 Bearer PAT 是否有效及账号权限。
 
 ## 网页内部接口与权限
 
 `/cockpit/statistics/api/balance/status` 用于余额窗口的状态、报警和月度归档展示。
-网页及其内部管理接口使用管理员 Basic Auth，不向普通令牌开放管理权限；
+网页及内部管理接口使用经 New API 验证的管理员登录会话，不向 PAT 或模型调用令牌开放页面管理权限；
 上述 `/cockpit/statistics/api/balance` 与 `/cockpit/statistics/api/alert` 对外接口仅使用管理员 PAT Bearer。
 统一 `/cockpit/` Nginx 转发覆盖页面、静态资源和 API。只通过 HTTPS 对外使用，不在 URL 中传递凭据。
 
@@ -95,7 +95,8 @@ curl --fail-with-body -H 'Authorization: Bearer <管理员PAT>' \
 
 ## 网页报表的按需详情（管理员内部接口）
 
-这些接口仍使用网页管理员 Basic Auth，不属于上述 PAT 对外余额接口。
+这些接口使用网页管理员登录会话，不属于上述 PAT 对外余额接口。
+未登录的内部 API 返回 JSON 401；业务页面跳转 `/cockpit/login`，静态资源无需认证。见[登录与会话](authentication.md)。
 
 - `/cockpit/statistics/api/usage`、`/cockpit/statistics/api/usage/by-token` 和
   `/cockpit/statistics/api/usage/by-selection` 支持 `details=lazy`。

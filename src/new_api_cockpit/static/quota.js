@@ -45,7 +45,9 @@ function render(){
     const id=document.createElement('td');id.textContent=user.id;row.append(id);
     const name=document.createElement('td');name.textContent=user.username;
     if(user.display_name){const display=document.createElement('span');display.className='display-name';display.textContent=user.display_name;name.append(display);}row.append(name);
-    const group=document.createElement('td');group.className='user-group';group.textContent=user.user_group||'未分组';row.append(group);
+    const group=document.createElement('td');group.className='user-group';
+    if(globalThis.UserProfiles?.groupPicker)group.append(globalThis.UserProfiles.groupPicker(user,executing));
+    else group.textContent=user.user_group||'未分组';row.append(group);
     const state=document.createElement('td');state.className=user.status===1?'status-enabled':'status-disabled';state.textContent=user.status===1?'启用':'禁用';row.append(state);
     for(const value of [user.quota_yuan,user.used_quota_yuan]){const cell=document.createElement('td');cell.textContent=tableMoney(value);row.append(cell);}
     const keys=document.createElement('td'),link=document.createElement('a');link.href='/cockpit/keys/?user_id='+user.id;link.textContent=String(user.token_count??0);keys.append(link);row.append(keys);
