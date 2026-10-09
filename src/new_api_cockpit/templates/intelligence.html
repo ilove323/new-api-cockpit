@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 智力测试</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <link rel="stylesheet" href="/cockpit/static/intelligence.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/intelligence.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main class="intelligence-page">
+    <section class="page-panel">
+      <div class="page-heading"><h1>智力测试</h1></div>
+      <h2>鹈鹕骑车测试</h2>
+      <p class="intelligence-prompt">{{ prompt }}</p>
+      <form id="intelligence-test" class="intelligence-controls">
+        <label class="intelligence-model-control">模型
+          <input id="intelligence-search" type="search" placeholder="搜索模型" autocomplete="off" aria-label="搜索可测试模型">
+          <select id="intelligence-model" aria-label="选择测试模型" required disabled><option value="">正在加载模型…</option></select>
+        </label>
+        <label>自动分组<input id="intelligence-group" readonly value="—" aria-label="自动匹配的分组"></label>
+        <button id="intelligence-start" type="submit" disabled>{{ icon('flask-conical') }}开始测试</button>
+      </form>
+      <p class="intelligence-hint">使用当前管理员的专用测试 KEY，正常扣除账户余额。结果仅在当前页面，刷新即清空。</p>
+      <p id="intelligence-status" role="status" aria-live="polite" hidden></p>
+    </section>
+    <section id="intelligence-result" class="page-panel" hidden>
+      <div class="page-heading"><h2>生成结果</h2><span id="intelligence-result-info"></span></div>
+      <div class="table-toolbar">
+        <button id="intelligence-effect" type="button" aria-pressed="true">效果</button>
+        <button id="intelligence-source-button" type="button" aria-pressed="false">源码</button>
+        <span class="toolbar-end"></span>
+        <button id="intelligence-replay" type="button">{{ icon('refresh-cw') }}重新播放</button>
+        <button id="intelligence-fullscreen" type="button">全屏</button>
+      </div>
+      <div id="intelligence-preview" class="intelligence-preview"></div>
+      <pre id="intelligence-source" class="intelligence-source" hidden></pre>
+    </section>
+  </main>
+</body>
+</html>

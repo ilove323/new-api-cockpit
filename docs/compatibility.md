@@ -11,7 +11,7 @@
 | users | access_token, id, username, display_name, group, role, status, quota, used_quota, deleted_at |
 | tokens | id, user_id, key, name, status, created_time, accessed_time, expired_time, remain_quota, used_quota, unlimited_quota, model_limits_enabled, model_limits, allow_ips, group, cross_group_retry, auto_groups, deleted_at |
 | options | key, value |
-| channels | id, name, status, tag |
+| channels | id, name, status, tag；智力测试还读取 type, models, group, priority |
 
 用户管理还读取 `users.remark`；PAT 补建按版本存在的 `access_token_created_at` 写入创建时间。
 源库 PAT 须是可回读的原生格式；加密或只保存哈希的 fork 不适用。
@@ -36,3 +36,12 @@ Token 单价可能留空，但消费金额仍取日志，不能用当前单价�
 
 缓存字段和模型语义见[统计口径](calculation.md)。自定义 fork 改动数据库、
 配额单位或缓存语义时，须以虚构样本验证后接入。
+
+渠道质量额外读取 `logs.request_id`、`is_stream`、`use_time`、`completion_tokens`；缺失时降级显示，不强制增加源库字段。
+精确渠道尝试依赖 `other.admin_info.request_policy` 的 attempt/channel_id/elapsed_ms/decision；
+首响应依赖 `other.frt`，异常流式状态依赖 `other.stream_status`。没有这些字段时不能还原相同质量口径，见[渠道质量](quality.md)。
+
+智力测试依赖管理员模型目录 `/api/models/`（含渠道模型）、所属用户的官方令牌管理接口及管理员指定渠道能力。
+Anthropic 类型 14 使用 `/v1/messages`，其他渠道使用 `/v1/chat/completions`。
+目录仅列支持文本生成且当前管理员有可用渠道的模型；对应渠道不接受上述协议时会直接报错，不切换协议重试。
+Claude 必需的 `max_tokens` 由 New API 常规转发按配置补齐，请求体透传模式需由上游提供默认值，见[智力测试](intelligence.md)。

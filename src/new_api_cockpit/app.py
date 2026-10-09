@@ -34,6 +34,8 @@ from new_api_cockpit import (
     user_management,
     operation_records,
     openapi,
+    quality,
+    intelligence,
 )
 
 from new_api_cockpit.report import (
@@ -98,6 +100,10 @@ def safe_next(value):
         "/cockpit/operations/",
         "/cockpit/docs",
         "/cockpit/docs/",
+        "/cockpit/quality",
+        "/cockpit/quality/",
+        "/cockpit/intelligence",
+        "/cockpit/intelligence/",
         "/cockpit/api/statistics/export",
     }
     return value if not parsed.netloc and parsed.path in paths else default
@@ -170,6 +176,8 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
         "keys_page",
         "operations_page",
         "api_docs_page",
+        "quality_page",
+        "intelligence_page",
     }
     if is_page and status == 401:
         response = redirect(login_url(), 302)
@@ -306,6 +314,20 @@ def headers(response):
             "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
+    if request.endpoint == "intelligence_page":
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "frame-src 'self'; connect-src 'self'; img-src 'self' data:; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
+    if request.endpoint == "intelligence_preview":
+        # The HTTP sandbox also applies when the generated document is opened
+        # directly. Never relax the parent's script policy to render model HTML.
+        response.headers["Content-Security-Policy"] = intelligence.PREVIEW_CSP
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        )
     return response
 
 
@@ -396,6 +418,101 @@ def index():
         ),
         end=now.strftime("%Y-%m-%dT%H:%M:%S"),
     )
+
+
+@app.get("/cockpit/quality")
+@app.get("/cockpit/quality/")
+def quality_page():
+    from datetime import timedelta
+
+    now = datetime.now(TZ).replace(microsecond=0)
+    return render_template(
+        "quality.html",
+        site_name=load_site_name(),
+        start=(now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S"),
+        end=now.strftime("%Y-%m-%dT%H:%M:%S"),
+    )
+
+
+@app.get("/cockpit/api/quality/summary")
+def quality_summary():
+    return jsonify(quality.load(request.args))
+
+
+@app.get("/cockpit/api/quality/trends")
+def quality_trends():
+    return jsonify(quality.load(request.args, with_trends=True))
+
+
+@app.errorhandler(quality.QualityUnavailable)
+def quality_unavailable(exc):
+    return jsonify(error=str(exc)), 503
+
+
+def intelligence_credential():
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, value = authorization.partition(" ")
+    return value if scheme.lower() == "bearer" else request.cookies.get(COOKIE_NAME)
+
+
+@app.get("/cockpit/intelligence")
+@app.get("/cockpit/intelligence/")
+def intelligence_page():
+    return render_template(
+        "intelligence.html", site_name=load_site_name(), prompt=intelligence.PROMPT
+    )
+
+
+@app.get("/cockpit/api/intelligence/models")
+def intelligence_models():
+    return jsonify(
+        intelligence.model_options(g.current_user, intelligence_credential())
+    )
+
+
+@app.post("/cockpit/api/intelligence/test")
+def intelligence_test():
+    request.max_content_length = 4096
+    if request.headers.get("X-Intelligence-Request") != "1" or not request.is_json:
+        return jsonify(error="请使用 JSON 和 X-Intelligence-Request: 1 发起测试。"), 403
+    return jsonify(
+        intelligence.run(
+            g.current_user, intelligence_credential(), request.get_json(silent=True)
+        )
+    )
+
+
+@app.post("/cockpit/api/intelligence/preview")
+def intelligence_preview():
+    # Stateless POST: HTML stays in this page, never in a URL, file or table.
+    request.max_content_length = intelligence.MAX_HTML_BYTES * 3 + 8192
+    request.max_form_memory_size = request.max_content_length
+    if request.is_json:
+        if request.headers.get("X-Intelligence-Request") != "1":
+            return jsonify(error="缺少预览请求头。"), 403
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or set(body) != {"html"}:
+            return jsonify(error="只允许提供 HTML。"), 400
+        html = body["html"]
+    else:
+        # A form targets the sandbox frame without enabling inline scripts in
+        # the parent. Require browser same-origin POST AND the page's session ID.
+        if (
+            request.mimetype != "application/x-www-form-urlencoded"
+            or not request.headers.get("Origin")
+            or not g.current_user.get("session_id")
+            or request.form.get("session_id") != g.current_user["session_id"]
+        ):
+            return jsonify(error="预览会话或来源不匹配，请重新加载页面。"), 403
+        html = request.form.get("html")
+    response = make_response(intelligence.preview_document(html))
+    response.mimetype = "text/html"
+    return response
+
+
+@app.errorhandler(intelligence.IntelligenceError)
+def intelligence_error(exc):
+    return jsonify(error=str(exc), uncertain=exc.uncertain), exc.status
 
 
 @app.get("/cockpit/users")
@@ -982,6 +1099,8 @@ def schema_unavailable(exc):
 def database_error(exc):
     app.logger.error("Database query failed: %s", type(exc).__name__)
     if isinstance(exc, psycopg.errors.QueryCanceled):
+        if request.path.startswith("/cockpit/api/quality/"):
+            return jsonify(error="查询超过 30 秒，请缩小时间范围后重试。"), 504
         return jsonify(error="查询超过 60 秒，请缩小时间范围后重试。"), 504
     return jsonify(error="数据库查询失败，请检查连接配置与数据库日志。"), 503
 

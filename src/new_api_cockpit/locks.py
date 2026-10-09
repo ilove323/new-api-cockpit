@@ -14,3 +14,6 @@ REPORT_SNAPSHOT_NAMESPACE = 90216324
 
 # A session leader lock, never the short-lived balance transaction lock.
 BALANCE_SCHEDULER_LOCK = 90216325
+
+# Per-administrator, request-scoped model testing. No task or result persistence.
+INTELLIGENCE_NAMESPACE = 90216326

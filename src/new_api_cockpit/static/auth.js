@@ -14,7 +14,7 @@
   const channelName = 'new-api:auth-session';
   const storageKey = 'new-api:auth-session:event';
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(channelName) : null;
-  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/docs', '/cockpit/docs/', '/cockpit/api/statistics/export']);
+  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/docs', '/cockpit/docs/', '/cockpit/quality', '/cockpit/quality/', '/cockpit/intelligence', '/cockpit/intelligence/', '/cockpit/api/statistics/export']);
 
   function safeNext(value) {
     if (typeof value !== 'string' || /[\\\x00-\x1f\x7f]/.test(value) || !value.startsWith('/cockpit')) return '/cockpit/statistics/';

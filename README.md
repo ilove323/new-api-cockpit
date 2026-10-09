@@ -14,7 +14,8 @@
 </div>
 
 给 [New API](https://github.com/QuantumNous/new-api) 补一套统计和管理页面：查用量、对账、设余额告警，
-以及批量管理用户、令牌和额度。页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 管理员账号；
+批量管理用户、令牌和额度，比较渠道质量，也可以现场测试模型生成动画的效果。
+页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 管理员账号；
 在同站点登录过 New API，可以直接进入。
 
 本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，单独运行一个容器，
@@ -27,6 +28,8 @@
 | 页面 | 地址 | 可以做什么 |
 | --- | --- | --- |
 | 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
+| 渠道质量 | `/cockpit/quality/` | 查看性能健康和高频模型，比较渠道成功率、失败码、首字与总耗时分位数、平均输出 token/s 和费用，跳到对应日志 |
+| 智力测试 | `/cockpit/intelligence/` | 选择模型做鹈鹕骑车测试，直接查看生成的 SVG 动画和 HTML 源码；结果仅留在当前页面 |
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
@@ -45,10 +48,18 @@
 所有写操作需要监控库保存操作记录；只记录已发起的操作。KEY 管理使用所属用户的 PAT，缺失时通过受限函数补建。
 
 页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
-统计、用户、令牌和操作记录的地址、参数及调用示例见 [API 参考](docs/api.md)。
+各模块的地址、参数及调用示例见 [API 参考](docs/api.md)。
 余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
 登录后从侧边栏打开 API 文档即可在线调试，使用方法见[交互式文档](docs/interactive-api.md)。
 请求发往当前站点，修改和通知需要确认，不自动重试。
+
+渠道质量默认查看近 24 小时，当前启用渠道的上游在同一列表比较，不跟随余额账本或计费分组筛选；识别重试、流式异常与客户端取消，缺失数据不填成零。
+它只读取已有日志，不改变渠道或计费，口径与限制见[渠道质量](docs/quality.md)。
+
+智力测试使用当前管理员名下的专用 KEY，没有才创建，按所选模型自动换组。
+Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
+直接等待并显示结果，不保存测试历史；Cockpit 不设置输出 Token 上限，预览会按窗口缩放，也支持调整高度和全屏。
+调用正常计费，实际输出仍受 New API 和上游限制，详见[智力测试](docs/intelligence.md)。
 
 ## 部署
 
@@ -138,9 +149,10 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 ## 文档
 
 - 安装与维护：[部署](docs/deployment.md) · [兼容范围](docs/compatibility.md) · [升级与备份](docs/upgrading.md) · [发版与镜像](docs/releasing.md)
-- 统计与告警：[统计口径](docs/calculation.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
+- 统计与告警：[统计口径](docs/calculation.md) · [渠道质量](docs/quality.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
+- 模型测试：[鹈鹕骑车测试](docs/intelligence.md)
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
-- 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)（认证、统计、归档、用户、KEY、配额、规则和操作记录）
+- 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)
 
 问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。

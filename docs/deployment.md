@@ -86,6 +86,9 @@ curl --fail-with-body http://127.0.0.1:8091/healthz
 
 把 [nginx.conf.example](../nginx.conf.example) 的 `/cockpit` 与 `/cockpit/` location 加入现有 HTTPS `server` 块，
 New API 的 `/`、`/api/` 和 `/sign-in` 等路由继续转发到 New API。
+同步智力测试还需加入示例中 `/cockpit/api/intelligence/test` 的精确 location，读取超时为 300 秒；
+`/cockpit/api/intelligence/preview` 的精确 location 允许最多 2 MiB 表单，用于承载编码后的预览 HTML。
+其他接口继续使用普通 `/cockpit/` 的超时配置。已有 Nginx 不会随应用代码自动更新。
 业务页面、`/cockpit/docs/`、统一的 `/cockpit/api/` 接口和静态资源均由 Cockpit 处理。
 `proxy_pass` 不加末尾斜杠，必须把完整路径前缀转发到应用。
 使用 `Host $http_host` 保留原域名和端口，同源管理请求校验依赖此信息。
@@ -100,7 +103,7 @@ nginx -t
 nginx -s reload
 ```
 
-随后访问 `https://<你的域名>/cockpit/statistics/`、`https://<你的域名>/cockpit/users/`、`https://<你的域名>/cockpit/keys/` 或 `https://<你的域名>/cockpit/operations/`。如果修改了 `PORT`，应同步修改
+随后访问 `https://<你的域名>/cockpit/`，通过侧边栏进入各页面。如果修改了 `PORT`，应同步修改
 [nginx.conf.example](../nginx.conf.example) 中的 upstream 端口。HTTP 请求应跳转 HTTPS，避免明文传输登录凭据。
 
 如果 Nginx 也在容器内，需要将其加入共享 Docker 网络，并将 upstream 改为

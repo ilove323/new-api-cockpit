@@ -51,6 +51,14 @@ class APIDocsTest(unittest.TestCase):
         }
         self.assertEqual(described, actual)
         self.assertEqual(
+            {
+                path
+                for path in spec["paths"]
+                if path.startswith("/cockpit/api/quality/")
+            },
+            {"/cockpit/api/quality/summary", "/cockpit/api/quality/trends"},
+        )
+        self.assertEqual(
             spec["servers"],
             [{"url": "/", "description": "当前站点（保留协议、域名和端口）"}],
         )

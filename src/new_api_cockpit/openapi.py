@@ -1369,6 +1369,275 @@ def document():
         )
         entry[2]["security"] = [{"browserSession": []}]
         ops.append(entry)
+    quality_params = [
+        query(
+            "start",
+            text(),
+            "北京时间起点；省略默认近 24 小时。",
+            example="2026-10-09T00:00:00",
+        ),
+        query(
+            "end",
+            text(),
+            "北京时间终点，包含该秒；单次最多 31 天。",
+            example="2026-10-09T23:59:59",
+        ),
+        query(
+            "mode",
+            choice("channel", "upstream"),
+            "渠道明细或按渠道当前标签汇总；默认 channel。",
+        ),
+        query("stream", choice("all", "stream", "nonstream"), "请求方式，默认 all。"),
+        query(
+            "channel_status",
+            choice("enabled", "all"),
+            "默认 enabled，只统计 New API 当前启用且未删除的渠道；all 可查询包含禁用、已删除和未知渠道的历史。",
+        ),
+        query(
+            "latency_scope",
+            choice("direct", "all"),
+            "总耗时和平均 token/s 的样本范围，默认只采用确认无重试的成功调用；旧日志重试不计算速度。不改变请求/费用总数。",
+        ),
+        query(
+            "tag",
+            text(maxLength=256),
+            "按渠道当前标签限定上游；tag= 表示未分组。省略时展示全部上游，与余额账本无关。",
+        ),
+        *[
+            query(name, array(text(maxLength=256), maxItems=100), meaning)
+            for name, meaning in (
+                ("model", "精确匹配模型，可重复。"),
+                ("user", "精确匹配用户名，可重复。"),
+            )
+        ],
+        *[
+            query(name, array(integer(), maxItems=100), "非负 ID，可重复。")
+            for name in ("channel_id", "token_id")
+        ],
+    ]
+    nullable_metric = {"type": ["number", "null"]}
+    quality_row = obj(
+        {
+            "model_name": {"type": ["string", "null"]},
+            "target": {"type": ["string", "null"]},
+            "channel_id": integer(),
+            "channel_name": text(),
+            "tag_value": text(),
+            "channel_status": NULL_COUNT,
+            "is_deleted": BOOL,
+            **{
+                key: integer()
+                for key in (
+                    "request_count",
+                    "success_count",
+                    "failure_count",
+                    "ignored_count",
+                    "unknown_count",
+                    "legacy_count",
+                    "retry_or_unknown_count",
+                    "unique_requests",
+                    "duration_samples",
+                    "frt_samples",
+                    "tps_samples",
+                    "tps_output_tokens",
+                    "billed_records",
+                    "price_bucket_count",
+                )
+            },
+            **{
+                key: nullable_metric
+                for key in (
+                    "success_rate",
+                    "outcome_coverage",
+                    "duration_coverage",
+                    "duration_total_ms",
+                    "frt_coverage",
+                    "tps_coverage",
+                    "tps_duration_ms",
+                    "duration_p50_ms",
+                    "duration_p95_ms",
+                    "frt_p50_ms",
+                    "frt_p95_ms",
+                )
+            },
+            "avg_tokens_per_second": {
+                **nullable_metric,
+                "description": "tps_output_tokens * 1000 / tps_duration_ms，包含首字等待，不是纯生成速度；无有效成功样本时为 null。汇总重新累计后计算，不平均各行速度。",
+            },
+            "avg_duration_ms": {
+                **nullable_metric,
+                "description": "成功调用的有效总耗时之和 / duration_samples；样本范围与总耗时 P50/P95 一致。无有效样本为 null，汇总不平均各行均值。",
+            },
+            "sample_insufficient": BOOL,
+            "sample_request_ids": array(text()),
+            "amount": MONEY,
+            "failure_codes": obj(additionalProperties=integer()),
+            "pricing_buckets": array(
+                obj(
+                    {
+                        "group": text(),
+                        "group_ratio": {"type": ["string", "null"]},
+                        "tier": text(),
+                        "request_count": integer(),
+                        "amount": MONEY,
+                        "prices": {
+                            "type": ["object", "null"],
+                            "properties": {
+                                key: NULL_MONEY
+                                for key in (
+                                    "input_price",
+                                    "output_price",
+                                    "cache_price",
+                                    "write_price",
+                                )
+                            },
+                        },
+                    }
+                )
+            ),
+        }
+    )
+    quality_schemas = {"QualityRow": quality_row}
+    quality_schemas["Quality"] = obj(
+        {
+            "start": text(),
+            "end": text(),
+            "start_ts": integer(),
+            "end_ts": integer(),
+            "mode": choice("channel", "upstream"),
+            "latency_scope": choice("direct", "all"),
+            "channel_status": choice("enabled", "all"),
+            "rows": array(ref("QualityRow")),
+            "totals": ref("QualityRow"),
+            "top_models": array(
+                obj(
+                    {
+                        "model_name": {"type": ["string", "null"]},
+                        "request_count": integer(),
+                        "success_count": integer(),
+                        "failure_count": integer(),
+                        "success_rate": nullable_metric,
+                    }
+                ),
+                maxItems=6,
+                description="按当前时间、筛选和渠道范围合并同模型的全部渠道调用，以请求次数降序列出前六个模型；成功率按成功/失败合计重新计算。",
+            ),
+            "trends": array(obj({"hour": TIME, **quality_row["properties"]})),
+            "source_records": integer(),
+            "unsupported_records": integer(),
+            "warnings": array(text()),
+            "updated_at": TIME,
+            "options": obj(
+                {
+                    "models": array(text()),
+                    "users": array(text()),
+                    "tokens": array(obj({"id": integer(), "name": text()})),
+                    "channels": array(
+                        obj(
+                            {
+                                "channel_id": integer(),
+                                "channel_name": text(),
+                                "channel_status": NULL_COUNT,
+                                "tag_value": text(),
+                                "is_deleted": BOOL,
+                            }
+                        )
+                    ),
+                }
+            ),
+        }
+    )
+    for suffix, title in (
+        ("summary", "查询渠道质量"),
+        ("trends", "查询质量与小时趋势"),
+    ):
+        ops.append(
+            operation(
+                "GET",
+                "/cockpit/api/quality/" + suffix,
+                title,
+                "渠道质量",
+                ref("Quality"),
+                params=quality_params,
+                description="只读文本生成日志，默认统计当前启用渠道的全部上游，不按余额账本、计费分组或档位筛选，不应用余额渠道屏蔽规则。不接受 scope_id/group/tier 参数。按 request_id/attempt 去重路由记录；明确错误（含 400 等业务拒绝）计入失败，客户端取消和未知结果不计入成功率分母。关联同请求、同渠道、同尝试的错误日志读取 HTTP 错误码；没有错误码的流式失败明确标注，不推测成 500。页面不展示排除/未知列，API 保留相应计数。缺失指标 null；非完整可用率。全局 P50/P95 从原始有效样本重算，费用取历史 quota。summary 不加载历史价格组合；trends 才加载。超过 1000 个模型/渠道组合或异常 JSON 回退上限时返回 503，不返回部分合计。",
+            )
+        )
+    intelligence_models = obj(
+        {
+            "rows": array(
+                obj(
+                    {
+                        "model": text(),
+                        "group": text(),
+                        "available_groups": array(text()),
+                        "channel_id": integer(),
+                        "channel_type": integer(),
+                        "endpoint": choice("openai", "anthropic"),
+                    }
+                )
+            ),
+            "key_name": text(),
+            "prompt": text(),
+        }
+    )
+    ops.extend(
+        [
+            operation(
+                "GET",
+                "/cockpit/api/intelligence/models",
+                "查询可测试模型与自动分组",
+                "智力测试",
+                intelligence_models,
+                description="使用真实管理员身份查询官方 /api/models/ 管理目录（包含渠道模型），不依赖公开价格页开关。完整读取最多 2000 条目录记录，并与当前启用渠道、所属用户的分组权限取交集，只列支持文本生成的模型。优先用户组，否则按组名排序；组内按渠道优先级降序、ID 升序选取启用渠道。channel_id/channel_type 表示该渠道，类型 14 用 anthropic（Messages），其他用 openai（Chat Completions），不按模型名称或目录端点顺序判断。不创建 PAT/KEY，不保存测试结果。",
+            ),
+            operation(
+                "POST",
+                "/cockpit/api/intelligence/test",
+                "鹈鹕骑车测试（真实计费）",
+                "智力测试",
+                obj(
+                    {
+                        "model": text(),
+                        "group": text(),
+                        "endpoint": choice("openai", "anthropic"),
+                        "channel_id": integer(),
+                        "channel_type": integer(),
+                        "key_name": text(),
+                        "elapsed_ms": integer(),
+                        "html": {"type": ["string", "null"]},
+                        "source": text(),
+                        "warning": text(),
+                    }
+                ),
+                body=obj(
+                    {"model": text(maxLength=256)},
+                    ("model",),
+                    additionalProperties=False,
+                ),
+                example={"model": "gpt-6-astra"},
+                header=("X-Intelligence-Request", "1"),
+                effect="write",
+                description="同步等待模型返回，不创建后台任务或测试历史。开始时重新选择可用分组及渠道，Anthropic 渠道（类型 14）调用 /v1/messages，其他调用 /v1/chat/completions；通过官方管理员指定渠道机制固定本次路由，失败不换渠道或协议。当前管理员名下复用 cockpit-智力测试专用 KEY，没有才通过官方 API 创建；自动改组并限制为所选模型。首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 额度/到期/启禁配置不重置。只允许 model，不允许指定用户、渠道、分组、凭据或题目。同一管理员并发返回 409；生成最长 180 秒，Cockpit 不设置输出 Token 上限参数；Claude 必需的 max_tokens 由 New API 配置补齐，实际仍受上游限制。超时/失败不自动重试，可能已产生费用。测试结果只在响应中；KEY 创建/配置沿用现有审计。不支持接续或按 ID 取回结果。html 为 null 时看 source/warning，不自动补代码或再次调用模型。",
+            ),
+            operation(
+                "POST",
+                "/cockpit/api/intelligence/preview",
+                "沙箱预览当前 HTML",
+                "智力测试",
+                text(),
+                body=obj(
+                    {"html": text(maxLength=524288)},
+                    ("html",),
+                    additionalProperties=False,
+                ),
+                example={
+                    "html": '<html><body><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="20"/></svg></body></html>'
+                },
+                header=("X-Intelligence-Request", "1"),
+                description="仅在当前请求中返回 HTML，最大 512 KiB，不保存、不调用模型。响应通过 HTTP CSP 强制 sandbox allow-scripts，禁止同源访问、外部资源/连接、表单和顶层跳转。只在预览响应附加回传宽高的尺寸脚本，让页面自适应缩放，不改变测试返回的源码。管理页面脚本策略不放宽。页面 iframe 使用同源会话表单传入 HTML；表单必须有 Origin 和匹配的 session_id，不能以 PAT 表单绕过。这里描述外部调用的 JSON 形式。",
+            ),
+        ]
+    )
     paths = {}
     for path, method, spec in ops:
         paths.setdefault(path, {})[method] = spec
@@ -1377,6 +1646,13 @@ def document():
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
             "schema": text(format="binary")
         }
+    }
+    paths["/cockpit/api/intelligence/preview"]["post"]["responses"]["200"][
+        "content"
+    ] = {"text/html": {"schema": text()}}
+    paths["/cockpit/api/intelligence/test"]["post"]["responses"]["504"] = {
+        "description": "同步生成超时，可能已计费；不自动重试。",
+        "content": {"application/json": {"schema": ref("Error")}},
     }
     paths["/cockpit/api/statistics/balance"]["get"]["responses"]["503"] = {
         "description": "余额不可用时返回 code/message；认证或数据库故障也可能返回通用错误。",
@@ -1416,6 +1692,8 @@ def document():
             for name in (
                 "余额与报警",
                 "用量统计",
+                "渠道质量",
+                "智力测试",
                 "通知渠道",
                 "用户管理",
                 "用户额度",
@@ -1442,7 +1720,7 @@ def document():
                     "description": "HttpOnly 登录会话，由浏览器发送，不能从页面读取。",
                 },
             },
-            "schemas": SCHEMAS,
+            "schemas": {**SCHEMAS, **quality_schemas},
         },
     }
 

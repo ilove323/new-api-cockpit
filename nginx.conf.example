@@ -4,6 +4,24 @@ location = /cockpit {
     absolute_redirect off;
     return 302 /cockpit/statistics/$is_args$args;
 }
+# Synchronous model generation; other APIs keep their normal timeout.
+location = /cockpit/api/intelligence/test {
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 300s;
+}
+# Form encoding may triple the 512 KiB preview document size.
+location = /cockpit/api/intelligence/preview {
+    client_max_body_size 2m;
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 90s;
+}
 location ^~ /cockpit/ {
     proxy_pass http://127.0.0.1:8091;
     proxy_set_header Host $http_host;

@@ -15,14 +15,15 @@ statistics：一个应用容器
         ├─ New API PostgreSQL：只读查询；受限函数仅补建缺失 PAT
         ├─ 独立监控 PostgreSQL：预算、归档、报警、规则与操作记录
         ├─ New API 管理 API：用户、KEY 和配额修改
+        ├─ New API 模型 API：同步测试生成；结果只返回浏览器
         └─ 飞书 / 钉钉 / SMTP 邮件：独立启停、报警分发
 ```
 
 两个数据库可以位于同一 PostgreSQL 实例，但必须分库配置。
 余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。所有时间边界使用北京时间。
-业务页面为 `/cockpit/statistics/`、`/cockpit/users/`、`/cockpit/keys/`、`/cockpit/operations/`；
-`/cockpit/docs/` 提供接口指南和在线调试，共用顶栏与侧边栏。
-业务接口统一为 `/cockpit/api/statistics/...`、`/cockpit/api/users/...`、`/cockpit/api/keys/...`、`/cockpit/api/operations`，
+`/cockpit/` 下包含用量统计、渠道质量、智力测试、用户管理、令牌管理、操作记录和 API 文档，
+共用顶栏与侧边栏；完整页面地址见 [README](../README.md#功能)。
+业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`users`、`keys`、`operations` 模块，
 页面与外部程序调用同一套接口和权限，不另建一份外部管理逻辑。
 部署参数见[部署](deployment.md)，视觉规范见[界面](ui.md)。
 
@@ -43,6 +44,8 @@ statistics：一个应用容器
 | `app.py`、`auth.py` | 页面及 API、输入边界、管理员身份校验 |
 | `openapi.py`、`static/api-docs*.js` | 显式接口契约、请求示例、单次调试与操作确认；不替代后端授权 |
 | `runtime.py`、`gunicorn_conf.py`、`timers.py`、`quota_timer.py` | 启动迁移、进程生命周期、两种内置调度与健康检查 |
+| `quality.py`、`quality.sql`、`static/quality.js` | 只读渠道尝试去重、当前标签对比、结果分类、性能健康、耗时分位数和历史价格查询 |
+| `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、管理员专用 KEY 复用与自适应沙箱预览，不保存结果 |
 | `report.py`、`usage.sql`、`metadata_fallback.py` | 只读用量聚合、异常日志兼容、排名与 Excel |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
 | `report_snapshots.py` | 按管理员与账本隔离、限时保留的不可变展示详情 |
@@ -98,3 +101,21 @@ PAT 每次从源库读取，不放在浏览器、配置或监控库；缺失时�
 不保存密码、PAT、完整 KEY 或远端原始响应；未曾保存的操作不补造记录。
 记录显示目标用户的用户名与 ID；批量目标按用户去重，定时规则显示规则 ID 和目标用户组。
 操作记录保留目标快照，缺少用户名时批量解析，不重写已保存记录，不为展示生成 PAT。
+
+## 渠道质量分析
+
+`/cockpit/quality/` 独立于用量和账本计算。正常查询在源库单个只读快照内聚合路由尝试、费用和分位数，
+不加载账本切换控件或解析 `scope_id`，不按计费分组、档位或余额渠道排除名单限制结果。
+默认查询只读取源库的当前启用渠道；接口选择全部历史渠道时，才读取监控库存补充已删除渠道的名称和标签。
+当前渠道信息优先于库存。分析只用已有日志，不启动采样或调度任务，也不新增表。
+默认只统计当前启用渠道。性能健康复用相同只读快照：平均延迟从有效耗时合计和样本数计算，高频模型从完整渠道结果合并计数后排序，不平均各行比例或延迟。
+HTTP 接口为 `/cockpit/api/quality/summary` 和 `/cockpit/api/quality/trends`。规则和边界见[渠道质量](quality.md)。
+
+## 智力测试
+
+`/cockpit/intelligence/` 发起同步生成，请求内完成模型目录核验、专用 KEY 准备和调用。
+当前管理员在不同 Web 进程间通过 session advisory lock 串行使用其测试 KEY；不创建后台任务、线程池或新表。
+生成结果只返回浏览器。预览把当前 HTML 同源 POST 到独立沙箱响应，不放在 URL、文件或服务端缓存里。
+尺寸测量脚本是随包分发的固定资源，每个应用进程加载一次；生成内容不参与缓存。
+只有 KEY 创建/配置沿用现有操作审计，复用原 PAT 补建能力，不增加源库写权限。
+接口在 `/cockpit/api/intelligence/` 下，细节见[智力测试](intelligence.md)。
