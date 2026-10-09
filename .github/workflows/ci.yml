@@ -81,4 +81,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: Scan Git history for secrets
-        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner --gitleaks-ignore-path /repo/.gitleaksignore
