@@ -102,7 +102,7 @@ test('optional columns default off even with old dev URLs, and saved choices res
     await h.run('query()');assert.ok(h.requests.every(url=>!url.includes('include_failures')&&!url.includes('dev=')));
   }
   const h=harness({preferences:['username','amount']});
-  assert.equal(h.run('visibleColumnCount()'),2);
+  assert.equal(h.run('visibleColumnCount()'),3); // Two chosen values plus the fixed log action.
   for(const column of optional)assert.equal(h.columns.get(column).checked,false);
   h.columns.get('cache_hit_rate').checked=true;await h.columns.get('cache_hit_rate').fire('change');
   const saved=JSON.parse(h.storage.get('new-api-cockpit.visible-columns.v2'));
@@ -161,9 +161,9 @@ test('all columns explicitly enables failures; empty rows keep their colspan in 
   const h=harness();await h.run('query()');await h.elements.get('show-all-columns').fire('click');
   assert.ok([...h.columns.values()].every(column=>column.checked));assert.ok(h.requests.at(-1).includes('include_failures=1'));
   h.run('snapshot.rows=[];renderDetails()');
-  const empty=h.elements.get('rows').children[0].children[0];assert.equal(empty.colSpan,h.columns.size);
+  const empty=h.elements.get('rows').children[0].children[0];assert.equal(empty.colSpan,h.columns.size+1);
   h.columns.get('cache_hit_rate').checked=false;await h.columns.get('cache_hit_rate').fire('change');
-  assert.equal(empty.colSpan,h.columns.size-1);
+  assert.equal(empty.colSpan,h.columns.size);
 });
 test('failed diagnostic reload restores the prior column selection and data',async()=>{
   const h=harness();await h.run('query()');
@@ -197,4 +197,87 @@ test('unknown cache counts propagate to table totals rather than pretending zero
   const footer=h.elements.get('totals').children[0].children;
   assert.equal(footer.find(c=>c.dataset.column==='cache_read_tokens').textContent,'—');
   assert.equal(footer.find(c=>c.dataset.column==='amount').textContent,'1,234.57');
+});
+test('log action is the last cell and safely filters user/model logs within the Beijing report period',()=>{
+  const h=harness(),item={...row,username:'测试+name & "<user>#',model_name:'provider/gpt+test & <model>#'};
+  h.run(`snapshot={start:'2026-09-01T00:00:00',end:'2026-09-30T23:59:59',rows:[${JSON.stringify(item)}]};renderDetails()`);
+  const td=h.elements.get('rows').children[0].children.at(-1),link=td.children[0];
+  assert.equal(td.dataset.column,'logs');assert.equal(link.tag,'a');assert.equal(link.textContent,'查看日志');
+  assert.equal(link.target,'_blank');assert.equal(link.rel,'noopener noreferrer');
+  const url=new URL(link.href,'https://same-site.test:24443');
+  assert.ok(link.href.startsWith('/usage-logs/common?'));
+  assert.equal(url.origin,'https://same-site.test:24443');
+  assert.equal(url.pathname,'/usage-logs/common');
+  assert.equal(url.searchParams.get('username'),item.username);assert.equal(url.searchParams.get('model'),item.model_name);
+  assert.equal(url.searchParams.get('type'),'0');assert.equal(url.searchParams.get('page'),'1');
+  assert.equal(Number(url.searchParams.get('startTime')),Date.UTC(2026,7,31,16));
+  assert.equal(Number(url.searchParams.get('endTime')),Date.UTC(2026,8,30,15,59,59));
+  for(const key of ['token','token_id','group','channel','scope_id','tier_name','start','end'])assert.equal(url.searchParams.has(key),false,key);
+  assert.match(link.attrs['aria-label'],/新标签页/);
+  assert.equal(h.elements.get('totals').children[0].children.at(-1).dataset.column,'logs');
+  assert.equal(h.elements.get('totals').children[0].children.at(-1).children.length,0);
+});
+test('log action works per price/token row and user/model summary without inventing model filters',()=>{
+  for(const detail of ['summary','token'])for(const model of ['model','summary']){
+    const h=harness(),data=[row,{...row,input_price:4,model_name:'claude',token_id:2,token_name:'other-key'},{...row,user_id:9,username:'other-user'}];
+    h.run(`detailMode='${detail}';modelMode='${model}';snapshot={start:'2026-09-01T00:00:00',end:'2026-09-30T23:59:59',rows:${JSON.stringify(data)}};tokenSnapshot=snapshot;renderDetails()`);
+    const expected=h.run('selectedRows()');
+    const actual=h.elements.get('rows').children;
+    assert.equal(actual.length,expected.length);
+    actual.forEach((tr,i)=>{
+      const url=new URL(tr.children.at(-1).children[0].href,'https://fixture.invalid');
+      assert.equal(url.searchParams.get('username'),expected[i].username);
+      assert.equal(url.searchParams.get('model'),model==='summary'?null:expected[i].model_name);
+      assert.equal(url.searchParams.has('token'),false);
+      assert.equal(Number(url.searchParams.get('startTime')),Date.UTC(2026,7,31,16));
+      assert.equal(Number(url.searchParams.get('endTime')),Date.UTC(2026,8,30,15,59,59));
+    });
+  }
+});
+test('fixed log action stays visible with saved column preferences and never opens an unfiltered site log',()=>{
+  const h=harness({preferences:['amount']});
+  h.run(`snapshot={rows:[${JSON.stringify(row)}]};renderDetails()`);
+  assert.equal(h.run('visibleColumnCount()'),2);
+  assert.notEqual(h.headers.get('logs').hidden,true);
+  assert.notEqual(h.elements.get('rows').children[0].children.at(-1).hidden,true);
+  for(const username of ['',null,'   ']){
+    h.run(`snapshot.rows[0].username=${JSON.stringify(username)};renderDetails()`);
+    const td=h.elements.get('rows').children[0].children.at(-1);
+    assert.equal(td.textContent,'—');assert.equal(td.children.length,0);
+  }
+  h.run('snapshot.rows=[];renderDetails()');
+  assert.equal(h.elements.get('rows').children[0].children[0].colSpan,2);
+});
+test('log time bounds follow successful queries, never unsubmitted inputs or a failed query',async()=>{
+  const h=harness();await h.run('query()');
+  const logParams=()=>new URL(h.elements.get('rows').children[0].children.at(-1).children[0].href,'https://fixture.invalid').searchParams;
+  const original=logParams();
+  h.elements.get('start').value='2026-10-02T01:02:03';h.elements.get('end').value='2026-10-09T04:05:06';
+  h.run('renderDetails()');
+  assert.equal(logParams().get('startTime'),original.get('startTime'));
+  assert.equal(logParams().get('endTime'),original.get('endTime'));
+  h.respond(()=>({ok:false,json:async()=>({error:'fixture failure'})}));
+  await h.run('query()');
+  assert.equal(logParams().get('startTime'),original.get('startTime'));
+  assert.equal(logParams().get('endTime'),original.get('endTime'));
+  h.respond(h.defaultResponse);await h.run('query()');
+  assert.equal(Number(logParams().get('startTime')),Date.UTC(2026,9,1,17,2,3));
+  assert.equal(Number(logParams().get('endTime')),Date.UTC(2026,9,8,20,5,6));
+});
+test('log time bounds preserve legacy dates, minute precision, and inclusive single-second intervals',()=>{
+  const h=harness();
+  for(const [start,end,first,last] of [
+    ['2026-09-01','2026-09-30',Date.UTC(2026,7,31,16),Date.UTC(2026,8,30,15,59,59)],
+    ['2026-09-01T00:01','2026-09-01 23:59',Date.UTC(2026,7,31,16,1),Date.UTC(2026,8,1,15,59)],
+    ['2026-09-01T00:00:00','2026-09-01T00:00:00',Date.UTC(2026,7,31,16),Date.UTC(2026,7,31,16)],
+  ]){
+    h.run(`snapshot={start:${JSON.stringify(start)},end:${JSON.stringify(end)}}`);
+    const url=new URL(h.run(`newApiLogsURL(${JSON.stringify(row)})`),'https://fixture.invalid');
+    assert.equal(Number(url.searchParams.get('startTime')),first);
+    assert.equal(Number(url.searchParams.get('endTime')),last);
+  }
+  for(const range of [{},{start:'bad',end:'2026-09-30'},{start:'2026-10-01',end:'2026-09-30'}]){
+    h.run(`snapshot=${JSON.stringify(range)}`);
+    assert.equal(h.run(`newApiLogsURL(${JSON.stringify(row)})`),null);
+  }
 });

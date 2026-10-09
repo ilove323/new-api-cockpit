@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>{{ site_name }} · 管理员登录</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/login.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/login.js"></script>
+</head>
+<body class="login-layout">
+  {% from "partials/icons.html" import icon %}
+  <main class="login-card" data-next="{{ next_path }}">
+    <div class="login-brand">{{ icon('chart-no-axes-combined') }}<span>{{ site_name }}</span></div>
+    <h1>管理员登录</h1>
+    <p class="login-description">使用 New API 账号登录。已在本站登录 New API 时，将自动进入。</p>
+    <p id="login-status" role="status" aria-live="polite">正在检查已有登录…</p>
+    <form id="login-form" method="post" action="/cockpit/login" hidden>
+      <label for="login-username">用户名</label>
+      <input id="login-username" autocomplete="username" required maxlength="128" autocapitalize="none" spellcheck="false">
+      <label for="login-password">密码</label>
+      <input id="login-password" type="password" autocomplete="current-password" required maxlength="1024">
+      <button id="login-submit" class="button-primary" type="submit">登录</button>
+    </form>
+    <form id="verification-form" method="post" action="/cockpit/login" hidden>
+      <p>请完成 New API 要求的二次验证。</p>
+      <label for="verification-code">动态验证码或恢复码</label>
+      <input id="verification-code" autocomplete="one-time-code" required maxlength="128">
+      <button id="verification-submit" class="button-primary" type="submit">验证并登录</button>
+      <button id="verification-cancel" class="button-ghost" type="button">返回账号登录</button>
+    </form>
+    <button id="login-retry" class="button-ghost" type="button" hidden>重新检查登录</button>
+    <button id="login-switch" class="button-ghost" type="button" hidden>退出当前 New API 登录并换账号</button>
+    <a id="official-login" class="login-official" href="/sign-in">使用 New API 登录页（SSO / 通行密钥 / 验证码）</a>
+    <p class="login-footnote">仅管理员可访问 · 不建立独立账号或密码</p>
+  </main>
+</body>
+</html>

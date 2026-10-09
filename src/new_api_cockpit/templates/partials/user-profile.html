@@ -7,3 +7,12 @@
     <div class="dialog-actions"><button id="user-profile-cancel" type="button">取消</button><button id="user-profile-save" type="submit">确认保存</button></div>
   </form>
 </dialog>
+<dialog id="user-group-dialog" aria-labelledby="user-group-title">
+  <h2 id="user-group-title">确认切换用户组</h2>
+  <form id="user-group-form">
+    <p id="user-group-summary"></p>
+    <p class="warning">修改用户组会影响该用户及“跟随用户组”的 KEY 后续调用；不会修改固定分组的 KEY、用户额度或启禁状态。</p>
+    <p id="user-group-error" class="error" role="status"></p>
+    <div class="dialog-actions"><button id="user-group-cancel" type="button">取消</button><button id="user-group-save" type="submit">确认切换</button></div>
+  </form>
+</dialog>

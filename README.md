@@ -2,183 +2,153 @@
 
 # new-api-cockpit
 
-**扩展 New API 的用量统计、账本监控、用户、令牌与配额管理**
+**New API 的用量统计与扩展管理后台**
 
 [![CI](https://github.com/ilove323/new-api-cockpit/actions/workflows/ci.yml/badge.svg)](https://github.com/ilove323/new-api-cockpit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue)](pyproject.toml)
 [![Requires New API](https://img.shields.io/badge/requires-New%20API-green)](https://github.com/QuantumNous/new-api)
 
-[界面预览](#界面预览) · [快速开始](#快速开始) · [主要特性](#主要特性) · [部署要求](#部署要求) · [文档](#文档) · [帮助与贡献](#帮助与贡献)
+[功能](#功能) · [部署](#部署) · [界面预览](#界面预览) · [文档](#文档)
 
 </div>
 
-## 项目说明
+给 [New API](https://github.com/QuantumNous/new-api) 补一套统计和管理页面：查用量、对账、设余额告警，
+以及批量管理用户、令牌和额度。页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 管理员账号；
+在同站点登录过 New API，可以直接进入。
 
-new-api-cockpit 是配合 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)
-使用的自托管扩展管理控制台，提供用量与成本分析、预算报警、用户与 KEY 管理及定时配额。
+本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，单独运行一个容器，
+和 New API 共用 Docker 网络，通过同一 HTTPS 入口访问。
 
-> [!IMPORTANT]
-> **本项目必须依赖已部署的 New API，不能脱离 New API 独立使用。**
-> 当前仅支持 New API 的 **PostgreSQL** 数据库，直接读取其用户、消费日志和站点配置。
-> 登录使用 New API 原有的管理员账号密码。本项目不提供模型网关或独立用户系统。
+## 功能
 
-应用采用 Flask + PostgreSQL，作为独立容器与 New API 部署在同一 Docker 网络，
-由 Nginx 将统一 `/cockpit/` 前缀转发到应用。用量统计、用户管理、令牌管理和操作记录四个页面共用侧边栏。New API 普通查询只读；
-用户管理仅在缺失 PAT 时通过受限函数补建，
-用户资料、KEY 和配额修改均通过 New API 官方接口执行，不直接写对应业务字段。
-预算、月度归档、报警配置及定时配额规则与执行记录保存在单独的监控库。
+页面通过侧边栏切换：
+
+| 页面 | 地址 | 可以做什么 |
+| --- | --- | --- |
+| 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
+| 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
+| 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
+| 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
+| API 文档 | `/cockpit/docs/` | 按流程试调用接口，填写参数、查看响应、复制程序示例，查阅和下载 OpenAPI 描述 |
+
+统计页按渠道标签区分上游账本，也有“全部”和“未分组”。每个账本单独设置预算、报警阈值和监控开关，
+共用飞书、钉钉和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
+可使用账号认证或匿名发信，配置方法见[通知渠道](docs/notifications.md)。费用按月、按渠道归档，查看时按渠道当前分组汇总。
+每天北京时间 10:00 检查余额，也可以手动检查。
+
+**金额以消费日志为准。** 同一模型按请求发生时的价格分行，匹配当前价格的行显示对应档位。
+倍率变化时的缓存 Token 配平属于数学换算，原始日志和实际金额不变。
+表格金额显示两位小数，悬浮详情、API 和 Excel 保留原精度。具体见[统计口径](docs/calculation.md)。
+
+用户和 KEY 的修改通过 New API 官方接口执行，每组最多 5 个并发请求。
+所有写操作需要监控库保存操作记录；只记录已发起的操作。KEY 管理使用所属用户的 PAT，缺失时通过受限函数补建。
+
+页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
+统计、用户、令牌和操作记录的地址、参数及调用示例见 [API 参考](docs/api.md)。
+余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
+登录后从侧边栏打开 API 文档即可在线调试，使用方法见[交互式文档](docs/interactive-api.md)。
+请求发往当前站点，修改和通知需要确认，不自动重试。
+
+## 部署
+
+准备好 New API、PostgreSQL、Docker Compose，以及 Nginx 或同等反向代理。
+New API 需要支持 JWT 登录和刷新接口，数据库字段见[兼容范围](docs/compatibility.md)。
+
+### 1. 下载与配置
+
+```bash
+git clone https://github.com/ilove323/new-api-cockpit.git
+cd new-api-cockpit
+cp .env.example .env
+chmod 600 .env
+```
+
+按[部署文档](docs/deployment.md)填写 `.env`：
+
+- `PG*`：New API 原库的专用查询账号，授予所需表的 SELECT 权限。
+- `NEW_API_NETWORK`、`NEW_API_INTERNAL_URL`：现有 Docker 网络和 New API 内部地址。
+- `MONITOR_DATABASE_URL`：独立监控库，保存预算、归档、通知配置、定时规则和操作记录。建库方法见[监控库配置](docs/monitoring.md#独立数据库)。留空时提供只读查询。
+- `NOTIFICATION_ENCRYPTION_KEY`：保存通知凭据时填写（飞书、钉钉、邮件认证密码），并与监控库一起备份。
+
+需要补建用户 PAT 时，由源库表所有者安装 [source_pat_function.sql](sql/source_pat_function.sql)，
+再给查询账号授予函数执行权限，步骤见[用户管理部署](docs/users.md#安装补建函数与最小权限)。
+应用账号无需业务表的 UPDATE 权限，PAT 也无需填入 `.env`。
+
+### 2. 启动
+
+```bash
+docker compose up -d --build statistics
+docker compose ps
+curl --fail-with-body http://127.0.0.1:8091/healthz
+```
+
+配置监控库后，启动入口自动应用缺失的迁移，余额和配额定时器随应用运行。
+配额规则在用户管理页右上角的设置中配置，保存后从下一个周期执行。
+
+上面是源码构建方式。使用发布镜像时，从对应 [Release](https://github.com/ilove323/new-api-cockpit/releases)
+下载配置文件，设置 `IMAGE_TAG` 后按[镜像部署说明](docs/releasing.md#使用预构建镜像)启动。
+已有安装请先看[升级、备份与回退](docs/upgrading.md)。
+
+### 3. 接入现有站点
+
+把 [nginx.conf.example](nginx.conf.example) 中的 location 加入 New API 的 HTTPS 站点，检查配置并重载。
+浏览器访问 `https://<你的域名>/cockpit/`，由侧边栏切换页面。
+New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和端口下，会话才能共用。
+
+没有有效登录时会打开登录页，密码和二次验证码由 New API 验证。
+使用 SSO、通行密钥或人机验证的站点，可从登录页进入官方登录流程，完成后返回。
+详细流程见[登录与会话](docs/authentication.md)。
+
+应用端口默认只监听宿主机 `127.0.0.1:8091`，用于反向代理和探活，不应直接公开到公网。
 
 ## 界面预览
 
-以下图片来自 **v0.2.0 当前页面代码**，使用本地虚构数据实截，不是原型或生产截图。
-四个页面共用 New API 风格的顶栏、侧边栏、蓝色控件和紧凑图标按钮。
+以下截图使用演示数据。
 
 ### 用量统计
 
-![用量统计：分组账本、用量指标与可筛选明细](docs/assets/statistics.png)
+![用量统计](docs/assets/statistics.png)
+
+<details>
+<summary>用户管理、令牌管理、操作记录、通知设置与登录页</summary>
 
 ### 用户管理
 
-![用户管理：用户资料、配额、按组选择与行内操作](docs/assets/users.png)
+![用户管理](docs/assets/users.png)
 
 ### 令牌管理
 
-![令牌管理：按用户合并 KEY 列表、分组切换与批量操作](docs/assets/keys.png)
+![令牌管理](docs/assets/keys.png)
 
 ### 操作记录
 
-![操作记录：操作目标用户、定时规则与逐条执行结果](docs/assets/operations.png)
+![操作记录](docs/assets/operations.png)
 
-## 主要特性
+### 通知设置
 
-| 功能 | 说明 |
-| --- | --- |
-| 用量分析 | 查看输入、输出、缓存读写 Token；按请求历史价格分行，匹配当前档位后显示档位名；用户、模型、令牌、分组支持多选和关键词筛选，可切换模型/令牌汇总及选择显示列 |
-| 消费排名 | 模型消费、用户 Token 用量、用户消费标签页切换 |
-| 时间筛选 | 精确到秒，支持上个月、本月、近 30 天、近 7 天和近 1 天 |
-| Excel 导出 | 多工作表汇总，数字单元格与 SUM 合计公式 |
-| 管理员认证 | 复用 New API 管理员账号，读取原有权限和密码哈希 |
-| 余额监控 | “全部”、当前渠道标签和“未分组”独立设额度与报警；逐渠道归档，历史按当前归属汇总 |
-| 定时检查 | 每天北京时间 10:00 检查，也可通过铃铛或 API 手动触发 |
-| 通知渠道 | 所有账本共用飞书企业自建应用或钉钉 Webhook 通知配置 |
-| 报警 API | 实时余额与报警检查，使用 New API 管理员 PAT Bearer 认证 |
-| 用户管理 | `/cockpit/users/` 合并用户资料与配额，显示用户组、状态、余额、KEY 数量与备注；最后一列支持编辑、重置密码、启停和删除；按组选择用户，预览后每组 5 人并发原子增减额度 |
-| 令牌管理 | `/cockpit/keys/` 按用户合并第一列，每个 KEY 一行；按用户名、显示名或用户/KEY ID、KEY 名称搜索，支持多选筛选、查看复制、分组/限额/启停和每组 5 个批量改组；点击分组可确认切换，所属用户 PAT 缺失时受限补建 |
-| 定时配额 | 用户管理齿轮内按用户组设置每日、每周、每月零点的每人增减额度；内置定时器，不自动补发或重试不明确请求 |
-| 操作记录 | `/cockpit/operations/` 分页汇总用户、KEY、配额与定时任务操作；显示目标用户和 ID，规则显示目标用户组；只记录已发起请求，区分实际管理员与目标，不保存凭据 |
-| 可选诊断列 | 缓存命中率、每百万 Token 金额、失败请求可在“显示列”中勾选，默认关闭，仅网页展示，不进入 Excel |
+![邮件通知设置](docs/assets/notifications.jpg)
 
-Token 缓存语义取决于上游日志。部分报表数值涉及数学折算，
-请先阅读[统计口径](docs/calculation.md)。应用不会修改 New API 原始日志和实际消费金额。
-历史单价依赖消费日志保存的计费快照；缺失或无法安全解析时不借用当前价格。
+### 管理员登录
 
-## 部署要求
+![管理员登录页](docs/assets/login.jpg)
 
-| 依赖 | 要求 |
-| --- | --- |
-| New API | 必须已部署，数据库字段符合[兼容范围](docs/compatibility.md) |
-| PostgreSQL | New API 原库及只读查询账号；余额监控另建独立库 |
-| Docker | Docker Engine 与 Docker Compose，共用 New API 的现有网络 |
-| Nginx | 推荐复用现有 HTTPS 站点，转发统一 `/cockpit/` 前缀 |
-| 登录账号 | 有效的 New API 管理员账号 |
-
-SQLite 和 MySQL 后端目前不支持。不同 New API fork 的字段、配额单位和缓存语义
-可能不同，接入前应核对兼容文档。
-
-## 快速开始
-
-### 1. 获取项目
-
-```bash
-git clone https://github.com/ilove323/new-api-cockpit.git new-api-cockpit
-cd new-api-cockpit
-cp .env.example .env
-```
-
-### 2. 配置数据库与网络
-
-按[部署文档](docs/deployment.md)填写 `.env` 中的 New API PostgreSQL 只读连接参数、
-现有 Docker 网络名称和端口。
-
-需要余额报警、用户/KEY/配额写操作或定时配额时，先按[监控库初始化文档](docs/monitoring.md)执行建库 SQL，
-再配置 `MONITOR_DATABASE_URL`；启用通知渠道还需配置 `NOTIFICATION_ENCRYPTION_KEY`。
-
-### 3. 启动服务
-
-```bash
-chmod 600 .env
-docker compose up -d --build
-docker compose ps
-```
-
-配置监控库后，容器启动入口会先执行幂等增量迁移；正常页面请求不执行迁移。
-已有部署更新前请阅读[升级说明](docs/upgrading.md)。
-
-配置 `MONITOR_DATABASE_URL` 后，同一个 `statistics` 容器会自动运行余额和配额定时器，
-无需其他应用容器。余额仍每天北京时间 10:00 检查；
-配额在 `/cockpit/users/` 右上角齿轮里配置，未创建并启用规则时不会修改用户额度。
-规则使用执行管理员在 New API 中已有的 PAT，无需在 `.env` 中配置 PAT。
-定时器会随服务重启自动恢复，无需保持浏览器页面打开。配置了监控库的部署可通过
-`/healthz` 确认两个内置定时器都已就绪，见[运行状态检查](docs/deployment.md#运行状态检查)。
-
-正式镜像部署使用 [v0.2.0 Release](https://github.com/ilove323/new-api-cockpit/releases/tag/v0.2.0)
-的配套配置并设置 `IMAGE_TAG=0.2.0`；开发分支从源码构建。
-镜像由发布工作流构建，下载前请确认目标 tag 已在 GHCR 可用。
-运行拓扑、模块和数据库职责见[架构说明](docs/architecture.md)。
-
-### 4. 配置入口
-
-将 [nginx.conf.example](nginx.conf.example) 中的 location 加入现有 HTTPS 站点，
-检查配置并重载 Nginx，然后访问：
-
-```text
-https://<你的域名>/cockpit/statistics/
-https://<你的域名>/cockpit/users/
-https://<你的域名>/cockpit/keys/
-https://<你的域名>/cockpit/operations/
-```
-
-使用 **New API 管理员账号密码**登录。
-
-没有 Nginx 时，可按[直接端口访问说明](docs/deployment.md#无-nginx-直接访问)配置宿主机端口。
-镜像部署应下载与目标版本匹配的发布配置文件，并设置对应 `IMAGE_TAG`；
-不要混用不同实现的镜像与当前配置，详情见[发版说明](docs/releasing.md)。
+</details>
 
 ## 文档
 
-| 主题 | 内容 |
-| --- | --- |
-| [当前架构](docs/architecture.md) | 单容器运行、模块职责、数据流、数据库及权限边界 |
-| [界面规范](docs/ui.md) | 公共样式、字体图标、按钮位置和响应式布局 |
-| [部署](docs/deployment.md) | 环境变量、网络、Nginx、直接端口访问及认证 |
-| [统计口径](docs/calculation.md) | 缓存包含关系、金额、倍率及数学折算 |
-| [兼容范围](docs/compatibility.md) | New API 数据库字段与运行环境 |
-| [余额监控](docs/monitoring.md) | 建库 SQL、额度设置、归档和报警规则 |
-| [用户配额](docs/quota.md) | 手工批量增减、定时规则、执行记录、权限及失败处理 |
-| [用户与令牌管理](docs/users.md) | 独立页面、所属用户 PAT、受限函数安装、批量改组与统一操作记录 |
-| [通知渠道](docs/notifications.md) | 飞书与钉钉配置及通知行为 |
-| [报警 API](docs/api.md) | 认证方式、请求示例与返回值 |
-| [升级与备份](docs/upgrading.md) | 数据库迁移、备份和回退 |
-| [性能机制](docs/performance.md) | 渠道同步、当月汇总复用、详情快照和验证方法 |
-| [发版](docs/releasing.md) | GitHub Actions、版本标签及 GHCR 镜像 |
+- 安装与维护：[部署](docs/deployment.md) · [兼容范围](docs/compatibility.md) · [升级与备份](docs/upgrading.md) · [发版与镜像](docs/releasing.md)
+- 统计与告警：[统计口径](docs/calculation.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
+- 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
+- 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)（认证、统计、归档、用户、KEY、配额、规则和操作记录）
+- 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)
 
-## 帮助与贡献
+问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。
+安全问题见 [SECURITY.md](SECURITY.md)，请勿公开密码、令牌或客户数据。
 
-维护者与当前贡献者：[@ilove323](https://github.com/ilove323)。
+## 许可证
 
-- 问题反馈与功能建议：[GitHub Issues](https://github.com/ilove323/new-api-cockpit/issues)
-- 开发与贡献：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 版本变化：[GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)
-- 安全问题：[SECURITY.md](SECURITY.md)
-
-反馈时请提供版本、复现步骤和脱敏日志，不要提交管理员密码、API Key 或客户数据。
-
-## 致谢与许可证
-
-感谢 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)。
-本项目是依赖 New API 的第三方扩展管理控制台，非 New API 官方组件。
-
-Copyright 2026 ilove323。采用 [Apache-2.0](LICENSE)，允许商业使用。
-New API 及其他依赖各自遵循其许可证。
-第三方字体与图标许可见 [NOTICE](NOTICE)、[Lucide 许可](src/new_api_cockpit/static/LUCIDE-LICENSE)和 [Public Sans 许可](src/new_api_cockpit/static/fonts/OFL-LICENSE.txt)。
+维护者：[@ilove323](https://github.com/ilove323)。感谢 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)。
+本项目为第三方扩展，采用 [Apache-2.0](LICENSE) 许可证，允许商业使用。
+New API 和其他依赖各自遵循其许可证；字体与图标归属见 [NOTICE](NOTICE)、
+[Lucide 许可](src/new_api_cockpit/static/LUCIDE-LICENSE)、[Public Sans 许可](src/new_api_cockpit/static/fonts/OFL-LICENSE.txt) 和 [Scalar 许可](src/new_api_cockpit/static/SCALAR-LICENSE)。

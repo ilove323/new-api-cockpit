@@ -1,17 +1,18 @@
 # 用户、令牌管理与操作记录
 
-`new-api-cockpit` 在统一 `/cockpit/` 前缀下提供四个页面，以相对路径侧边栏切换。
+`new-api-cockpit` 的页面统一放在 `/cockpit/` 前缀下，以相对路径侧边栏切换。
 
 | 页面 | 职责 |
 |---|---|
 | `/cockpit/statistics/` | 用量、账单、预算与告警 |
-| `/cockpit/users/` | 用户资料与配额合并管理，最后一列放用户操作 |
+| `/cockpit/users/` | 用户资料、分组与配额管理，最后一列提供用户操作 |
 | `/cockpit/keys/` | 仅 KEY 配置管理，用户列纵向合并 |
 | `/cockpit/operations/` | 用户、KEY、手工配额、规则修改及定时执行的统一分页记录 |
 
 ## 页面与操作
 
 - 用户管理显示用户 ID、用户名/显示名、用户组、启禁状态、余额、已用金额、KEY 数量及备注。
+- “用户组”列可点击展开分组菜单，输入关键词筛选，选择目标组后确认一次再切换；成功后刷新用户列表与按组选择选项。
 - 最后一列支持编辑用户名、显示名、用户组、备注，重置密码、启停与软删除；新建用户仅限超级管理员，创建普通用户。
 - 用户配额保留按组选择、预览确认与五人并发原子增减，不通过资料编辑覆盖余额，见[用户配额](quota.md)。
 - 令牌管理每个 KEY 一行，同一用户的第一列通过 `rowspan` 合并，显示归属用户与新增 KEY 操作；用户资料与余额在用户管理页操作。
@@ -27,7 +28,9 @@
 
 普通管理员只管理权限范围内用户，超级管理员可管理全站；不能禁用或删除超级管理员。
 密码只重置，不读取或保存到审计；KEY 明文只在明确查看后显示，窗口关闭后清除，不持久缓存。
-页面、静态文件和 API 均要求管理员认证，敏感写请求必须是同源 JSON 和对应请求头。
+业务页面要求管理员登录会话；`/cockpit/api/` 业务接口也接受管理员 PAT，使用相同目标权限及审计规则。
+登录页与静态资源公开。字段与调用示例见 [API 参考](api.md)。
+敏感写请求必须是同源 JSON 和对应请求头。
 
 ## 使用所属用户 PAT
 
@@ -60,7 +63,9 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 函数为受限 `SECURITY DEFINER`：固定 `search_path`，显式访问 `public.users`，
 校验管理员/目标用户角色与状态，只在 PAT 为空时更新相关字段；已撤销 PUBLIC 执行权限。
 该函数调用能力只交给受信任的应用服务，不开放给普通用户数据库连接。
-普通查询仍使用只读事务，函数调用单独使用可写事务，但角色不拥有直接表写权限。
+普通查询仍使用只读事务。补建函数的专用连接显式设置
+`default_transaction_read_only=off`，覆盖查询角色可能配置的只读默认值；
+这不会修改角色配置，也不授予业务表直接写权限。函数调用单独使用可写事务。
 没有安装或授权函数时，已有 PAT 的操作可使用；缺失 PAT 时明确报错，不尝试扩大数据库权限。
 不同版本或 fork 应先核对 PAT 字段和生成规则，不支持只保存哈希且无法回读的 PAT 存储格式。
 
@@ -76,7 +81,7 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 失败、冲突或结果不明确停止后续组，不自动回滚成功项或重试未知项。
 监控库先记录请求中再发送，浏览器中断后未发出的组不会自动续跑。
 记录中的“请求中”如遇进程中断，应人工核对 New API 审计及实际数据，不直接重新提交。
-整个操作没有 100 个 KEY 的总量限制；100 仅为查询分页的最大页大小。
+批量执行按完整冻结名单分组进行，不受列表当前页限制；查询每页最多展示 100 个用户。
 
 ### 并发消费限制
 
@@ -88,15 +93,30 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 
 ### 单个 KEY 快捷改组
 
-点击“分组”单元格时，`GET /cockpit/keys/api/token/<id>/groups` 校验管理员对所属用户的权限，
+点击“分组”单元格时，`GET /cockpit/api/keys/<id>/groups` 校验管理员对所属用户的权限，
 只从数据库读取当前分组与可选组，不调用上游接口、不补建 PAT、不生成操作记录。
 菜单支持关键词搜索，当前组不可重复选择；跟随用户组与自动分组保留原有语义。
 
 选择目标后显示一次确认弹窗；取消不发送变更。确认使用现有
-`POST /cockpit/keys/api/token/<id>/action`，仅传 `action=group` 和目标 `group`。
+`POST /cockpit/api/keys/<id>/action`，仅传 `action=group` 和目标 `group`。
 服务端重新验证权限与分组可用性，读取最新 KEY 配置后保留未修改字段，通过所属用户 PAT 调用官方接口，
 实际请求进入统一操作记录。
 执行中禁止重复提交；失败、网络中断或结果不明确不会自动重试，须关闭窗口、刷新并核对实际结果。
+
+### 单个用户快捷改组
+
+点击用户管理的“用户组”单元格时，`GET /cockpit/api/users/<id>/groups` 校验管理员权限，
+只读取当前用户组和 New API 全局 `GroupRatio` 配置，不调用上游、不补建 PAT、不生成操作记录。
+用户组不同于 KEY 可用分组，不受 `UserUsableGroups` 限制，也不提供“跟随用户组”或“自动分组”选项。
+菜单支持字面关键词筛选、点击外部或按 Escape 收起；当前组不可重复选择。
+
+选中后弹窗列出目标用户名、用户 ID、原组与目标组，取消不写入。
+确认通过现有 `POST /cockpit/api/users/<id>/action` 提交 `action=group` 与唯一变更字段 `group`。
+服务端重新校验权限和分组配置，用实际管理员 PAT 读取最新用户资料并调用官方用户修改接口，
+保留其他资料与角色，不覆盖额度、密码、PAT 或启禁状态，不直接写源库，也不改写固定分组的 KEY。
+“跟随用户组”的 KEY 后续调用按 New API 规则使用新的用户组。
+实际修改记录为“用户改组”，包含目标用户与原组/目标组；执行中禁止重复提交，失败或中断不自动重试。
+操作使用统一审计表保存执行结果。
 
 ## 统一操作记录与数据库
 
@@ -122,8 +142,8 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 详情按每条用户或 KEY 请求展示完整目标身份，保留分页；未发送的对象不计入目标名单或人数。
 定时规则的新增、编辑、启停与删除显示规则 ID 和目标用户组，定时额度执行显示实际已发起请求的用户，
 保存规则不冻结将来的组内成员。规则删除也保存用户组快照。
-新记录保留目标用户名快照；已有记录优先读取已有快照，缺失时按明细用户 ID 一次批量查询当前用户名，
-查不到时仍显示用户 ID，不改写历史记录，也不为显示记录生成 PAT。
+目标用户名优先读取保存的快照；快照缺失时按明细用户 ID 一次批量查询当前用户名。
+查不到时仍显示用户 ID，不改写记录，也不为显示记录生成 PAT。
 该信息保存在操作参数、明细 JSON 及定时执行快照中。
 新建对象的官方接口不返回对象 ID 时，内部目标 ID 为 0，界面明确显示“ID 未返回”；
 新增用户显示请求中的用户名，新增 KEY 显示已知所属用户，均不以管理员 ID 代替新对象。
@@ -131,9 +151,9 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 
 ### 操作记录接口
 
-网页管理员 Basic Auth：`GET /cockpit/operations/api/records`。
+管理员会话或 PAT：`GET /cockpit/api/operations`。
 可选 `kind=user|token|quota|schedule`，后续页传回响应中的 `next_before` 作为 `before`；
 游标同时包含时间、来源和记录 ID，不使用单一时间戳翻页。
-明细为 `GET /cockpit/operations/api/records/<source>/<record_id>?after=<target_id>`，
+明细为 `GET /cockpit/api/operations/<source>/<record_id>?after=<target_id>`，
 `source` 为 `management` 或 `schedule`，下一页使用 `next_after`。
 这些接口只读，不触发原操作再次执行。

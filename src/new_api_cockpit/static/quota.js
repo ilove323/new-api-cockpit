@@ -45,7 +45,9 @@ function render(){
     const id=document.createElement('td');id.textContent=user.id;row.append(id);
     const name=document.createElement('td');name.textContent=user.username;
     if(user.display_name){const display=document.createElement('span');display.className='display-name';display.textContent=user.display_name;name.append(display);}row.append(name);
-    const group=document.createElement('td');group.className='user-group';group.textContent=user.user_group||'未分组';row.append(group);
+    const group=document.createElement('td');group.className='user-group';
+    if(globalThis.UserProfiles?.groupPicker)group.append(globalThis.UserProfiles.groupPicker(user,executing));
+    else group.textContent=user.user_group||'未分组';row.append(group);
     const state=document.createElement('td');state.className=user.status===1?'status-enabled':'status-disabled';state.textContent=user.status===1?'启用':'禁用';row.append(state);
     for(const value of [user.quota_yuan,user.used_quota_yuan]){const cell=document.createElement('td');cell.textContent=tableMoney(value);row.append(cell);}
     const keys=document.createElement('td'),link=document.createElement('a');link.href='/cockpit/keys/?user_id='+user.id;link.textContent=String(user.token_count??0);keys.append(link);row.append(keys);
@@ -83,7 +85,7 @@ function updateGroupControls(){
 }
 async function load(){
   status('正在读取用户…');
-  try{invalidatePreview();users=(await api('/cockpit/users/api/users')).rows;invalidatePreview();pruneSelection();renderGroups();render();status(`当前状态范围 ${eligibleUsers().length} 人，共 ${users.length} 个用户。`);}
+  try{invalidatePreview();users=(await api('/cockpit/api/users')).rows;invalidatePreview();pruneSelection();renderGroups();render();status(`当前状态范围 ${eligibleUsers().length} 人，共 ${users.length} 个用户。`);}
   catch(error){status(error.message,true);}
 }
 byId('search').addEventListener('input',render);
@@ -124,7 +126,7 @@ byId('preview').addEventListener('click',async()=>{
   const version=++previewVersion;previewLoading=true;
   byId('preview').disabled=true;
   try{
-    const result=await api('/cockpit/users/api/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'preview'},body:JSON.stringify(body)});
+    const result=await api('/cockpit/api/users/quota/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'preview'},body:JSON.stringify(body)});
     if(version!==previewVersion)return;
     pending=body;byId('confirm-summary').textContent=`将为 ${result.users.length} 人每人${result.mode==='add'?'增加':'减少'} ¥${money(result.amount_yuan)}。`;
     const rows=byId('preview-rows');rows.replaceChildren();resultCells=new Map();
@@ -152,7 +154,7 @@ byId('apply').addEventListener('click',async()=>{
       byId('execution-progress').textContent=`正在处理第 ${offset+1}～${offset+wave.length} 人 / 共 ${body.user_ids.length} 人；已确认成功 ${succeeded} 人。请勿刷新或关闭页面。`;
       let result;
       try{
-        result=await api('/cockpit/users/api/apply',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'confirm'},body:JSON.stringify({...body,user_ids:wave})});
+        result=await api('/cockpit/api/users/quota/apply',{method:'POST',headers:{'Content-Type':'application/json','X-Quota-Action':'confirm'},body:JSON.stringify({...body,user_ids:wave})});
         const rows=result.results;
         if(!Array.isArray(rows)||rows.length!==wave.length||new Set(rows.map(row=>row.id)).size!==wave.length||rows.some(row=>!wave.includes(row.id)||typeof row.ok!=='boolean'))throw new Error('接口返回的执行结果不完整');
       }catch(error){

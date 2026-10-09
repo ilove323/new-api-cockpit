@@ -1,0 +1,15 @@
+.login-layout { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--ui-muted); }
+.login-card { width: min(100%, 420px); padding: 32px; border: 1px solid var(--ui-border); border-radius: 20px; background: var(--ui-background); box-shadow: 0 12px 40px #00000008; }
+.login-brand { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 600; }
+.login-brand .ui-icon { width: 24px; height: 24px; color: var(--ui-primary); }
+.login-card h1 { text-align: center; font-size: 22px; margin: 24px 0 12px; }
+.login-description, .login-footnote { color: var(--ui-muted-text); font-size: 13px; line-height: 1.7; }
+.login-card form { display: grid; gap: 10px; margin: 20px 0; }
+.login-card form[hidden] { display: none; }
+.login-card input { width: 100%; }
+.login-card form button[type=submit] { margin-top: 12px; width: 100%; }
+#login-status { min-height: 22px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+#login-status.error { color: var(--ui-danger); }
+.login-official { display: block; font-size: 13px; text-align: center; margin-top: 20px; }
+.login-footnote { margin-top: 24px; text-align: center; font-size: 12px; }
+@media (max-width: 480px) { .login-layout { padding: 16px; } .login-card { padding: 24px; } }

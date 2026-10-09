@@ -1,5 +1,7 @@
 """Shared UI and asset contracts; no browser or production database."""
 
+from session_fixture import fixture_identity, session_auth
+
 from html.parser import HTMLParser
 from pathlib import Path
 import re
@@ -52,11 +54,11 @@ class Page(HTMLParser):
 class UITest(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
-        self.auth = ("admin", "fixture-password")
+        self.auth = session_auth("admin")
 
     def page(self, route):
         with (
-            patch("new_api_cockpit.app.verify_admin", return_value=True),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Fixture <site>"),
         ):
             response = self.client.get("/cockpit/" + route + "/", auth=self.auth)
@@ -111,7 +113,19 @@ class UITest(unittest.TestCase):
             self.assertEqual(len(headers), 1)
             self.assertIn("hidden", headers[0]["attrs"])
 
-    def test_lucide_sprite_references_and_local_fonts_are_valid_and_protected(self):
+    def test_statistics_log_action_is_fixed_and_last(self):
+        page = self.page("statistics")
+        headers = [node for node in page.nodes if node["tag"] == "th"]
+        usage_headers = [node for node in headers if "data-column" in node["attrs"]]
+        self.assertEqual(usage_headers[-1]["attrs"]["data-column"], "logs")
+        self.assertNotIn("hidden", usage_headers[-1]["attrs"])
+        self.assertFalse(
+            any(
+                node["attrs"].get("data-column-toggle") == "logs" for node in page.nodes
+            )
+        )
+
+    def test_lucide_sprite_references_and_local_fonts_are_valid_and_public(self):
         sprite = ET.parse(ROOT / "static/icons.svg").getroot()
         symbols = sprite.findall(".//{http://www.w3.org/2000/svg}symbol")
         names = {node.get("id") for node in symbols}
@@ -132,11 +146,13 @@ class UITest(unittest.TestCase):
             for file in re.findall(r'url\("([^"\)]+)"\)', text):
                 self.assertTrue((ROOT / "static" / file).is_file(), (css, file))
                 assets.add(file)
-        with patch("new_api_cockpit.app.verify_admin", return_value=True):
+        with patch(
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
+        ):
             for file in assets:
                 path = "/cockpit/static/" + file
                 denied = self.client.get(path)
-                self.assertEqual(denied.status_code, 401)
+                self.assertEqual(denied.status_code, 200)
                 denied.close()
                 response = self.client.get(path, auth=self.auth)
                 self.assertEqual(response.status_code, 200, path)

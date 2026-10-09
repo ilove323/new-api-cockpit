@@ -89,7 +89,9 @@ class MigrationTest(unittest.TestCase):
                 )
             self.verify(connect)
             with connect() as conn:
-                config = conn.execute("SELECT * FROM notification_settings").fetchone()
+                config = conn.execute(
+                    "SELECT * FROM notification_settings WHERE channel='dingtalk_webhook'"
+                ).fetchone()
                 self.assertEqual(config["channel"], "dingtalk_webhook")
                 self.assertFalse(config["enabled"])
                 self.assertIsNone(
@@ -97,3 +99,62 @@ class MigrationTest(unittest.TestCase):
                         "SELECT to_regclass('notification_dingtalk_settings') AS name"
                     ).fetchone()["name"]
                 )
+
+    def test_independent_notifications_preserve_existing_selection_and_credentials(
+        self,
+    ):
+        for selected, enabled in [
+            ("feishu_app", True),
+            ("dingtalk_webhook", True),
+            ("feishu_app", False),
+        ]:
+            with (
+                self.subTest(channel=selected, enabled=enabled),
+                isolated_schema() as connect,
+            ):
+                self.apply_prefix(connect, 10)
+                with connect() as conn:
+                    conn.execute(
+                        """UPDATE notification_settings SET channel=%s,enabled=%s,version=9,
+                        updated_by='fixture-admin',last_error='fixture error',last_attempt_at=now() WHERE id=1""",
+                        (selected, enabled),
+                    )
+                    original = conn.execute(
+                        "SELECT * FROM notification_settings"
+                    ).fetchone()
+                    conn.execute(
+                        "UPDATE notification_feishu_settings SET secret_encrypted='fixture-cipher-feishu'"
+                    )
+                    conn.execute(
+                        "UPDATE notification_dingtalk_webhook_settings SET webhook_encrypted='fixture-cipher-webhook'"
+                    )
+                self.verify(connect)
+                with connect() as conn:
+                    # The new migration is safe to repeat without resetting saved channels.
+                    conn.execute(MIGRATIONS[-1].read_text())
+                    rows = {
+                        r["channel"]: r
+                        for r in conn.execute("SELECT * FROM notification_settings")
+                    }
+                    self.assertEqual(
+                        set(rows), {"feishu_app", "dingtalk_webhook", "email"}
+                    )
+                    for key, value in original.items():
+                        if key != "id":
+                            self.assertEqual(rows[selected][key], value)
+                    for name in rows.keys() - {selected}:
+                        self.assertFalse(rows[name]["enabled"])
+                        self.assertIsNone(rows[name]["last_attempt_at"])
+                        self.assertEqual(rows[name]["version"], 1)
+                    self.assertEqual(
+                        conn.execute(
+                            "SELECT secret_encrypted FROM notification_feishu_settings"
+                        ).fetchone()["secret_encrypted"],
+                        "fixture-cipher-feishu",
+                    )
+                    self.assertEqual(
+                        conn.execute(
+                            "SELECT webhook_encrypted FROM notification_dingtalk_webhook_settings"
+                        ).fetchone()["webhook_encrypted"],
+                        "fixture-cipher-webhook",
+                    )

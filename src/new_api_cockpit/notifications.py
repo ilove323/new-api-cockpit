@@ -4,6 +4,7 @@ import logging
 import os
 
 from cryptography.fernet import Fernet, InvalidToken
+from psycopg.types.json import Jsonb
 
 from new_api_cockpit import balance, scopes
 from new_api_cockpit.locks import NOTIFICATION_LOCK
@@ -66,7 +67,7 @@ def decrypt(value):
         return ""
     try:
         return cipher().decrypt(value.encode()).decode()
-    except InvalidToken:
+    except (InvalidToken, UnicodeDecodeError):
         raise ValueError("无法解密通知凭证，请检查服务器加密密钥。") from None
 
 
@@ -76,7 +77,6 @@ def public(row):
         "version",
         "enabled",
         "channel",
-        "active_channel",
         "last_attempt_at",
         "last_success_at",
         "last_error",
@@ -89,12 +89,25 @@ def public(row):
             receive_id=row["receive_id"],
             secret_configured=bool(row["secret_encrypted"]),
         )
-    else:
+    elif row["channel"] == "dingtalk_webhook":
         result.update(
             webhook_configured=bool(row["webhook_encrypted"]),
             signing_enabled=row["signing_enabled"],
             signing_secret_configured=bool(row["secret_encrypted"]),
         )
+    elif row["channel"] == "email":
+        for key in (
+            "smtp_host",
+            "smtp_port",
+            "smtp_security",
+            "auth_enabled",
+            "username",
+            "from_address",
+            "from_name",
+            "recipients",
+        ):
+            result[key] = row[key]
+        result["password_configured"] = bool(row["secret_encrypted"])
     return result
 
 
@@ -113,27 +126,82 @@ def provider_config(conn, channel, lock=False):
             FROM notification_dingtalk_webhook_settings WHERE id=1"""
             + suffix
         ).fetchone()
+    if channel == "email":
+        return conn.execute(
+            """SELECT smtp_host,smtp_port,smtp_security,auth_enabled,username,
+            secret_encrypted,from_address,from_name,recipients
+            FROM notification_email_settings WHERE id=1"""
+            + suffix
+        ).fetchone()
     raise ValueError("不支持的报警渠道。")
 
 
 def snapshot(channel=None):
+    selected = channel if channel is not None else "feishu_app"
+    if not isinstance(selected, str) or selected not in CHANNELS:
+        raise ValueError("不支持的报警渠道。")
     with balance.connect() as conn:
-        row = conn.execute("SELECT * FROM notification_settings WHERE id=1").fetchone()
-        selected = channel or (row["channel"] if row else None)
-        if selected not in CHANNELS:
-            raise ValueError("不支持的报警渠道。")
+        # Read the version and provider fields from one consistent snapshot,
+        # without waiting for a network delivery holding its update lock.
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        row = conn.execute(
+            "SELECT * FROM notification_settings WHERE channel=%s", (selected,)
+        ).fetchone()
+        if not row:
+            raise ValueError("报警渠道正在初始化，请稍后重试。")
         config = provider_config(conn, selected)
-    if not row:
-        raise ValueError("报警渠道正在初始化，请稍后重试。")
     result = dict(row)
     result.update(config)
-    result["active_channel"] = row["channel"]
-    result["channel"] = selected
-    if selected != row["channel"]:
-        result.update(
-            enabled=False, last_attempt_at=None, last_success_at=None, last_error=None
-        )
     return public(result)
+
+
+def save_email(conn, body, current):
+    fields = {}
+    for key in ("smtp_host", "username", "from_address", "from_name"):
+        value = body.get(key, "")
+        if not isinstance(value, str):
+            raise ValueError("邮件通知字段格式无效。")
+        fields[key] = value.strip()
+    fields.update(
+        smtp_port=body.get("smtp_port"),
+        smtp_security=body.get("smtp_security"),
+        auth_enabled=body.get("auth_enabled"),
+        recipients=body.get("recipients"),
+    )
+    supplied = body.get("password", "")
+    if (
+        not isinstance(supplied, str)
+        or len(supplied) > 1024
+        or any(char in supplied for char in "\r\n\0")
+    ):
+        raise ValueError("邮件密码格式无效。")
+    # Never reuse credentials on a new SMTP destination or account.
+    identity_changed = any(
+        fields[key] != current[key]
+        for key in ("smtp_host", "smtp_port", "smtp_security", "username")
+    )
+    encrypted = "" if identity_changed else current["secret_encrypted"]
+    if supplied:
+        encrypted = cipher().encrypt(supplied.encode()).decode()
+    secret = decrypt(encrypted) if body["enabled"] and fields["auth_enabled"] else ""
+    CHANNELS["email"].validate(fields, secret, require_complete=body["enabled"])
+    fields["recipients"] = list(dict.fromkeys(fields["recipients"]))
+    conn.execute(
+        """UPDATE notification_email_settings SET smtp_host=%s,smtp_port=%s,
+        smtp_security=%s,auth_enabled=%s,username=%s,secret_encrypted=%s,
+        from_address=%s,from_name=%s,recipients=%s WHERE id=1""",
+        (
+            fields["smtp_host"],
+            fields["smtp_port"],
+            fields["smtp_security"],
+            fields["auth_enabled"],
+            fields["username"],
+            encrypted,
+            fields["from_address"],
+            fields["from_name"],
+            Jsonb(fields["recipients"]),
+        ),
+    )
 
 
 def save(body, username):
@@ -144,11 +212,12 @@ def save(body, username):
     ):
         raise ValueError("报警渠道设置无效。")
     channel = body.get("channel")
-    if channel not in CHANNELS:
+    if not isinstance(channel, str) or channel not in CHANNELS:
         raise ValueError("不支持的报警渠道。")
     with balance.connect() as conn:
         row = conn.execute(
-            "SELECT * FROM notification_settings WHERE id=1 FOR UPDATE"
+            "SELECT * FROM notification_settings WHERE channel=%s FOR UPDATE",
+            (channel,),
         ).fetchone()
         if row["version"] != body["version"]:
             raise balance.SettingsConflict()
@@ -182,6 +251,8 @@ def save(body, username):
                     fields["receive_id"],
                 ),
             )
+        elif channel == "email":
+            save_email(conn, body, current)
         else:
             webhook = body.get("webhook_url", "")
             supplied = body.get("signing_secret", "")
@@ -213,20 +284,43 @@ def save(body, username):
                 (webhook_encrypted, secret_encrypted, signing_enabled),
             )
         conn.execute(
-            """UPDATE notification_settings SET enabled=%s,channel=%s,version=version+1,
+            """UPDATE notification_settings SET enabled=%s,version=version+1,
             updated_at=now(),updated_by=%s,last_attempt_at=NULL,last_success_at=NULL,last_error=NULL
-            WHERE id=1""",
-            (body["enabled"], channel, username),
+            WHERE channel=%s""",
+            (body["enabled"], username, channel),
         )
 
 
-def deliver(test=False, expected_version=None, scope_id=1):
-    """Send after the balance transaction commits. Failures cannot roll it back."""
+def deliver(test=False, expected_version=None, scope_id=1, channel=None):
+    """Fan out to enabled channels; tests target exactly one saved channel."""
+    if test:
+        if not isinstance(channel, str) or channel not in CHANNELS:
+            raise ValueError("请选择要测试的通知渠道。")
+        return deliver_channel(channel, test=True, expected_version=expected_version)
+    with balance.connect() as conn:
+        selected = [
+            row["channel"]
+            for row in conn.execute(
+                """SELECT channel FROM notification_settings
+                WHERE enabled AND channel=ANY(%s) ORDER BY channel""",
+                (list(CHANNELS),),
+            )
+        ]
+    for name in selected:
+        try:
+            deliver_channel(name, scope_id=scope_id)
+        except Exception as exc:
+            # A database/decryption/provider failure must not skip other channels.
+            logging.error("Notification %s failed (%s)", name, type(exc).__name__)
+
+
+def deliver_channel(name, *, test=False, expected_version=None, scope_id=1):
+    """Own transaction/status per provider, separate from committed billing data."""
     with balance.connect() as conn:
         # Serialize deliveries/settings; no job or minute polling is introduced.
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (NOTIFICATION_LOCK,))
         common = conn.execute(
-            "SELECT * FROM notification_settings WHERE id=1 FOR UPDATE"
+            "SELECT * FROM notification_settings WHERE channel=%s FOR UPDATE", (name,)
         ).fetchone()
         config = dict(common)
         config.update(provider_config(conn, common["channel"], lock=True))
@@ -259,7 +353,12 @@ def deliver(test=False, expected_version=None, scope_id=1):
             channel = CHANNELS[config["channel"]]
             if config["channel"] == "dingtalk_webhook":
                 config["webhook_url"] = decrypt(config["webhook_encrypted"])
-            channel.send(config, decrypt(config["secret_encrypted"]), text)
+            secret = (
+                ""
+                if name == "email" and not config["auth_enabled"]
+                else decrypt(config["secret_encrypted"])
+            )
+            channel.send(config, secret, text)
         except ValueError as exc:
             error = str(exc)
         except Exception as exc:
@@ -270,8 +369,8 @@ def deliver(test=False, expected_version=None, scope_id=1):
             )
         conn.execute(
             """UPDATE notification_settings SET last_attempt_at=now(),last_error=%s,
-            last_success_at=CASE WHEN %s THEN now() ELSE last_success_at END WHERE id=1""",
-            (error, error is None),
+            last_success_at=CASE WHEN %s THEN now() ELSE last_success_at END WHERE channel=%s""",
+            (error, error is None, name),
         )
     if test and error:
         raise ValueError(error)

@@ -78,7 +78,7 @@ p { margin-block: 8px; }
 .search-control { position: relative; width: 288px; max-width: 100%; }
 .search-control > input { width: 100%; padding-left: 32px; font-size: 14px; }
 .search-control > .ui-icon { position: absolute; left: 10px; top: 8px; color: var(--ui-muted-text); }
-.hint, .group-hint, [role=status] { font-size: 12px; color: var(--ui-muted-text); line-height: 1.6; }
+.hint, [role=status] { font-size: 12px; color: var(--ui-muted-text); line-height: 1.6; }
 [role=status]:empty { display: none; }
 .warning { color: color-mix(in oklch, var(--ui-warning) 80%, var(--ui-foreground)); font-size: 12px; line-height: 1.6; }
 .help-note { margin: 8px 0 12px; color: var(--ui-muted-text); font-size: 12px; }
@@ -113,8 +113,7 @@ tfoot td { position: sticky; bottom: 0; background: var(--ui-muted); font-weight
 .status-enabled { color: var(--ui-success); }
 .status-disabled { color: var(--ui-danger); }
 .user-group { color: var(--ui-primary-text); }
-.badge, .usage-channel-status { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 12px; color: var(--ui-primary-text); background: var(--ui-accent); font-size: 12px; white-space: nowrap; }
-.badge.disabled { color: var(--ui-danger); background: color-mix(in oklch, var(--ui-danger) 10%, white); }
+.usage-channel-status { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 12px; color: var(--ui-primary-text); background: var(--ui-accent); font-size: 12px; white-space: nowrap; }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 16px 0 0; font-size: 12px; color: var(--ui-muted-text); }
 .pagination button { font-size: 12px; }
 /* Retain accessible action names while displaying compact Lucide controls. */

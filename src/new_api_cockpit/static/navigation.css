@@ -35,3 +35,8 @@
   .sidebar-expanded .app-sidebar nav a { justify-content: flex-start; padding-inline: 8px; }
   .sidebar-expanded > main { margin-left: 60px; width: calc(100% - 60px); }
 }
+
+.sidebar-account { margin-top: auto; display: grid; gap: 8px; padding: 8px; overflow-wrap: anywhere; font-size: 12px; color: var(--ui-muted-text); }
+.sidebar-account #logout { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.sidebar-collapsed .sidebar-account { padding: 0; }
+#logout-status { margin: 0; color: var(--ui-danger); }

@@ -41,19 +41,19 @@ async function harness(){
   vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../src/new_api_cockpit/static/keys.js'),'utf8'),context);await settle();
   return {elements,tabs,calls,context,row,user,setHandler(fn){handler=fn;}};
 }
-test('combined list loads read-only, uses enabled users and all KEY states, formats money',async()=>{const h=await harness();assert.equal(h.calls.length,2);assert.equal(h.calls[1].url,'/cockpit/keys/api/query/grouped');assert.deepEqual(h.tabs.map(n=>n.dataset.tab),[]);assert.deepEqual(h.calls[1].body.user_statuses,[1]);assert.deepEqual(h.calls[1].body.token_statuses,[1,2,3,4]);const tr=h.elements.get('management-rows').firstChild;assert.ok(!tr.firstChild.children.some(n=>n.className==='user-meta user-money'));assert.equal(tr.children[7].textContent,'2.35');assert.match(h.elements.get('page-info').textContent,/1 个用户 \/ 1 个 KEY/);});
+test('combined list loads read-only, uses enabled users and all KEY states, formats money',async()=>{const h=await harness();assert.equal(h.calls.length,2);assert.equal(h.calls[1].url,'/cockpit/api/keys/query/grouped');assert.deepEqual(h.tabs.map(n=>n.dataset.tab),[]);assert.deepEqual(h.calls[1].body.user_statuses,[1]);assert.deepEqual(h.calls[1].body.token_statuses,[1,2,3,4]);const tr=h.elements.get('management-rows').firstChild;assert.ok(!tr.firstChild.children.some(n=>n.className==='user-meta user-money'));assert.equal(tr.children[7].textContent,'2.35');assert.match(h.elements.get('page-info').textContent,/1 个用户 \/ 1 个 KEY/);});
 test('list search remains available and preserves filters without standalone lookup controls',async()=>{
   const h=await harness();h.elements.get('management-keyword').value='ask_copy';
   for(const id of ['user-group-options','token-group-options'])h.elements.get(id).querySelectorAll('input[type=checkbox]').find(input=>input.value==='a').checked=true;
   await h.elements.get('management-search').fire('submit');await settle();
-  const call=h.calls.at(-1);assert.equal(call.url,'/cockpit/keys/api/query/grouped');assert.equal(call.init.method,'POST');
+  const call=h.calls.at(-1);assert.equal(call.url,'/cockpit/api/keys/query/grouped');assert.equal(call.init.method,'POST');
   assert.equal(call.body.search,'ask_copy');assert.deepEqual(call.body.user_groups,['a']);assert.deepEqual(call.body.token_groups,['a']);
   assert.deepEqual(call.body.user_statuses,[1]);assert.deepEqual(call.body.token_statuses,[1,2,3,4]);
   for(const id of ['find-key','key-search-dialog','key-search-form','search-full-key'])assert.equal(h.elements.has(id),false,id);
   assert.equal(h.elements.has('new-key'),true);assert.ok(!h.calls.some(c=>c.url.includes('ask_copy')));
 });
 test('full KEY reveal still requires confirmation and clears plaintext on dialog close',async()=>{
-  const h=await harness();h.setHandler(c=>c.url.endsWith('/token/10/action')?{result:{key:'fixture-secret'}}:undefined);
+  const h=await harness();h.setHandler(c=>c.url.endsWith('/10/action')?{result:{key:'fixture-secret'}}:undefined);
   const reveal=h.elements.get('management-rows').firstChild.lastChild.children[3];
   h.context.confirm=()=>false;await reveal.fire('click');assert.equal(h.elements.get('reveal-dialog').open,false);
   h.context.confirm=()=>true;await reveal.fire('click');
@@ -74,9 +74,9 @@ test('token page has only KEY actions; new KEY binds owner and edit binds KEY ID
   await actions.children[0].fire('click');
   assert.equal(h.elements.get('edit-fields').querySelectorAll('[name]').find(n=>n.name==='user_id').value,2);
   h.elements.get('edit-dialog').close();
-  h.setHandler(c=>c.url.endsWith('/token/10')?{...h.row,group:'a',available_groups:['a']}:undefined);
+  h.setHandler(c=>c.url.endsWith('/10')?{...h.row,group:'a',available_groups:['a']}:undefined);
   const keyActions=h.elements.get('management-rows').firstChild.lastChild;await keyActions.children[1].fire('click');
-  assert.equal(h.calls.at(-1).url,'/cockpit/keys/api/token/10');
+  assert.equal(h.calls.at(-1).url,'/cockpit/api/keys/10');
 });
 
 const groupPickerFor=h=>h.elements.get('management-rows').firstChild.children[5].firstChild;
@@ -88,7 +88,7 @@ test('only the group cell is interactive; its lazy menu reads owner-allowed grou
   assert.equal(groupPickerFor(h).firstChild.textContent,'a');
   h.setHandler(c=>c.url.endsWith('/groups')?{group:'a',user_status:1,available_groups:['b']}:undefined);
   const picker=await openGroups(h);const menu=picker.children[1];
-  assert.equal(h.calls.at(-1).url,'/cockpit/keys/api/token/10/groups');assert.equal(h.calls.at(-1).init.method,undefined);
+  assert.equal(h.calls.at(-1).url,'/cockpit/api/keys/10/groups');assert.equal(h.calls.at(-1).init.method,undefined);
   const buttons=menu.children.filter(n=>n.tag==='button');assert.deepEqual(buttons.map(n=>n.dataset.group),['','auto','b']);
   assert.ok(!h.calls.some(c=>c.url.endsWith('/action')));
   const search=menu.children.find(n=>n.tag==='input');search.value='b';await search.fire('input');assert.deepEqual(buttons.filter(n=>!n.hidden).map(n=>n.dataset.group),['b']);

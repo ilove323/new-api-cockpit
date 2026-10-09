@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · API 文档</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <link rel="stylesheet" href="/cockpit/static/api-docs.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/api-docs-client.js"></script>
+  <script defer src="/cockpit/static/api-docs.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main id="api-docs">
+    <section class="page-panel">
+      <div class="page-heading"><h1>API 文档</h1><a href="/cockpit/api/openapi.json" download="cockpit-openapi.json">{{ icon('download') }}下载 OpenAPI</a></div>
+      <p>先试一次查询，再把示例复制到自己的程序里。这里调用的是当前站点的真实接口，不是模拟环境。</p>
+      <div class="docs-tabs" role="tablist" aria-label="文档视图">
+        <button id="docs-guide-tab" type="button" role="tab" aria-controls="docs-guide" aria-selected="true">快速上手与在线调试</button>
+        <button id="docs-reference-tab" type="button" role="tab" aria-controls="docs-reference" aria-selected="false">完整接口参考</button>
+      </div>
+      <p id="docs-load-status" role="status" aria-live="polite">正在读取接口描述…</p>
+      <div id="docs-guide" role="tabpanel" aria-labelledby="docs-guide-tab">
+        <div class="docs-auth">
+          <label>调试身份<select id="docs-auth-mode"><option value="session">当前登录会话</option><option value="pat">管理员 PAT</option></select></label>
+          <label id="docs-pat-field" hidden>New API 管理员 PAT<input id="docs-pat" type="password" autocomplete="off" spellcheck="false" placeholder="不是模型调用 KEY，不添加 sk-" aria-describedby="docs-auth-help"></label>
+          <button id="docs-clear-pat" type="button" hidden>清除 PAT</button>
+        </div>
+        <p class="hint" id="docs-auth-help">余额和报警只接受 PAT。PAT 只留在本页内存中，不保存到浏览器；填写 PAT 会使用它对应的管理员身份。</p>
+        <p class="hint">本站地址：<code id="docs-origin"></code>。复制的程序示例统一使用环境变量 ADMIN_PAT，不包含输入的 PAT。</p>
+        <div class="docs-guides" aria-label="常用流程">
+          <div><h2>余额查询</h2><p>先找账本，再查询余额。报警是另一次有副作用的调用。</p><button type="button" data-docs-step="scopes">1. 查看账本</button><button type="button" data-docs-step="balance">2. 查询余额</button><button type="button" data-docs-step="alert">3. 检查报警</button></div>
+          <div><h2>调整用户额度</h2><p>金额是每人金额；先核对用户，再看修改前后对比。</p><button type="button" data-docs-step="users">1. 查询用户</button><button type="button" data-docs-step="quota-preview">2. 预览额度</button><button type="button" data-docs-step="quota-apply">3. 确认执行</button></div>
+          <div><h2>批量 KEY 改组</h2><p>先暂停目标 KEY 的并发调用。每次执行最多 5 个，不自动继续。</p><button type="button" data-docs-step="keys">1. 查询 KEY</button><button type="button" data-docs-step="keys-preview">2. 冻结名单</button><button type="button" data-docs-step="keys-apply">3. 执行下一组</button></div>
+        </div>
+        <form id="docs-request-form">
+          <fieldset id="docs-request-fields" disabled>
+            <label>选择接口<select id="docs-operation"></select></label>
+            <p id="docs-operation-description"></p>
+            <p id="docs-effect" class="warning"></p>
+            <div id="docs-parameters" class="docs-parameters"></div>
+            <label id="docs-body-field" hidden>JSON 请求体<textarea id="docs-body" rows="9" spellcheck="false"></textarea></label>
+            <p id="docs-headers" class="hint"></p>
+            <div class="docs-request-actions"><button id="docs-send" class="button-primary" type="submit">发送请求</button><span class="hint">只发一次；失败或超时不自动重试。</span></div>
+          </fieldset>
+        </form>
+        <div class="docs-output">
+          <section><h2>调用示例</h2><div class="docs-code-tools"><label><span class="sr-only">示例语言</span><select id="docs-code-language"><option value="curl">curl</option><option value="python">Python</option><option value="javascript">JavaScript</option></select></label><button id="docs-copy" type="button">复制示例</button></div><pre id="docs-code"></pre></section>
+          <section><h2>实际响应</h2><p id="docs-request-status" role="status" aria-live="polite">尚未发送请求。</p><a id="docs-file" hidden download="usage.xlsx">下载返回的 Excel</a><pre id="docs-response" aria-label="接口返回内容"></pre></section>
+        </div>
+      </div>
+      <div id="docs-reference" role="tabpanel" aria-labelledby="docs-reference-tab" hidden><p class="hint">按模块查看参数、数据结构和错误。实际调试统一在“快速上手与在线调试”中完成，避免绕过操作确认。</p><div id="scalar-reference"></div></div>
+    </section>
+  </main>
+  <dialog id="docs-confirm" aria-labelledby="docs-confirm-title">
+    <form method="dialog"><h2 id="docs-confirm-title">确认调用真实接口</h2><p id="docs-confirm-description"></p><pre id="docs-confirm-target"></pre><p class="warning">这不是模拟请求。取消不会发送；确认后遇到超时，请先核对实际数据和操作记录，不要盲目重发。</p><div class="dialog-actions"><button value="cancel">取消</button><button class="button-danger" value="confirm">确认发送</button></div></form>
+  </dialog>
+</body>
+</html>

@@ -67,7 +67,9 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8091/healthz
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/statistics/)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/statistics/)" = 302
+          curl -fsS http://127.0.0.1:8091/cockpit/login >/dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/api/auth/session)" = 401
       - if: always()
         run: docker logs cockpit-ci || true
 
@@ -79,4 +81,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: Scan Git history for secrets
-        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner --gitleaks-ignore-path /repo/.gitleaksignore

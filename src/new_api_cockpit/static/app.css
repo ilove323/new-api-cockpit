@@ -40,6 +40,9 @@
 #usage-table th, #usage-table td { text-align: right; white-space: nowrap; }
 #usage-table td.username, #usage-table td.model, #usage-table td.token-name, #usage-table th:first-child, #usage-table th[data-column=model_name], #usage-table th[data-token-column], #usage-table td[data-column=tier_name], #usage-table th[data-column=tier_name], #usage-table tfoot td:first-child { text-align: left; }
 #usage-table td.username { vertical-align: middle; border-right: 1px solid var(--ui-border); background: var(--ui-background); }
+#usage-table [data-column=logs] { text-align: center; }
+.usage-log-link { display: inline-flex; align-items: center; min-height: 28px; padding: 0 6px; border-radius: 8px; }
+.usage-log-link:hover { background: var(--ui-accent); }
 .failure-requests, .price-breakdown { white-space: pre-line !important; line-height: 1.7; }
 .money-cell { cursor: help; text-decoration: underline dotted var(--ui-muted-text); text-underline-offset: 4px; }
 .money-tooltip { position: fixed; z-index: 1000; width: 480px; max-width: calc(100vw - 16px); max-height: min(520px,calc(100dvh - 16px)); overflow: auto; padding: 16px; border: 1px solid var(--ui-border); border-radius: 16px; background: var(--ui-background); box-shadow: 0 8px 24px #0000001a; color: var(--ui-foreground); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }

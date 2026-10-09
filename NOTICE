@@ -8,3 +8,7 @@ src/new_api_cockpit/static/LUCIDE-LICENSE.
 
 Bundled Public Sans typeface retains its original SIL Open Font License 1.1:
 src/new_api_cockpit/static/fonts/OFL-LICENSE.txt.
+
+Bundled Scalar API Reference 1.73.1 retains its original MIT license:
+src/new_api_cockpit/static/SCALAR-LICENSE.
+Source: https://github.com/scalar/scalar, package @scalar/api-reference.

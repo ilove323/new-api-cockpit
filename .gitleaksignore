@@ -1,0 +1,4 @@
+# OpenAPI schema helper arguments, not a credential value.
+2a58e6c83ba9051443b3d7850691eefd81197ca1:src/new_api_cockpit/openapi.py:generic-api-key:560
+# Synthetic PAT testing plus/slash/equal handling; no live credential.
+2a58e6c83ba9051443b3d7850691eefd81197ca1:tests/test_api_docs_client.cjs:generic-api-key:31

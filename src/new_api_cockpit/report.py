@@ -188,7 +188,7 @@ def convert_historical_row(row):
 
 
 def parse_boundary(value, end=False):
-    """Accept second/minute precision; preserve legacy whole-date queries."""
+    """Accept dates or minute/second timestamps in Beijing time."""
     try:
         if len(value) == 10:
             return datetime.combine(
@@ -245,7 +245,7 @@ def current_prices(model, options):
 
 
 def price_details(model, options):
-    """Expression mode takes precedence over dormant legacy ratio settings."""
+    """Use the model's active billing mode, even when both configs exist."""
     if options.get("billing_setting.billing_mode", {}).get(model) != "tiered_expr":
         return {
             **current_prices(model, options),
@@ -915,67 +915,69 @@ def load_report(
     return decorate(rows, options)
 
 
-def load_token_options(
-    start, end, *, include_failures=False, channel_ids=None, excluded_channel_ids=None
+def _load_usage_options(
+    query,
+    start,
+    end,
+    *,
+    include_failures=False,
+    channel_ids=None,
+    excluded_channel_ids=None,
 ):
-    """Return the latest name of each token used in the selected interval."""
+    """Use the report's time, log types and channel rules for filter options."""
     first, last = period(start, end)
+    params = dict(
+        types=[2, 5] if include_failures else [2],
+        start=first,
+        end=last,
+        channel_ids=channel_ids,
+        excluded_channel_ids=excluded_channel_ids,
+    )
     with psycopg.connect(
         connect_timeout=8,
         row_factory=dict_row,
         options="-c default_transaction_read_only=on -c statement_timeout=60000",
     ) as conn:
         return conn.execute(
-            """SELECT DISTINCT ON (token_id) token_id,
-                      COALESCE(NULLIF(btrim(token_name), ''), '未知令牌') AS token_name
-               FROM logs
-               WHERE type = ANY(%s) AND created_at >= %s AND created_at < %s
-                 AND (%s::bigint[] IS NULL OR channel_id = ANY(%s::bigint[])
-                      OR (channel_id IS NULL AND array_position(%s::bigint[], NULL) IS NOT NULL))
-                 AND (%s::bigint[] IS NULL OR channel_id IS NULL OR NOT (channel_id = ANY(%s::bigint[])))
-               ORDER BY token_id, created_at DESC, id DESC""",
-            (
-                [2, 5] if include_failures else [2],
-                first,
-                last,
-                channel_ids,
-                channel_ids,
-                channel_ids,
-                excluded_channel_ids,
-                excluded_channel_ids,
-            ),
+            scoped_sql(query, channel_ids, excluded_channel_ids), params
         ).fetchall()
+
+
+def load_token_options(
+    start, end, *, include_failures=False, channel_ids=None, excluded_channel_ids=None
+):
+    """Return the latest name of each token used in the selected interval."""
+    return _load_usage_options(
+        """SELECT DISTINCT ON (token_id) token_id,
+                  COALESCE(NULLIF(btrim(token_name), ''), '未知令牌') AS token_name
+           FROM logs
+           WHERE type = ANY(%(types)s) AND created_at >= %(start)s AND created_at < %(end)s
+             /* scope_channels */
+           ORDER BY token_id, created_at DESC, id DESC""",
+        start,
+        end,
+        include_failures=include_failures,
+        channel_ids=channel_ids,
+        excluded_channel_ids=excluded_channel_ids,
+    )
 
 
 def load_group_options(
     start, end, *, include_failures=False, channel_ids=None, excluded_channel_ids=None
 ):
     """Return groups used in the selected interval."""
-    first, last = period(start, end)
-    with psycopg.connect(
-        connect_timeout=8,
-        row_factory=dict_row,
-        options="-c default_transaction_read_only=on -c statement_timeout=60000",
-    ) as conn:
-        return conn.execute(
-            """SELECT DISTINCT COALESCE("group", '') AS group_name
-               FROM logs
-               WHERE type = ANY(%s) AND created_at >= %s AND created_at < %s
-                 AND (%s::bigint[] IS NULL OR channel_id = ANY(%s::bigint[])
-                      OR (channel_id IS NULL AND array_position(%s::bigint[], NULL) IS NOT NULL))
-                 AND (%s::bigint[] IS NULL OR channel_id IS NULL OR NOT (channel_id = ANY(%s::bigint[])))
-               ORDER BY group_name""",
-            (
-                [2, 5] if include_failures else [2],
-                first,
-                last,
-                channel_ids,
-                channel_ids,
-                channel_ids,
-                excluded_channel_ids,
-                excluded_channel_ids,
-            ),
-        ).fetchall()
+    return _load_usage_options(
+        """SELECT DISTINCT COALESCE("group", '') AS group_name
+           FROM logs
+           WHERE type = ANY(%(types)s) AND created_at >= %(start)s AND created_at < %(end)s
+             /* scope_channels */
+           ORDER BY group_name""",
+        start,
+        end,
+        include_failures=include_failures,
+        channel_ids=channel_ids,
+        excluded_channel_ids=excluded_channel_ids,
+    )
 
 
 def known_sum(rows, field):

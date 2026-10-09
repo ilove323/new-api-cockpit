@@ -13,11 +13,13 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 from new_api_cockpit import (
+    auth,
     balance,
     quota,
     operation_records,
     user_management as manage,
 )
+from new_api_cockpit.app import app
 
 DSN = os.environ.get("TEST_SCHEDULE_DATABASE_URL")
 
@@ -130,6 +132,100 @@ class UserManagementDatabaseTest(unittest.TestCase):
             manage.list_grouped("admin", {"user_statuses": [2]})["total"], 1
         )
 
+    def test_pat_api_identity_revocation_permissions_and_audit_on_real_fixture(self):
+        """Real SQL/auth/routes/audit; only the official mutation is mocked."""
+        client = app.test_client()
+        real_connect = psycopg.connect
+
+        def fixture_connect(*args, **kwargs):
+            return real_connect(*(args or (DSN,)), **kwargs)
+
+        with real_connect(DSN) as conn:
+            conn.execute("UPDATE users SET access_token='fixture-user-pat' WHERE id=2")
+            conn.execute(
+                "UPDATE users SET access_token='fixture-disabled-pat' WHERE id=4"
+            )
+            conn.execute(
+                "INSERT INTO users(id,username,role,status,access_token,deleted_at) VALUES(5,'deleted',100,1,'fixture-deleted-pat',now())"
+            )
+        headers = {
+            "Authorization": "Bearer fixture-manager-pat",
+            "X-Management-Action": "confirm",
+            "New-Api-User": "1",
+        }
+        body = {"action": "group", "changes": {"group": "b"}}
+        with (
+            patch.object(auth.psycopg, "connect", side_effect=fixture_connect),
+            patch.object(auth, "verify_session") as session,
+        ):
+            for credential in (
+                "fixture-user-pat",
+                "fixture-disabled-pat",
+                "fixture-deleted-pat",
+                "fixture-secret-one",
+            ):
+                response = client.get(
+                    "/cockpit/api/keys/options",
+                    headers={"Authorization": "Bearer " + credential},
+                )
+                self.assertEqual(response.status_code, 401)
+            response = client.get("/cockpit/api/keys/options", headers=headers)
+            self.assertEqual(
+                response.json["operator"], {"id": 3, "username": "manager", "role": 10}
+            )
+            with patch.object(
+                manage,
+                "call_api",
+                side_effect=[
+                    {
+                        "username": "alice",
+                        "display_name": "Alice",
+                        "group": "a",
+                        "remark": "",
+                        "role": 1,
+                    },
+                    None,
+                ],
+            ) as upstream:
+                self.assertEqual(
+                    client.post(
+                        "/cockpit/api/users/1/action", json=body, headers=headers
+                    ).status_code,
+                    403,
+                )
+                upstream.assert_not_called()
+                response = client.post(
+                    "/cockpit/api/users/2/action", json=body, headers=headers
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(upstream.call_args.args[0]["id"], 3)
+            records = client.get("/cockpit/api/operations", headers=headers)
+            self.assertEqual(len(records.json["rows"]), 1)
+            record = records.json["rows"][0]
+            self.assertEqual(record["operator_id"], 3)
+            self.assertEqual(record["operator_name"], "manager")
+            self.assertEqual(record["target_users"], [{"id": 2, "username": "alice"}])
+            with real_connect(DSN) as conn:
+                conn.execute(
+                    "UPDATE users SET access_token='fixture-rotated-manager' WHERE id=3"
+                )
+            self.assertEqual(
+                client.get("/cockpit/api/keys/options", headers=headers).status_code,
+                401,
+            )
+            headers["Authorization"] = "Bearer fixture-rotated-manager"
+            self.assertEqual(
+                client.get("/cockpit/api/keys/options", headers=headers).status_code,
+                200,
+            )
+            with real_connect(DSN) as conn:
+                conn.execute("UPDATE users SET role=1 WHERE id=3")
+            self.assertEqual(
+                client.get("/cockpit/api/keys/options", headers=headers).status_code,
+                401,
+            )
+            session.assert_not_called()
+
     def test_quick_group_options_are_permission_checked_without_pat_or_audit_writes(
         self,
     ):
@@ -206,6 +302,130 @@ class UserManagementDatabaseTest(unittest.TestCase):
                         (operator, target, manage.generate_pat()),
                     )
 
+    def test_user_group_options_use_global_groups_without_upstream_pat_or_audit(self):
+        with (
+            patch.object(manage, "call_api") as upstream,
+            patch.object(manage, "owner_pat") as pat,
+        ):
+            self.assertEqual(
+                manage.user_group_options("admin", 2),
+                {
+                    "id": 2,
+                    "username": "alice",
+                    "group": "a",
+                    "available_groups": ["a", "admins", "b"],
+                    "persistence": True,
+                },
+            )
+            self.assertEqual(manage.user_group_options("admin", 4)["group"], "a")
+            for username, target, error in (
+                ("manager", 1, manage.Forbidden),
+                ("alice", 2, manage.Forbidden),
+                ("admin", 9999, manage.ManagementError),
+            ):
+                with self.subTest(username=username, target=target):
+                    with self.assertRaises(error):
+                        manage.user_group_options(username, target)
+            upstream.assert_not_called()
+            pat.assert_not_called()
+        with self.source() as conn:
+            self.assertIsNone(
+                conn.execute("SELECT access_token FROM users WHERE id=2").fetchone()[
+                    "access_token"
+                ]
+            )
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM user_management_operations"
+                ).fetchone()["n"],
+                0,
+            )
+
+    def test_user_groups_distinguish_empty_configuration_and_absent_defaults(self):
+        with psycopg.connect(DSN) as conn:
+            conn.execute("UPDATE options SET value='{}' WHERE key='GroupRatio'")
+        self.assertEqual(manage.user_group_options("admin", 2)["available_groups"], [])
+        with psycopg.connect(DSN) as conn:
+            conn.execute("DELETE FROM options WHERE key='GroupRatio'")
+        self.assertEqual(
+            manage.user_group_options("admin", 2)["available_groups"],
+            ["default", "svip", "vip"],
+        )
+
+    def test_user_group_action_changes_only_group_and_records_target_and_before_after(
+        self,
+    ):
+        with psycopg.connect(DSN) as conn:
+            conn.execute("UPDATE users SET quota=250000,used_quota=750000 WHERE id=4")
+        with self.source() as conn:
+            before = conn.execute("SELECT * FROM users WHERE id=4").fetchone()
+        calls = []
+
+        def api(operator, user_id, path, **kwargs):
+            calls.append((operator["id"], user_id, path, kwargs))
+            if kwargs.get("method") == "PUT":
+                with psycopg.connect(DSN) as conn:
+                    conn.execute(
+                        'UPDATE users SET "group"=%s WHERE id=%s',
+                        (kwargs["body"]["group"], kwargs["body"]["id"]),
+                    )
+                return None
+            return before
+
+        with patch.object(manage, "call_api", side_effect=api):
+            result = manage.single_action(
+                "admin", "user", 4, {"action": "group", "changes": {"group": "b"}}
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [c[:3] for c in calls], [(1, 1, "/api/user/4"), (1, 1, "/api/user/")]
+        )
+        self.assertEqual(set(calls[-1][3]["body"]), {*manage.USER_FIELDS, "id", "role"})
+        with self.source() as conn:
+            after = conn.execute("SELECT * FROM users WHERE id=4").fetchone()
+            self.assertEqual(after, {**before, "group": "b"})
+            self.assertEqual(
+                conn.execute('SELECT "group" FROM tokens WHERE id=12').fetchone()[
+                    "group"
+                ],
+                "a",
+            )
+        record = operation_records.list_records("admin", {})["rows"][0]
+        self.assertEqual(record["action"], "user.group")
+        self.assertEqual(record["target_users"], [{"id": 4, "username": "disabled"}])
+        item = operation_records.detail("admin", "management", result["operation_id"])[
+            "rows"
+        ][0]
+        self.assertEqual(item["before_data"]["group"], "a")
+        self.assertEqual(item["after_data"]["group"], "b")
+        self.assertEqual(item["state"], "success")
+
+    def test_invalid_or_unchanged_user_group_does_not_initiate_a_write(self):
+        with patch.object(manage, "call_api") as upstream:
+            for changes in (
+                {"group": "b", "quota": 1},
+                {"group": ""},
+                {"group": "auto"},
+                {"group": "unknown"},
+                {"group": 3},
+                {},
+                {"group": "a"},
+            ):
+                with self.subTest(changes=changes):
+                    with self.assertRaises(manage.ManagementError):
+                        manage.single_action(
+                            "admin", "user", 2, {"action": "group", "changes": changes}
+                        )
+            upstream.assert_not_called()
+        with self.monitor() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT count(*) AS n FROM user_management_operations"
+                ).fetchone()["n"],
+                0,
+            )
+
     def test_owner_pat_missing_created_then_latest_rotation_read(self):
         pat = manage.owner_pat(self.operator, 2)
         self.assertTrue(pat)
@@ -214,6 +434,47 @@ class UserManagementDatabaseTest(unittest.TestCase):
         self.assertEqual(manage.owner_pat(self.operator, 2), "fixture-rotated")
         with self.assertRaises(manage.ManagementError):
             manage.owner_pat(self.operator, 4)
+
+    def test_missing_pat_overrides_readonly_default_with_function_only_privilege(self):
+        real_connect = psycopg.connect
+
+        def reader_default_connect(*args, **kwargs):
+            if args:
+                return real_connect(*args, **kwargs)
+            # Emulate the source role's read-only default before caller options.
+            kwargs["options"] = "-c default_transaction_read_only=on " + kwargs.get(
+                "options", ""
+            )
+            conn = real_connect(DSN, **kwargs)
+            conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
+            self.assertFalse(
+                conn.execute(
+                    "SELECT has_table_privilege(current_user,'public.users','UPDATE')"
+                ).fetchone()[0]
+            )
+            return conn
+
+        with patch.object(
+            manage.psycopg, "connect", side_effect=reader_default_connect
+        ):
+            pat = manage.owner_pat(self.operator, 2)
+        self.assertTrue(pat)
+        with self.source() as conn:
+            self.assertEqual(
+                conn.execute("SHOW transaction_read_only").fetchone()[
+                    "transaction_read_only"
+                ],
+                "on",
+            )
+            self.assertEqual(
+                conn.execute("SELECT access_token FROM users WHERE id=2").fetchone()[
+                    "access_token"
+                ],
+                pat,
+            )
+        records = operation_records.list_records("admin", {"kind": "user"})["rows"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["action"], "user.pat_create")
 
     def test_pat_records_show_target_identity_and_preserve_legacy_user_ids(self):
         pat = manage.owner_pat(self.operator, 2)
@@ -263,7 +524,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
 
     def test_all_single_actions_snapshot_targets_without_substituting_the_actor(self):
         actions = {
-            "user": ["edit", "password", "enable", "disable", "delete"],
+            "user": ["edit", "group", "password", "enable", "disable", "delete"],
             "token": [
                 "edit",
                 "quota",
@@ -278,7 +539,15 @@ class UserManagementDatabaseTest(unittest.TestCase):
             for kind, kinds in actions.items():
                 for action in kinds:
                     manage.single_action(
-                        "admin", kind, 2 if kind == "user" else 10, {"action": action}
+                        "admin",
+                        kind,
+                        2 if kind == "user" else 10,
+                        {
+                            "action": action,
+                            "changes": {"group": "b"}
+                            if kind == "user" and action == "group"
+                            else {},
+                        },
                     )
             manage.single_action("admin", "token", 2, {"action": "create"})
             new_user = manage.single_action(
@@ -301,7 +570,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
         with psycopg.connect(DSN) as conn:
             conn.execute("DELETE FROM users WHERE id=2")
         headers = operation_records.list_records("admin", {})["rows"]
-        self.assertEqual(len(headers), 17)
+        self.assertEqual(len(headers), 18)
         for header in headers:
             with self.subTest(action=header["action"]):
                 identity = (

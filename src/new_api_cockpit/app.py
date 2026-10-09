@@ -5,8 +5,10 @@
 
 import os
 import re
+import time
 from datetime import date, datetime
 from decimal import Decimal
+from urllib.parse import quote, urlsplit
 
 from flask import (
     Flask,
@@ -16,9 +18,11 @@ from flask import (
     request,
     send_file,
     redirect,
+    make_response,
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg
+from werkzeug.exceptions import HTTPException
 from new_api_cockpit import balance
 from new_api_cockpit import scopes as scope_backend
 from new_api_cockpit import notifications
@@ -29,6 +33,7 @@ from new_api_cockpit import (
     timers,
     user_management,
     operation_records,
+    openapi,
 )
 
 from new_api_cockpit.report import (
@@ -42,9 +47,18 @@ from new_api_cockpit.report import (
     rankings,
     load_site_name,
 )
-from new_api_cockpit.auth import verify_admin, verify_api_key
+from new_api_cockpit.auth import (
+    COOKIE_NAME,
+    COOKIE_PATH,
+    LoginRequired,
+    LoginForbidden,
+    AuthUnavailable,
+    verify_session,
+    verify_pat,
+)
 
 app = Flask(__name__, static_url_path="/cockpit/static")
+PAT_ONLY_ENDPOINTS = {"balance_api", "balance_alert_api"}
 
 
 class JSONProvider(DefaultJSONProvider):
@@ -59,34 +73,210 @@ class JSONProvider(DefaultJSONProvider):
 app.json = JSONProvider(app)
 
 
+def safe_next(value):
+    """Only return to known local pages/downloads, never a supplied origin."""
+    default = "/cockpit/statistics/"
+    if not isinstance(value, str) or len(value) > 4096:
+        return default
+    if (
+        "\\" in value
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        or not value.startswith("/cockpit")
+    ):
+        return default
+    parsed = urlsplit(value)
+    paths = {
+        "/cockpit",
+        "/cockpit/",
+        "/cockpit/statistics",
+        "/cockpit/statistics/",
+        "/cockpit/users",
+        "/cockpit/users/",
+        "/cockpit/keys",
+        "/cockpit/keys/",
+        "/cockpit/operations",
+        "/cockpit/operations/",
+        "/cockpit/docs",
+        "/cockpit/docs/",
+        "/cockpit/api/statistics/export",
+    }
+    return value if not parsed.netloc and parsed.path in paths else default
+
+
+def login_url():
+    return "/cockpit/login?next=" + quote(
+        safe_next(request.full_path.rstrip("?")), safe=""
+    )
+
+
+def request_identity():
+    """Explicit Bearer wins over cookies; invalid credentials never fall back.
+
+    Business APIs accept a New API dashboard JWT or an administrator PAT.
+    Pages/session transport accept JWTs only; balance/alert keep PAT-only auth.
+    """
+    pat_only = request.endpoint in PAT_ONLY_ENDPOINTS
+    allow_pat = (
+        request.path.startswith("/cockpit/api/")
+        and request.endpoint != "browser_session"
+    )
+    authorization = request.headers.get("Authorization")
+    token = request.cookies.get(COOKIE_NAME)
+    if authorization is not None:
+        scheme, separator, value = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            if not separator or not value or any(char.isspace() for char in value):
+                raise LoginRequired("Bearer 凭据格式无效。")
+            # JWTs are validated upstream; opaque PATs are looked up verbatim.
+            if allow_pat and (pat_only or "." not in value):
+                return verify_pat(value)
+            return verify_session(value)
+        if pat_only or not token:
+            raise LoginRequired("请使用 Bearer 凭据。")
+    if pat_only:
+        raise LoginRequired("请提供 New API 管理员 PAT。")
+    # Other authorization schemes grant no access; a browser cookie still works.
+    if not token:
+        return None
+    return verify_session(token)
+
+
+def same_origin_request():
+    if request.headers.get("Sec-Fetch-Site") == "cross-site":
+        return False
+    origin = request.headers.get("Origin")
+    if not origin:
+        # Browser writes also require a non-simple per-feature header and JSON.
+        return True
+    try:
+        parsed = urlsplit(origin)
+        return (
+            parsed.scheme in {"http", "https"}
+            and parsed.netloc == request.host
+            and not parsed.username
+            and parsed.path in {"", "/"}
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
+def auth_failure(message="登录已失效，请重新登录。", status=401, code="AUTH_REQUIRED"):
+    is_page = request.endpoint in {
+        "cockpit_home",
+        "index",
+        "users_page",
+        "keys_page",
+        "operations_page",
+        "api_docs_page",
+    }
+    if is_page and status == 401:
+        response = redirect(login_url(), 302)
+    else:
+        response = make_response(
+            jsonify(error=message, code=code, login_url=login_url()), status
+        )
+    explicit_bearer = (
+        request.headers.get("Authorization", "").split(" ", 1)[0].lower() == "bearer"
+    )
+    if status == 401 and not is_page:
+        response.headers["WWW-Authenticate"] = "Bearer"
+    # An unrelated PAT/JWT failure must not erase the browser's valid session.
+    if (
+        status in {401, 403}
+        and not explicit_bearer
+        and request.endpoint not in PAT_ONLY_ENDPOINTS
+    ):
+        response.delete_cookie(
+            COOKIE_NAME, path=COOKIE_PATH, httponly=True, samesite="Strict"
+        )
+    return response
+
+
 @app.before_request
 def authenticate():
-    if request.path == "/healthz":
-        return None
-    if request.path in {
-        "/cockpit/statistics/api/balance",
-        "/cockpit/statistics/api/alert",
+    if request.endpoint is None or request.endpoint in {
+        "static",
+        "health",
+        "login_page",
     }:
-        authorization = request.headers.get("Authorization", "")
-        scheme, separator, token = authorization.partition(" ")
-        if separator and scheme.lower() == "bearer" and verify_api_key(token.strip()):
-            return None
-        return (
-            jsonify(code=401, message="无效的 New API 管理员 PAT，或账号已停用。"),
-            401,
-            {"WWW-Authenticate": "Bearer"},
+        return None
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and not same_origin_request():
+        return jsonify(error="请求来源不匹配。", code="AUTH_ORIGIN_FORBIDDEN"), 403
+    if request.endpoint == "browser_session" and request.method in {"POST", "DELETE"}:
+        return None
+    try:
+        user = request_identity()
+    except LoginRequired as exc:
+        return auth_failure(str(exc))
+    except LoginForbidden as exc:
+        return auth_failure(str(exc), 403, "AUTH_FORBIDDEN")
+    except AuthUnavailable as exc:
+        return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
+    if not user:
+        return auth_failure()
+    expected = request.headers.get("X-Cockpit-Session")
+    if expected and expected != user.get("session_id"):
+        return auth_failure(
+            "登录账号已切换，请重新加载页面。", 409, "AUTH_SESSION_CHANGED"
         )
-    auth = request.authorization
-    if (
-        not auth
-        or auth.type != "basic"
-        or not verify_admin(auth.username, auth.password)
-    ):
-        return (
-            "请使用 New API 管理员用户名和密码登录。",
-            401,
-            {"WWW-Authenticate": 'Basic realm="new-api-cockpit", charset="UTF-8"'},
+    g.current_user = user
+
+
+@app.context_processor
+def login_context():
+    return {"current_user": getattr(g, "current_user", None)}
+
+
+@app.get("/cockpit/login")
+def login_page():
+    try:
+        name = load_site_name()
+    except psycopg.Error:
+        name = "New API Cockpit"
+    return render_template(
+        "login.html", site_name=name, next_path=safe_next(request.args.get("next"))
+    )
+
+
+@app.route("/cockpit/api/auth/session", methods=["GET", "POST", "DELETE"])
+def browser_session():
+    if request.method == "GET":
+        return jsonify(g.current_user)
+    if request.headers.get("X-Cockpit-Auth") != "1" or not request.is_json:
+        return jsonify(error="不允许的登录请求。"), 403
+    if request.method == "DELETE":
+        response = jsonify(ok=True)
+        response.delete_cookie(
+            COOKIE_NAME, path=COOKIE_PATH, httponly=True, samesite="Strict"
         )
+        return response
+    if request.content_length is not None and request.content_length > 8192:
+        return jsonify(error="登录请求过大。"), 413
+    request.max_content_length = 8192
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {"access_token"}:
+        return jsonify(error="登录请求无效。"), 400
+    try:
+        user = verify_session(body["access_token"])
+    except LoginRequired as exc:
+        return auth_failure(str(exc))
+    except LoginForbidden as exc:
+        return auth_failure(str(exc), 403, "AUTH_FORBIDDEN")
+    except AuthUnavailable as exc:
+        return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
+    response = jsonify(user)
+    response.set_cookie(
+        COOKIE_NAME,
+        body["access_token"],
+        max_age=max(1, user["expires_at"] - int(time.time())),
+        path=COOKIE_PATH,
+        httponly=True,
+        secure=os.environ.get("COCKPIT_COOKIE_SECURE", "true").lower() != "false",
+        samesite="Strict",
+    )
+    return response
 
 
 @app.after_request
@@ -96,7 +286,7 @@ def headers(response):
         and response.is_json
         and response.status_code < 400
         and (
-            request.path.startswith("/cockpit/statistics/api/balance/")
+            request.path.startswith("/cockpit/api/statistics/balance/")
             and "/channel" not in request.path
         )
     ):
@@ -109,6 +299,13 @@ def headers(response):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
     )
+    if request.endpoint == "api_docs_page":
+        # Scalar injects its local stylesheet. Scripts/connections remain same-origin.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+            "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        )
     return response
 
 
@@ -126,24 +323,37 @@ def cockpit_home():
     return redirect("/cockpit/statistics/", 302)
 
 
+@app.get("/cockpit/docs")
+@app.get("/cockpit/docs/")
+def api_docs_page():
+    return render_template("api-docs.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/api/openapi.json")
+def api_schema():
+    response = make_response(openapi.serialized_document())
+    response.mimetype = "application/json"
+    return response
+
+
 @app.get("/cockpit/operations")
 @app.get("/cockpit/operations/")
 def operations_page():
     return render_template("operations.html", site_name=load_site_name())
 
 
-@app.get("/cockpit/operations/api/records")
+@app.get("/cockpit/api/operations")
 def operations_list():
     return jsonify(
-        operation_records.list_records(request.authorization.username, request.args)
+        operation_records.list_records(g.current_user["username"], request.args)
     )
 
 
-@app.get("/cockpit/operations/api/records/<source>/<record_id>")
+@app.get("/cockpit/api/operations/<source>/<record_id>")
 def operations_detail(source, record_id):
     return jsonify(
         operation_records.detail(
-            request.authorization.username,
+            g.current_user["username"],
             source,
             record_id,
             request.args.get("after", -1),
@@ -151,18 +361,25 @@ def operations_detail(source, record_id):
     )
 
 
-@app.get("/cockpit/users/api/user/<int:target_id>")
+@app.get("/cockpit/api/users/<int:target_id>")
 def user_profile_detail(target_id):
     return jsonify(
-        user_management.detail(request.authorization.username, "user", target_id)
+        user_management.detail(g.current_user["username"], "user", target_id)
     )
 
 
-@app.post("/cockpit/users/api/user/<int:target_id>/action")
+@app.get("/cockpit/api/users/<int:target_id>/groups")
+def user_profile_groups(target_id):
+    return jsonify(
+        user_management.user_group_options(g.current_user["username"], target_id)
+    )
+
+
+@app.post("/cockpit/api/users/<int:target_id>/action")
 def user_profile_action(target_id):
     return jsonify(
         user_management.single_action(
-            request.authorization.username, "user", target_id, management_body()
+            g.current_user["username"], "user", target_id, management_body()
         )
     )
 
@@ -187,30 +404,26 @@ def users_page():
     return render_template("users.html", site_name=load_site_name())
 
 
-@app.get("/cockpit/users/api/users")
+@app.get("/cockpit/api/users")
 def quota_users():
     return jsonify(rows=quota_backend.list_users())
 
 
-@app.post("/cockpit/users/api/preview")
+@app.post("/cockpit/api/users/quota/preview")
 def quota_preview():
     if request.headers.get("X-Quota-Action") != "preview":
         return jsonify(error="请求来源无效。"), 403
     return jsonify(
-        quota_backend.preview(
-            request.authorization.username, request.get_json(silent=True)
-        )
+        quota_backend.preview(g.current_user["username"], request.get_json(silent=True))
     )
 
 
-@app.post("/cockpit/users/api/apply")
+@app.post("/cockpit/api/users/quota/apply")
 def quota_apply():
     if request.headers.get("X-Quota-Action") != "confirm":
         return jsonify(error="请先确认额度调整。"), 403
     return jsonify(
-        quota_backend.apply(
-            request.authorization.username, request.get_json(silent=True)
-        )
+        quota_backend.apply(g.current_user["username"], request.get_json(silent=True))
     )
 
 
@@ -222,39 +435,37 @@ def quota_schedule_write_allowed():
     )
 
 
-@app.get("/cockpit/users/api/schedules")
+@app.get("/cockpit/api/users/schedules")
 def quota_schedules_list():
-    return jsonify(quota_schedule.list_rules(request.authorization.username))
+    return jsonify(quota_schedule.list_rules(g.current_user["username"]))
 
 
-@app.post("/cockpit/users/api/schedules")
+@app.post("/cockpit/api/users/schedules")
 def quota_schedule_create():
     if not quota_schedule_write_allowed():
         return jsonify(error="不允许的定时规则请求。"), 403
     return jsonify(
         quota_schedule.save_rule(
-            request.authorization.username, request.get_json(silent=True)
+            g.current_user["username"], request.get_json(silent=True)
         )
     ), 201
 
 
 @app.route(
-    "/cockpit/users/api/schedules/<int:rule_id>", methods=["PUT", "PATCH", "DELETE"]
+    "/cockpit/api/users/schedules/<int:rule_id>", methods=["PUT", "PATCH", "DELETE"]
 )
 def quota_schedule_change(rule_id):
     if not quota_schedule_write_allowed():
         return jsonify(error="不允许的定时规则请求。"), 403
     body = request.get_json(silent=True)
     if request.method == "DELETE":
-        quota_schedule.delete_rule(request.authorization.username, rule_id, body)
+        quota_schedule.delete_rule(g.current_user["username"], rule_id, body)
         return jsonify(deleted=True)
     if request.method == "PATCH":
         return jsonify(
-            quota_schedule.set_enabled(request.authorization.username, rule_id, body)
+            quota_schedule.set_enabled(g.current_user["username"], rule_id, body)
         )
-    return jsonify(
-        quota_schedule.save_rule(request.authorization.username, body, rule_id)
-    )
+    return jsonify(quota_schedule.save_rule(g.current_user["username"], body, rule_id))
 
 
 @app.errorhandler(quota_schedule.ScheduleConflict)
@@ -297,58 +508,52 @@ def management_body():
     return body
 
 
-@app.get("/cockpit/keys/api/options")
+@app.get("/cockpit/api/keys/options")
 def management_options():
-    return jsonify(user_management.options(request.authorization.username))
+    return jsonify(user_management.options(g.current_user["username"]))
 
 
-@app.post("/cockpit/keys/api/query/grouped")
+@app.post("/cockpit/api/keys/query/grouped")
 def management_query():
     return jsonify(
-        user_management.list_grouped(request.authorization.username, management_body())
+        user_management.list_grouped(g.current_user["username"], management_body())
     )
 
 
-@app.get("/cockpit/keys/api/<kind>/<int:target_id>")
-def management_detail(kind, target_id):
-    if kind != "token":
-        return jsonify(error="Not Found"), 404
+@app.get("/cockpit/api/keys/<int:target_id>")
+def management_detail(target_id):
     return jsonify(
-        user_management.detail(request.authorization.username, kind, target_id)
+        user_management.detail(g.current_user["username"], "token", target_id)
     )
 
 
-@app.get("/cockpit/keys/api/token/<int:token_id>/groups")
+@app.get("/cockpit/api/keys/<int:token_id>/groups")
 def management_token_groups(token_id):
     return jsonify(
-        user_management.token_group_options(request.authorization.username, token_id)
+        user_management.token_group_options(g.current_user["username"], token_id)
     )
 
 
-@app.post("/cockpit/keys/api/<kind>/<int:target_id>/action")
-def management_action(kind, target_id):
-    if kind != "token":
-        return jsonify(error="Not Found"), 404
+@app.post("/cockpit/api/keys/<int:target_id>/action")
+def management_action(target_id):
     return jsonify(
         user_management.single_action(
-            request.authorization.username, kind, target_id, management_body()
+            g.current_user["username"], "token", target_id, management_body()
         )
     )
 
 
-@app.post("/cockpit/keys/api/groups/preview")
+@app.post("/cockpit/api/keys/groups/preview")
 def management_group_preview():
     return jsonify(
-        user_management.preview_group(request.authorization.username, management_body())
+        user_management.preview_group(g.current_user["username"], management_body())
     )
 
 
-@app.post("/cockpit/keys/api/operations/<uuid:operation_id>/apply")
+@app.post("/cockpit/api/keys/operations/<uuid:operation_id>/apply")
 def management_group_apply(operation_id):
     management_body()
-    return jsonify(
-        user_management.apply_wave(request.authorization.username, operation_id)
-    )
+    return jsonify(user_management.apply_wave(g.current_user["username"], operation_id))
 
 
 @app.errorhandler(user_management.Forbidden)
@@ -396,7 +601,7 @@ def scope_context():
 
 
 def scope_kwargs():
-    """Leave legacy default calls unchanged; pass explicit ledger IDs otherwise."""
+    """Pass an explicit ledger ID only when the caller selected one."""
     scope = scope_context()
     return {"scope_id": scope["id"]} if "scope_id" in request.args else {}
 
@@ -425,7 +630,7 @@ def report_scope_kwargs():
     return {"channel_ids": g.scope_channels}
 
 
-@app.get("/cockpit/statistics/api/scopes")
+@app.get("/cockpit/api/statistics/scopes")
 def scopes():
     if not balance.configured():
         return jsonify(rows=[{"id": 1, "kind": "all", "tag_value": ""}])
@@ -459,18 +664,18 @@ def selected(*, by_token=False, include_failures=False):
 def report_rows(rows):
     if request.args.get("details") == "lazy" and balance.configured():
         return report_snapshots.create(
-            rows, request.authorization.username, scope_context()["id"]
+            rows, g.current_user["username"], scope_context()["id"]
         )
     return rows
 
 
-@app.post("/cockpit/statistics/api/usage/details")
+@app.post("/cockpit/api/statistics/usage/details")
 def usage_details():
     if not monitor_write_allowed():
         return jsonify(error="不允许的详情请求。"), 403
     return jsonify(
         rows=report_snapshots.fetch(
-            request.get_json(), request.authorization.username, scope_context()["id"]
+            request.get_json(), g.current_user["username"], scope_context()["id"]
         )
     )
 
@@ -480,7 +685,7 @@ def snapshot_expired(exc):
     return jsonify(error=str(exc)), 410
 
 
-@app.get("/cockpit/statistics/api/usage")
+@app.get("/cockpit/api/statistics/usage")
 def usage():
     start, end, rows = selected(include_failures=failure_diagnostics())
     return jsonify(
@@ -494,13 +699,13 @@ def usage():
     )
 
 
-@app.get("/cockpit/statistics/api/usage/by-token")
+@app.get("/cockpit/api/statistics/usage/by-token")
 def usage_by_token():
     start, end, rows = selected(by_token=True, include_failures=failure_diagnostics())
     return jsonify(scope=scope_context(), start=start, end=end, rows=report_rows(rows))
 
 
-@app.get("/cockpit/statistics/api/usage/tokens")
+@app.get("/cockpit/api/statistics/usage/tokens")
 def usage_tokens():
     start, end = request.args.get("start", ""), request.args.get("end", "")
     kwargs = report_scope_kwargs()
@@ -514,7 +719,7 @@ def usage_tokens():
     )
 
 
-@app.get("/cockpit/statistics/api/usage/groups")
+@app.get("/cockpit/api/statistics/usage/groups")
 def usage_groups():
     start, end = request.args.get("start", ""), request.args.get("end", "")
     kwargs = report_scope_kwargs()
@@ -550,7 +755,7 @@ def requested_groups():
     return sorted(set(values)) or None
 
 
-@app.get("/cockpit/statistics/api/usage/by-selection")
+@app.get("/cockpit/api/statistics/usage/by-selection")
 def usage_by_selection():
     start, end = request.args.get("start", ""), request.args.get("end", "")
     token_ids, groups = requested_token_ids(), requested_groups()
@@ -566,7 +771,7 @@ def usage_by_selection():
     return jsonify(scope=scope_context(), start=start, end=end, rows=report_rows(rows))
 
 
-@app.get("/cockpit/statistics/api/export")
+@app.get("/cockpit/api/statistics/export")
 def export():
     start, end, rows = selected()
     first = parse_boundary(start).strftime("%Y-%m-%d_%H-%M-%S")
@@ -585,7 +790,7 @@ def export():
 
 
 def monitor_write_allowed():
-    # Basic credentials are ambient. A custom header plus JSON blocks cross-site forms.
+    # Session cookies are ambient. A custom header plus JSON blocks cross-site forms.
     return (
         request.headers.get("X-Statistics-Request") == "1"
         and request.is_json
@@ -593,14 +798,14 @@ def monitor_write_allowed():
     )
 
 
-@app.get("/cockpit/statistics/api/balance/status")
+@app.get("/cockpit/api/statistics/balance/status")
 def balance_status():
     return jsonify(
         balance.snapshot(live=request.args.get("live") == "1", **scope_kwargs())
     )
 
 
-@app.get("/cockpit/statistics/api/balance")
+@app.get("/cockpit/api/statistics/balance")
 def balance_api():
     result = balance.snapshot(live=True, **scope_kwargs())
     if not result.get("configured") or not result.get("valid"):
@@ -627,7 +832,7 @@ def balance_api():
     )
 
 
-@app.get("/cockpit/statistics/api/alert")
+@app.get("/cockpit/api/statistics/alert")
 def balance_alert_api():
     try:
         balance.check_once(daily=False, **scope_kwargs())
@@ -641,20 +846,20 @@ def balance_alert_api():
     )
 
 
-@app.put("/cockpit/statistics/api/balance/settings")
+@app.put("/cockpit/api/statistics/balance/settings")
 def balance_settings():
     if not monitor_write_allowed():
         return jsonify(error="不允许的设置请求。"), 403
     try:
         balance.save_settings(
-            request.get_json(), request.authorization.username, **scope_kwargs()
+            request.get_json(), g.current_user["username"], **scope_kwargs()
         )
     except balance.SettingsConflict:
         return jsonify(error="设置已被其他管理员修改，请重新打开设置。"), 409
     return jsonify(saved=True)
 
 
-@app.post("/cockpit/statistics/api/balance/recalculate-history/preview")
+@app.post("/cockpit/api/statistics/balance/recalculate-history/preview")
 def balance_recalculate_history_preview():
     if not monitor_write_allowed():
         return jsonify(error="不允许的追溯请求。"), 403
@@ -670,7 +875,7 @@ def balance_recalculate_history_preview():
     return jsonify(result)
 
 
-@app.post("/cockpit/statistics/api/balance/recalculate-history")
+@app.post("/cockpit/api/statistics/balance/recalculate-history")
 def balance_recalculate_history():
     if not monitor_write_allowed():
         return jsonify(error="不允许的追溯请求。"), 403
@@ -681,7 +886,7 @@ def balance_recalculate_history():
         result = balance.recalculate_history(
             payload.get("settings"),
             payload.get("preview"),
-            request.authorization.username,
+            g.current_user["username"],
             **scope_kwargs(),
         )
     except balance.SettingsConflict:
@@ -699,7 +904,7 @@ def balance_recalculate_history():
     return jsonify(recalculated=True, **result)
 
 
-@app.get("/cockpit/statistics/api/balance/usage-channels")
+@app.get("/cockpit/api/statistics/balance/usage-channels")
 def balance_usage_channels():
     return jsonify(
         **({"scope": scope_context()} if "scope_id" in request.args else {}),
@@ -707,7 +912,7 @@ def balance_usage_channels():
     )
 
 
-@app.post("/cockpit/statistics/api/balance/check")
+@app.post("/cockpit/api/statistics/balance/check")
 def balance_check():
     if not monitor_write_allowed():
         return jsonify(error="不允许的检查请求。"), 403
@@ -723,28 +928,46 @@ def invalid(exc):
     return jsonify(error=str(exc)), 400
 
 
-@app.route("/cockpit/statistics/api/balance/channel", methods=["GET", "PUT"])
+@app.errorhandler(HTTPException)
+def http_error(exc):
+    if not request.path.startswith("/cockpit/api/"):
+        return exc
+    response = exc.get_response()
+    response.set_data(app.json.dumps({"error": exc.description}))
+    response.content_type = "application/json"
+    return response
+
+
+@app.route("/cockpit/api/statistics/balance/channel", methods=["GET", "PUT"])
 def notification_settings():
     if request.method == "GET":
         return jsonify(notifications.snapshot(request.args.get("channel") or None))
     if not monitor_write_allowed():
         return jsonify(error="不允许的设置请求。"), 403
     try:
-        notifications.save(request.get_json(), request.authorization.username)
+        body = request.get_json()
+        notifications.save(body, g.current_user["username"])
     except balance.SettingsConflict:
         return jsonify(error="渠道配置已改变，请重新打开设置。"), 409
-    return jsonify(notifications.snapshot())
+    return jsonify(notifications.snapshot(body["channel"]))
 
 
-@app.post("/cockpit/statistics/api/balance/channel/test")
+@app.post("/cockpit/api/statistics/balance/channel/test")
 def notification_test():
     if not monitor_write_allowed():
         return jsonify(error="不允许的测试请求。"), 403
     body = request.get_json()
-    if not isinstance(body, dict) or type(body.get("version")) is not int:
-        raise ValueError("请先保存报警渠道。")
+    if (
+        not isinstance(body, dict)
+        or type(body.get("version")) is not int
+        or not isinstance(body.get("channel"), str)
+        or body["channel"] not in notifications.CHANNELS
+    ):
+        raise ValueError("请先选择并保存报警渠道。")
     try:
-        notifications.deliver(test=True, expected_version=body["version"])
+        notifications.deliver(
+            test=True, expected_version=body["version"], channel=body.get("channel")
+        )
     except balance.SettingsConflict:
         return jsonify(error="渠道配置已改变，请重新打开设置。"), 409
     return jsonify(sent=True)

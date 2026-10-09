@@ -1,0 +1,30 @@
+.docs-tabs { display: flex; gap: 8px; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--ui-border); }
+.docs-tabs [aria-selected=true] { color: var(--ui-primary-text); background: var(--ui-accent); }
+.docs-auth { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.docs-auth label { display: grid; gap: 6px; min-width: 180px; }
+#docs-pat-field { flex: 1; max-width: 550px; }
+#docs-pat { width: 100%; }
+.docs-guides { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.docs-guides > div { border: 1px solid var(--ui-border); border-radius: 16px; padding: 14px; }
+.docs-guides p { color: var(--ui-muted-text); font-size: 12px; min-height: 36px; }
+.docs-guides button { margin: 4px 4px 0 0; }
+#docs-request-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+#docs-request-fields > label, .docs-parameters label { display: grid; gap: 6px; }
+#docs-operation { width: 100%; }
+#docs-operation-description { font-size: 13px; line-height: 1.7; }
+.docs-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.docs-parameters input, .docs-parameters select, .docs-parameters textarea { width: 100%; }
+.docs-parameters small { font-size: 12px; color: var(--ui-muted-text); line-height: 1.5; }
+#docs-body { width: 100%; min-height: 160px; font-family: ui-monospace, monospace; padding: 10px; border-radius: 12px; resize: vertical; }
+.docs-request-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.docs-output { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+.docs-output > section { min-width: 0; }
+.docs-code-tools { display: flex; gap: 8px; margin: 10px 0; }
+.docs-code-tools label { display: block; }
+.docs-output pre, #docs-confirm-target { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-muted); padding: 12px; font-size: 12px; max-height: 520px; overflow: auto; }
+.docs-output pre:empty { display: none; }
+#docs-confirm { max-width: min(680px, calc(100vw - 24px)); }
+#docs-confirm-target { max-height: 280px; }
+#scalar-reference { --scalar-font: "Public Sans", system-ui, sans-serif; --scalar-color-accent: var(--ui-primary-text); --scalar-background-1: var(--ui-background); --scalar-border-color: var(--ui-border); min-height: 550px; }
+@media (max-width: 1000px) { .docs-guides { grid-template-columns: 1fr; } .docs-guides p { min-height: 0; } .docs-output { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .docs-parameters { grid-template-columns: 1fr; } .docs-auth { align-items: stretch; } }

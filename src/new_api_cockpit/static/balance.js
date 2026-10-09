@@ -1,12 +1,15 @@
 /* Balance settings and archives belong to the current ledger; notification settings are global. */
 let balanceData=null,balanceVersion=null;
 let channelVersion=null,channelDirty=false,channelBusy=false;
+let channelLoaded=null,channelRequest=0;
+const channelInputs=['channel-enabled','channel-app-id','channel-secret','channel-receive-type','channel-receive-id','channel-webhook-url','channel-signing-enabled','channel-signing-secret',
+  'channel-email-host','channel-email-port','channel-email-security','channel-email-auth-enabled','channel-email-username','channel-email-password','channel-email-from-address','channel-email-from-name','channel-email-recipients'];
 let historyPreview=null;
 const balanceMoney=value=>value===null||value===undefined?'—':'¥ '+number(value,2);
 const balanceTableMoney=value=>value===null||value===undefined?'—':'¥ '+Number(value).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const balanceTime=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';
 async function balanceRequest(path,options={}){
-  const root=!path||path.startsWith('?')?'/cockpit/statistics/api/balance/status':'/cockpit/statistics/api/balance';
+  const root=!path||path.startsWith('?')?'/cockpit/api/statistics/balance/status':'/cockpit/api/statistics/balance';
   const globalChannel=path.startsWith('/channel');
   const response=await (globalChannel?fetch(root+path,options):Scope.request(root+path,options));
   let data;try{data=await response.json();}catch(error){if(error.name==='AbortError')throw error;throw new Error('监控服务暂不可用，请稍后重试。');}
@@ -161,21 +164,25 @@ $('balance-history-apply').addEventListener('click',async()=>{
 });
 $('balance-history-preview').addEventListener('close',()=>{historyPreview=null;$('balance-history-preview-status').textContent='';});
 function channelButtons(){
-  for(const id of ['channel-enabled','channel-type','channel-app-id','channel-secret','channel-receive-type','channel-receive-id','channel-webhook-url','channel-signing-enabled','channel-signing-secret']){
+  for(const id of channelInputs){
     $(id).disabled=channelBusy||channelVersion===null;
   }
+  $('channel-type').disabled=channelBusy;
   $('channel-save').disabled=channelBusy||channelVersion===null;
   $('channel-test').disabled=channelBusy||channelVersion===null||channelDirty;
 }
 function channelFields(channel,receiveType){
-  const dingtalk=channel==='dingtalk_webhook';
-  $('channel-feishu-fields').hidden=dingtalk;$('channel-dingtalk-fields').hidden=!dingtalk;
+  for(const [name,id] of [['feishu_app','channel-feishu-fields'],['dingtalk_webhook','channel-dingtalk-fields'],['email','channel-email-fields']])$(id).hidden=channel!==name;
   const options=[['chat_id','群聊（chat_id）'],['user_id','个人（user_id）']];
   $('channel-receive-type').replaceChildren(...options.map(([value,label])=>new Option(label,value)));
   if(options.some(([value])=>value===receiveType))$('channel-receive-type').value=receiveType;
 }
+function emailFields(){
+  $('channel-email-auth-fields').hidden=!$('channel-email-auth-enabled').checked;
+  $('channel-email-warning').hidden=$('channel-email-security').value!=='smtp';
+}
 function renderChannel(data){
-  channelVersion=data.version;channelDirty=data.channel!==data.active_channel;
+  channelVersion=data.version;channelLoaded=data.channel;channelDirty=false;
   $('channel-enabled').checked=data.enabled;$('channel-type').value=data.channel;
   channelFields(data.channel,data.receive_id_type);
   $('channel-app-id').value=data.app_id||'';$('channel-secret').value='';
@@ -185,42 +192,61 @@ function renderChannel(data){
   $('channel-signing-enabled').checked=Boolean(data.signing_enabled);$('channel-signing-secret').value='';
   $('channel-signing-secret').placeholder=data.signing_secret_configured?'已保存；留空保持不变':'未配置';
   $('channel-signing-secret-field').hidden=!$('channel-signing-enabled').checked;
+  $('channel-email-host').value=data.smtp_host||'';$('channel-email-port').value=data.smtp_port??587;
+  $('channel-email-security').value=data.smtp_security||'starttls';
+  $('channel-email-auth-enabled').checked=Boolean(data.auth_enabled);
+  $('channel-email-username').value=data.username||'';$('channel-email-password').value='';
+  $('channel-email-password').placeholder=data.password_configured?'已保存；留空保持不变':'未配置';
+  $('channel-email-from-address').value=data.from_address||'';$('channel-email-from-name').value=data.from_name||'';
+  $('channel-email-recipients').value=(data.recipients||[]).join('\n');emailFields();
   $('channel-status').textContent=data.last_error?`最近发送失败：${data.last_error}`:
     data.last_success_at?`最近发送成功：${balanceTime(data.last_success_at)}`:'';
   channelButtons();
 }
-async function loadChannel(channel=''){
-  try{renderChannel(await balanceRequest('/channel'+(channel?'?channel='+encodeURIComponent(channel):'')));}
-  catch(e){$('channel-status').textContent=e.message;}
+async function loadChannel(channel=$('channel-type').value||'feishu_app'){
+  const ticket=++channelRequest;channelBusy=true;channelVersion=null;channelLoaded=null;channelDirty=false;
+  channelButtons();$('channel-status').textContent='正在读取渠道配置…';
+  try{
+    const data=await balanceRequest('/channel?channel='+encodeURIComponent(channel));
+    if(ticket!==channelRequest)return;
+    if(data.channel!==channel||!Number.isInteger(data.version))throw new Error('渠道配置不匹配，请重新选择渠道。');
+    renderChannel(data);
+  }catch(e){if(ticket===channelRequest)$('channel-status').textContent=e.message;}
+  finally{if(ticket===channelRequest){channelBusy=false;channelButtons();}}
 }
-$('channel-type').addEventListener('change',async()=>{
-  channelBusy=true;channelButtons();$('channel-status').textContent='正在读取渠道配置…';
-  await loadChannel($('channel-type').value);
-  channelBusy=false;channelButtons();
-});
+$('channel-type').addEventListener('change',()=>loadChannel($('channel-type').value));
 $('channel-form').addEventListener('input',()=>{channelDirty=true;channelButtons();});
 $('channel-signing-enabled').addEventListener('change',()=>{$('channel-signing-secret-field').hidden=!$('channel-signing-enabled').checked;});
+$('channel-email-auth-enabled').addEventListener('change',emailFields);
+$('channel-email-security').addEventListener('change',()=>{
+  const defaults={smtp:25,starttls:587,smtps:465},port=Number($('channel-email-port').value);
+  if(!port||Object.values(defaults).includes(port))$('channel-email-port').value=defaults[$('channel-email-security').value];
+  emailFields();
+});
 $('channel-form').addEventListener('submit',async event=>{
-  event.preventDefault();if(channelBusy)return;
+  event.preventDefault();if(channelBusy||channelVersion===null||channelLoaded!==$('channel-type').value)return;
   channelBusy=true;channelButtons();$('channel-status').textContent='正在保存渠道…';
-  const fields=['channel-enabled','channel-type','channel-app-id','channel-secret','channel-receive-type','channel-receive-id','channel-webhook-url','channel-signing-enabled','channel-signing-secret'];
-  fields.forEach(id=>$(id).disabled=true);
   try{
     const body={version:channelVersion,enabled:$('channel-enabled').checked,channel:$('channel-type').value};
     if(body.channel==='dingtalk_webhook')Object.assign(body,{webhook_url:$('channel-webhook-url').value,
       signing_enabled:$('channel-signing-enabled').checked,signing_secret:$('channel-signing-secret').value});
+    else if(body.channel==='email')Object.assign(body,{smtp_host:$('channel-email-host').value,smtp_port:Number($('channel-email-port').value),
+      smtp_security:$('channel-email-security').value,auth_enabled:$('channel-email-auth-enabled').checked,
+      username:$('channel-email-username').value,password:$('channel-email-password').value,
+      from_address:$('channel-email-from-address').value,from_name:$('channel-email-from-name').value,
+      recipients:$('channel-email-recipients').value.split(/[\n,;，；]+/).map(value=>value.trim()).filter(Boolean)});
     else Object.assign(body,{app_id:$('channel-app-id').value,app_secret:$('channel-secret').value,
       receive_id_type:$('channel-receive-type').value,receive_id:$('channel-receive-id').value});
     const data=await balanceRequest('/channel',balanceWrite('PUT',body));
     renderChannel(data);$('channel-status').textContent='渠道已保存。';
   }catch(e){$('channel-status').textContent=e.message;}
-  finally{channelBusy=false;fields.forEach(id=>$(id).disabled=false);channelButtons();}
+  finally{channelBusy=false;channelButtons();}
 });
 $('channel-test').addEventListener('click',async()=>{
-  if(channelBusy||channelDirty)return;
+  if(channelBusy||channelDirty||channelVersion===null||channelLoaded!==$('channel-type').value)return;
   channelBusy=true;channelButtons();$('channel-status').textContent='正在发送测试消息…';
   try{
-    await balanceRequest('/channel/test',balanceWrite('POST',{version:channelVersion}));
+    await balanceRequest('/channel/test',balanceWrite('POST',{channel:channelLoaded,version:channelVersion}));
     $('channel-status').textContent='测试消息已发送。';
   }catch(e){$('channel-status').textContent=e.message;}
   finally{channelBusy=false;channelButtons();}
