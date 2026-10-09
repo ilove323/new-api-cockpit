@@ -122,7 +122,7 @@ test('more than 100 selected users stay enabled and execute in waves of at most 
   assert.equal(h.ids().length,103);assert.equal(h.elements.get('preview').disabled,false);
   confirmed(h,ids);const waves=[];
   h.ctx.fetch=async(url,options)=>{
-    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows})};
+    if(url==='/cockpit/api/users')return {ok:true,json:async()=>({rows})};
     const wave=JSON.parse(options.body).user_ids;waves.push(wave);
     return {ok:true,json:async()=>waveResponse(wave)};
   };
@@ -137,7 +137,7 @@ test('the next wave waits for the current HTTP response; duplicate clicks do not
   const h=await harness(),ids=Array.from({length:11},(_,i)=>i+1);confirmed(h,ids);
   let release;const waves=[];
   h.ctx.fetch=async(url,options)=>{
-    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};
+    if(url==='/cockpit/api/users')return {ok:true,json:async()=>({rows:sample})};
     const wave=JSON.parse(options.body).user_ids;waves.push(wave);
     return {ok:true,json:waves.length===1?()=>new Promise(resolve=>{release=()=>resolve(waveResponse(wave));}):async()=>waveResponse(wave)};
   };
@@ -148,7 +148,7 @@ test('the next wave waits for the current HTTP response; duplicate clicks do not
 test('a failed wave records all concurrent outcomes and leaves later users unstarted',async()=>{
   const h=await harness(),ids=Array.from({length:12},(_,i)=>i+1);confirmed(h,ids);const waves=[];
   h.ctx.fetch=async(url,options)=>{
-    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};
+    if(url==='/cockpit/api/users')return {ok:true,json:async()=>({rows:sample})};
     const wave=JSON.parse(options.body).user_ids;waves.push(wave);
     return {ok:true,json:async()=>waveResponse(wave,7)};
   };
@@ -160,7 +160,7 @@ test('a failed wave records all concurrent outcomes and leaves later users unsta
 });
 test('transport failure marks the sent wave uncertain and never retries',async()=>{
   const h=await harness();confirmed(h,[1,2,3,4,5,6]);let calls=0;
-  h.ctx.fetch=async(url)=>{if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};calls++;throw new Error('断开');};
+  h.ctx.fetch=async(url)=>{if(url==='/cockpit/api/users')return {ok:true,json:async()=>({rows:sample})};calls++;throw new Error('断开');};
   await h.elements.get('apply').fire('click');assert.equal(calls,1);
   assert.match(h.run('resultCells.get(1).textContent'),/结果待核对/);
   assert.equal(h.run('resultCells.get(6).textContent'),'未发起');
@@ -168,7 +168,7 @@ test('transport failure marks the sent wave uncertain and never retries',async()
 test('incomplete per-user response stops dispatch instead of treating the wave as successful',async()=>{
   const h=await harness();confirmed(h,[1,2,3,4,5,6]);let calls=0;
   h.ctx.fetch=async(url)=>{
-    if(url==='/cockpit/users/api/users')return {ok:true,json:async()=>({rows:sample})};
+    if(url==='/cockpit/api/users')return {ok:true,json:async()=>({rows:sample})};
     calls++;return {ok:true,json:async()=>({completed:true,results:[{id:1,ok:true}]})};
   };
   await h.elements.get('apply').fire('click');assert.equal(calls,1);

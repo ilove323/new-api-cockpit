@@ -14,7 +14,7 @@
   const channelName = 'new-api:auth-session';
   const storageKey = 'new-api:auth-session:event';
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(channelName) : null;
-  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/statistics/api/export']);
+  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/api/statistics/export']);
 
   function safeNext(value) {
     if (typeof value !== 'string' || /[\\\x00-\x1f\x7f]/.test(value) || !value.startsWith('/cockpit')) return '/cockpit/statistics/';
@@ -44,7 +44,7 @@
     }
     return data;
   }
-  const bridge = (method, body = {}) => json('/cockpit/auth/session', {
+  const bridge = (method, body = {}) => json('/cockpit/api/auth/session', {
     method, headers: {'Content-Type': 'application/json', 'X-Cockpit-Auth': '1'}, body: JSON.stringify(body),
   });
   function publish(kind, sessionID) {
@@ -99,9 +99,8 @@
     if (previous && previous !== user.session_id) { toLogin(); throw new Error('登录账号已切换，请重新加载页面。'); }
   }
   function isProtected(url) {
-    return url.origin === location.origin && url.pathname.startsWith('/cockpit/')
-      && url.pathname.includes('/api/')
-      && !['/cockpit/statistics/api/balance', '/cockpit/statistics/api/alert'].includes(url.pathname);
+    return url.origin === location.origin && url.pathname.startsWith('/cockpit/api/')
+      && !['/cockpit/api/statistics/balance', '/cockpit/api/statistics/alert'].includes(url.pathname);
   }
   window.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url, location.href);

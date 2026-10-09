@@ -27,11 +27,11 @@
 | `COCKPIT_COOKIE_SECURE` | 默认 `true`，会话 Cookie 仅通过 HTTPS 发送；仅可信 HTTP 开发/内网可显式设为 `false` |
 | `NEW_API_INTERNAL_URL` | New API 在共享 Docker 网络中的内部地址，默认 `http://new-api:3000`；用于官方会话验证、用户/KEY 管理以及手工和定时用户配额增减 |
 | `MONITOR_DATABASE_URL` | 独立监控库连接串；保存预算、月度归档、报警、通知配置、定时规则与用户/KEY/配额操作记录 |
-| `NOTIFICATION_ENCRYPTION_KEY` | 通知渠道 Secret 的 Fernet 加密密钥；生成一次后必须持久保存 |
+| `NOTIFICATION_ENCRYPTION_KEY` | 飞书 Secret、钉钉 Webhook/加签密钥、邮件密码的 Fernet 加密密钥；生成一次后必须持久保存 |
 
 用户配额操作还要求当前登录管理员在 New API 中已有 PAT，并且统计容器能通过
 `NEW_API_INTERNAL_URL` 访问 New API 的管理接口。此地址应使用共享 Docker 网络中的
-内部服务名，不要填公网地址；PAT 只从 New API 数据库读取并在服务端使用。
+内部服务名，不要填公网地址；后端调用 New API 所需 PAT 每次从源库读取，外部接入 PAT 由调用方自行保管，不放到项目配置。
 
 设置 `NEW_API_NETWORK` 为现有 New API 网络的实际名称，也可在本机专用的
 `docker-compose.override.yml` 中覆盖 `networks.new-api.name`，无需改动通用 Compose 文件。
@@ -85,14 +85,15 @@ curl --fail-with-body http://127.0.0.1:8091/healthz
 ## 配合 Nginx
 
 把 [nginx.conf.example](../nginx.conf.example) 的 `/cockpit` 与 `/cockpit/` location 加入现有 HTTPS `server` 块，
-New API 的 `/`、`/api/` 和 `/sign-in` 等路由继续转发到 New API。四个页面、各自 API 和静态资源均在 `/cockpit/` 下。
+New API 的 `/`、`/api/` 和 `/sign-in` 等路由继续转发到 New API。
+四个页面、统一的 `/cockpit/api/` 业务接口和静态资源均由 Cockpit 处理。
 `proxy_pass` 不加末尾斜杠，必须把完整路径前缀转发到应用。
 使用 `Host $http_host` 保留原域名和端口，同源管理请求校验依赖此信息。
 侧边栏使用相对路径，始终保留浏览器当前协议、域名与端口。
 
 本项目的页面、API 和静态资源统一使用 `/cockpit/` 前缀。
-对外余额与报警接口分别为 `/cockpit/statistics/api/balance` 和 `/cockpit/statistics/api/alert`。
-API 调用方使用完整 `/cockpit/statistics/api/` 路径。
+对外余额与报警接口分别为 `/cockpit/api/statistics/balance` 和 `/cockpit/api/statistics/alert`。
+API 调用方使用完整 `/cockpit/api/statistics/` 路径。
 
 ```bash
 nginx -t
@@ -108,7 +109,7 @@ nginx -s reload
 
 ## 无 Nginx 直接访问
 
-直连应用端口可用于 `/healthz` 探活或可信内网中的 PAT API 调用。
+直连应用端口可用于宿主机 `/healthz` 探活或可信内网中的反向代理转发。
 网页登录还需要同源 New API `/api/` 和 `/sign-in` 路由，单独开放应用端口不能提供完整的登录入口。
 正式网页使用请按上节配置 HTTPS 反向代理。
 
@@ -126,14 +127,15 @@ docker compose up -d --build --force-recreate statistics
 docker compose ps
 ```
 
-仅在防火墙或安全组中允许可信来源，避免公网开放 `8091`。在可信网络中查询余额：
+仅在防火墙或安全组中允许可信代理来源，避免公网开放 `8091`。
+业务 API 仍通过 HTTPS 入口调用，不通过明文应用端口传递管理员 PAT：
 
 ```bash
-curl --fail-with-body -H 'Authorization: Bearer <管理员PAT>' \
-  http://<服务器IP>:8091/cockpit/statistics/api/balance
+curl --fail-with-body 'https://<你的域名>/cockpit/api/statistics/balance' \
+  -H "Authorization: Bearer $ADMIN_PAT"
 ```
 
-API 通过 Bearer PAT 认证，与浏览器 Cookie 无关。传递 PAT 的连接也应优先使用 HTTPS。
+脚本通过管理员 PAT Bearer 调用业务 API，页面仍使用浏览器会话；余额、报警只接受 PAT。所有携带凭据的连接使用 HTTPS。
 只有在已配齐同源路由的可信 HTTP 开发环境中，才显式设置 `COCKPIT_COOKIE_SECURE=false`；
 它只控制 Cookie 的 Secure 属性，不改变同源要求。
 
@@ -153,7 +155,8 @@ New API 撤销会话、账号禁用或降权后，Cockpit 也拒绝访问；上�
 
 用户、KEY 和配额写操作均需要监控库用于审计。New API 源库须能 SELECT `tokens`；
 缺失用户 PAT 的补建仅授权受限函数，不授予业务表 UPDATE，安装 SQL 见[用户管理](users.md#安装补建函数与最小权限)。
-业务页面及内部 API 都经过管理员会话认证；登录页和无敏感信息的静态资源公开。
+业务页面经过管理员会话认证；`/cockpit/api/` 下的业务接口也接受管理员 PAT，权限与审计不变。
+登录页和无敏感信息的静态资源公开。接口地址、确认头及示例见 [API 参考](api.md)。
 Nginx 统一转发 `/cockpit/`。数据库仅在内部网络开放。
 
 ## 数据库初始化与迁移
@@ -163,7 +166,7 @@ Nginx 统一转发 `/cockpit/`。数据库仅在内部网络开放。
 | SQL | 位置 | 执行方式 |
 |---|---|---|
 | 监控建库 | [余额监控](monitoring.md#独立数据库) | PostgreSQL 管理员首次创建独立库和账号 |
-| 应用表结构 | [migrations](../src/new_api_cockpit/migrations/) 的 `001`～`010` | 容器启动自动按编号执行尚未登记的文件 |
+| 应用表结构 | [migrations](../src/new_api_cockpit/migrations/) 的 `001`～`011` | 容器启动自动按编号执行尚未登记的文件 |
 | 缺失 PAT 补建函数 | [source_pat_function.sql](../sql/source_pat_function.sql) | New API 原库表所有者单独安装，再向查询角色授权 EXECUTE |
 
 `source_pat_function.sql` 安装源库 PAT 补建函数：目标用户没有 PAT 时补建，已有 PAT 原样返回。

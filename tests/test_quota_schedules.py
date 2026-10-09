@@ -90,30 +90,31 @@ class ScheduleTest(unittest.TestCase):
             with self.assertRaises(schedules.ScheduleConflict):
                 schedules._version({"version": version}, row)
 
-    def test_settings_apis_require_session_but_static_assets_are_public(self):
+    def test_settings_apis_require_admin_credentials_but_static_assets_are_public(self):
         client = app.test_client()
         for path in [
-            "/cockpit/users/api/schedules",
+            "/cockpit/api/users/schedules",
             "/cockpit/static/quota-schedule.js",
         ]:
             expected = 200 if "/static/" in path else 401
             with client.get(path) as response:
                 self.assertEqual(response.status_code, expected)
-            with client.get(
-                path, headers={"Authorization": "Bearer fixture-pat"}
-            ) as response:
-                self.assertEqual(response.status_code, expected)
+            with patch("new_api_cockpit.app.verify_pat", return_value=None):
+                with client.get(
+                    path, headers={"Authorization": "Bearer invalid-fixture-pat"}
+                ) as response:
+                    self.assertEqual(response.status_code, expected)
 
     def test_write_headers_and_error_status_codes(self):
         client = app.test_client()
         with patch(
-            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
         ):
             for method, path in [
-                ("POST", "/cockpit/users/api/schedules"),
-                ("PUT", "/cockpit/users/api/schedules/1"),
-                ("PATCH", "/cockpit/users/api/schedules/1"),
-                ("DELETE", "/cockpit/users/api/schedules/1"),
+                ("POST", "/cockpit/api/users/schedules"),
+                ("PUT", "/cockpit/api/users/schedules/1"),
+                ("PATCH", "/cockpit/api/users/schedules/1"),
+                ("DELETE", "/cockpit/api/users/schedules/1"),
             ]:
                 self.assertEqual(
                     client.open(
@@ -142,7 +143,7 @@ class ScheduleTest(unittest.TestCase):
                 with patch.object(schedules, "save_rule", side_effect=error):
                     self.assertEqual(
                         client.post(
-                            "/cockpit/users/api/schedules",
+                            "/cockpit/api/users/schedules",
                             json={},
                             auth=session_auth("admin"),
                             headers={"X-Quota-Action": "schedule"},
@@ -150,8 +151,8 @@ class ScheduleTest(unittest.TestCase):
                         code,
                     )
             for path in [
-                "/cockpit/users/api/schedule-runs?before=bad",
-                "/cockpit/users/api/schedule-runs/1?after=bad",
+                "/cockpit/api/users/schedule-runs?before=bad",
+                "/cockpit/api/users/schedule-runs/1?after=bad",
             ]:
                 self.assertEqual(
                     client.get(path, auth=session_auth("admin")).status_code, 404
@@ -160,7 +161,7 @@ class ScheduleTest(unittest.TestCase):
     def test_creating_rule_does_not_execute_or_expose_pat(self):
         client = app.test_client()
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch.object(
                 schedules,
                 "save_rule",
@@ -169,7 +170,7 @@ class ScheduleTest(unittest.TestCase):
             patch.object(quota, "_call_manage") as mutate,
         ):
             response = client.post(
-                "/cockpit/users/api/schedules",
+                "/cockpit/api/users/schedules",
                 json={"enabled": True},
                 auth=session_auth("admin"),
                 headers={"X-Quota-Action": "schedule"},

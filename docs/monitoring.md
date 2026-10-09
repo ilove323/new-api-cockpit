@@ -7,7 +7,7 @@
 - 顶部提供“全部”、各渠道标签、以及“未分组”标签页。标签分组直接显示 New API `channels.tag`，与消费日志的用户/令牌分组不是同一概念。
 - 当前标签页决定统计、排行、明细、筛选选项、Excel 导出、余额、报警记录及月度归档的范围。“全部”汇总所有渠道，不把各分组账本重复叠加。
 - 齿轮中的“余额设置”属于当前账本：独立的总额度、报警阈值、起始月份和“启用余额监控”复选框。新分组默认关闭监控，未配置时仍可查看用量和导出。总额度是独立预算，不修改 New API 用户配额；“全部”的额度也不自动累加其他账本的额度。
-- 齿轮中的“告警渠道”全局共用，飞书/钉钉凭据及通知启用状态不随账本切换。通知包含站点和账本名称。
+- 齿轮中的“报警渠道 · 全局”共用通知配置。先选择渠道，再设置其“启用渠道通知”；飞书、钉钉、邮件的开关互不影响，可以同时启用。配置不随账本切换，通知包含站点和账本名称。邮件支持 SMTP、STARTTLS、SMTPS，以及认证或匿名发信，详见[通知渠道](notifications.md)。
 - 渠道列表显示 ID、名称及启用/禁用/已删除状态，不需要逐个勾选；禁用渠道仍计入消费。
 - 余额 = 当前账本额度 - 该账本起始月份以来已归档费用 - 该账本本月实时费用。金额取消费日志 `SUM(quota)/500000`，不以模型现价重新计费，也不受页面时间、用户等临时筛选影响。
 - 监控库按“月份 + 渠道 ID”保留原始费用。历史月份与当月均按渠道**当前归属**汇总；渠道改标签后历史账本金额随之变化，不重读历史日志，也不改动原始费用。不要把“全部”与各分组金额再相加。
@@ -79,7 +79,7 @@ docker compose logs --tail=50 statistics
 
 首次启动后，应用会自动创建监控表。可使用 PostgreSQL 管理员验证，正常应能看到
 `balance_*`、`notification_settings`、`notification_feishu_settings` 和
-`notification_dingtalk_webhook_settings`、`quota_schedule_*` 表，以及
+`notification_dingtalk_webhook_settings`、`notification_email_settings`、`quota_schedule_*` 表，以及
 `user_management_*`、`channel_catalog_sync_state`、`report_snapshots`、`report_snapshot_rows`：
 
 ```bash

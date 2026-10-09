@@ -140,9 +140,9 @@
     </section>
     <section id="settings-panel-notification" role="tabpanel" aria-labelledby="settings-tab-notification" hidden>
       <form id="channel-form">
-        <p>全局共用：所有账本使用同一份通知配置。</p>
+        <p>所有账本共用通知配置。各渠道独立启停，可以同时启用；下方开关只控制当前渠道。</p>
+        <label>渠道<select id="channel-type"><option value="feishu_app">飞书企业自建应用</option><option value="dingtalk_webhook">钉钉自定义 Webhook 机器人</option><option value="email">邮件通知</option></select></label>
         <label class="balance-toggle"><input id="channel-enabled" type="checkbox">启用渠道通知</label>
-        <label>渠道<select id="channel-type"><option value="feishu_app">飞书企业自建应用</option><option value="dingtalk_webhook">钉钉自定义 Webhook 机器人</option></select></label>
         <div id="channel-feishu-fields" class="channel-provider-fields">
           <label>App ID<input id="channel-app-id" type="text" maxlength="512" autocomplete="off"></label>
           <label>App Secret<input id="channel-secret" type="password" maxlength="512" autocomplete="new-password"></label>
@@ -153,6 +153,21 @@
           <label>Webhook URL<input id="channel-webhook-url" type="password" maxlength="2048" autocomplete="new-password"></label>
           <label class="balance-toggle"><input id="channel-signing-enabled" type="checkbox">启用加签</label>
           <label id="channel-signing-secret-field">加签密钥<input id="channel-signing-secret" type="password" maxlength="512" autocomplete="new-password"></label>
+        </div>
+        <div id="channel-email-fields" class="channel-provider-fields" hidden>
+          <label>SMTP 服务器<input id="channel-email-host" type="text" maxlength="253" placeholder="smtp.example.com" autocomplete="off"></label>
+          <label>加密方式<select id="channel-email-security"><option value="starttls">SMTP + STARTTLS</option><option value="smtps">SMTPS（SSL/TLS）</option><option value="smtp">SMTP（不加密）</option></select></label>
+          <label>端口<input id="channel-email-port" type="number" min="1" max="65535" step="1" value="587"></label>
+          <label class="balance-toggle"><input id="channel-email-auth-enabled" type="checkbox">启用 SMTP 认证（不勾选为匿名发信）</label>
+          <div id="channel-email-auth-fields" class="channel-provider-fields" hidden>
+            <label>用户名<input id="channel-email-username" type="text" maxlength="512" autocomplete="off"></label>
+            <label>密码 / 邮箱授权码<input id="channel-email-password" type="password" maxlength="1024" autocomplete="new-password"></label>
+          </div>
+          <p id="channel-email-warning" class="error" hidden>SMTP 不加密时，通知内容及认证凭据可能以明文传输。公网建议使用 STARTTLS 或 SMTPS。</p>
+          <label>发件邮箱<input id="channel-email-from-address" type="email" maxlength="254" placeholder="alerts@example.com" autocomplete="off"></label>
+          <label>发件人名称<input id="channel-email-from-name" type="text" maxlength="128" placeholder="New API Cockpit" autocomplete="off"></label>
+          <label>收件邮箱（每行一个，最多 100 个）<textarea id="channel-email-recipients" rows="4" maxlength="25600" placeholder="alice@example.com&#10;bob@example.com"></textarea></label>
+          <p>匿名发信需要邮件服务器允许当前来源中继。TLS 会校验证书，不支持时不会自动降级。</p>
         </div>
         <p id="channel-status" role="status"></p>
         <div class="dialog-actions"><button type="button" data-close="balance-settings">关闭</button><button id="channel-test" type="button" disabled>发送测试消息</button><button id="channel-save" type="submit" disabled>保存渠道</button></div>

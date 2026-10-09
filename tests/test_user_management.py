@@ -253,8 +253,8 @@ class UserManagementTest(unittest.TestCase):
             "/cockpit/static/keys.js",
             "/cockpit/static/navigation.js",
             "/cockpit/static/dropdowns.js",
-            "/cockpit/keys/api/token/3/groups",
-            "/cockpit/users/api/user/2/groups",
+            "/cockpit/api/keys/3/groups",
+            "/cockpit/api/users/2/groups",
         ):
             with client.get(path) as response:
                 self.assertEqual(
@@ -263,10 +263,10 @@ class UserManagementTest(unittest.TestCase):
                 )
         auth = {"Authorization": "Bearer fixture-session-admin"}
         with patch(
-            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
         ):
             response = client.post(
-                "/cockpit/keys/api/query/grouped",
+                "/cockpit/api/keys/query/grouped",
                 json={"search": "fixture"},
                 headers=auth,
             )
@@ -276,7 +276,7 @@ class UserManagementTest(unittest.TestCase):
                 {"Origin": "https://evil.invalid"},
             ):
                 response = client.post(
-                    "/cockpit/keys/api/query/grouped",
+                    "/cockpit/api/keys/query/grouped",
                     json={"search": "fixture-key"},
                     headers={**auth, "X-Management-Action": "confirm", **extra},
                 )
@@ -284,11 +284,11 @@ class UserManagementTest(unittest.TestCase):
 
     def test_standalone_key_lookup_route_is_not_available(self):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch.object(manage, "list_grouped") as query,
         ):
             response = app.test_client().post(
-                "/cockpit/keys/api/search-key",
+                "/cockpit/api/keys/search-key",
                 json={"key": "fixture-secret"},
                 auth=session_auth("admin"),
                 headers={"X-Management-Action": "confirm"},
@@ -300,7 +300,7 @@ class UserManagementTest(unittest.TestCase):
 
     def test_group_options_route_is_authenticated_read_only_and_owner_scoped(self):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch.object(
                 manage,
                 "token_group_options",
@@ -314,7 +314,7 @@ class UserManagementTest(unittest.TestCase):
             patch.object(manage, "single_action") as action,
         ):
             response = app.test_client().get(
-                "/cockpit/keys/api/token/3/groups", auth=session_auth("admin")
+                "/cockpit/api/keys/3/groups", auth=session_auth("admin")
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json["available_groups"], ["a", "b"])
@@ -326,7 +326,7 @@ class UserManagementTest(unittest.TestCase):
     ):
         client = app.test_client()
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch.object(
                 manage,
                 "user_group_options",
@@ -341,7 +341,7 @@ class UserManagementTest(unittest.TestCase):
             patch.object(manage, "single_action", return_value={"ok": True}) as action,
         ):
             response = client.get(
-                "/cockpit/users/api/user/2/groups", auth=session_auth("admin")
+                "/cockpit/api/users/2/groups", auth=session_auth("admin")
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json["available_groups"], ["a", "b"])
@@ -354,7 +354,7 @@ class UserManagementTest(unittest.TestCase):
                 {"X-Management-Action": "confirm", "Origin": "https://evil.invalid"},
             ):
                 response = client.post(
-                    "/cockpit/users/api/user/2/action",
+                    "/cockpit/api/users/2/action",
                     json=body,
                     auth=session_auth("admin"),
                     headers=headers,
@@ -362,7 +362,7 @@ class UserManagementTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 403)
                 action.assert_not_called()
             response = client.post(
-                "/cockpit/users/api/user/2/action",
+                "/cockpit/api/users/2/action",
                 json=body,
                 auth=session_auth("admin"),
                 headers={"X-Management-Action": "confirm"},
@@ -372,7 +372,7 @@ class UserManagementTest(unittest.TestCase):
 
     def test_three_pages_share_relative_sidebar_and_no_old_switch_buttons(self):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Fixture Gateway"),
         ):
             for path in ("/cockpit/statistics/", "/cockpit/users/", "/cockpit/keys/"):

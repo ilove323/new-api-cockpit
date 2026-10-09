@@ -390,7 +390,7 @@ class ReportTest(unittest.TestCase):
 
     def test_site_name_rendered_and_escaped(self):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.app.load_site_name", return_value="示例网关<script>"
             ),
@@ -740,13 +740,13 @@ class ReportTest(unittest.TestCase):
 
     def test_optional_columns_do_not_change_excel_or_query_failures(self):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_report", return_value=self.rows) as load,
         ):
             books = []
             for suffix in ["", "&include_failures=0", "&include_failures=1", "&dev=2"]:
                 response = app.test_client().get(
-                    "/cockpit/statistics/api/export?start=2026-07-26&end=2026-08-25"
+                    "/cockpit/api/statistics/export?start=2026-07-26&end=2026-08-25"
                     + suffix,
                     auth=session_auth("test_admin"),
                 )
@@ -771,7 +771,7 @@ class ReportTest(unittest.TestCase):
             ("usage/groups", "load_group_options", {}),
         ]
         with patch(
-            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
         ):
             for route, loader, kwargs in routes:
                 path, _, filters = route.partition("&")
@@ -787,7 +787,7 @@ class ReportTest(unittest.TestCase):
                         patch("new_api_cockpit.app." + loader, return_value=[]) as load,
                     ):
                         response = app.test_client().get(
-                            "/cockpit/statistics/api/"
+                            "/cockpit/api/statistics/"
                             + path
                             + "?start=2026-07-26&end=2026-08-25&"
                             + filters
@@ -805,7 +805,7 @@ class ReportTest(unittest.TestCase):
 
     def test_auth_and_user_model_filters(self):
         with patch(
-            "new_api_cockpit.app.browser_identity",
+            "new_api_cockpit.app.request_identity",
             side_effect=lambda: (
                 user
                 if (user := fixture_identity()) and user["username"] == "test_admin"
@@ -814,33 +814,33 @@ class ReportTest(unittest.TestCase):
         ):
             client = app.test_client()
             self.assertEqual(
-                client.get("/cockpit/statistics/api/usage").status_code, 401
+                client.get("/cockpit/api/statistics/usage").status_code, 401
             )
             with patch(
                 "new_api_cockpit.app.load_report", return_value=deepcopy(self.rows)
             ):
                 response = client.get(
-                    "/cockpit/statistics/api/usage?start=2026-07-26&end=2026-08-25",
+                    "/cockpit/api/statistics/usage?start=2026-07-26&end=2026-08-25",
                     auth=session_auth("test_admin"),
                 )
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json["totals"]["amount"], "11")
                 self.assertEqual(response.json["totals"]["request_count"], 6)
                 response = client.get(
-                    "/cockpit/statistics/api/usage?user=absent&start=2026-07-26&end=2026-08-25",
+                    "/cockpit/api/statistics/usage?user=absent&start=2026-07-26&end=2026-08-25",
                     auth=session_auth("test_admin"),
                 )
                 self.assertEqual(response.json["rows"], [])
                 self.assertEqual(response.json["totals"]["rpm"], "0")
                 response = client.get(
-                    "/cockpit/statistics/api/usage?model=gpt-b&start=2026-07-26&end=2026-08-25",
+                    "/cockpit/api/statistics/usage?model=gpt-b&start=2026-07-26&end=2026-08-25",
                     auth=session_auth("test_admin"),
                 )
                 self.assertEqual(len(response.json["rows"]), 1)
                 self.assertEqual(response.json["rows"][0]["model_name"], "gpt-b")
                 self.assertEqual(response.json["totals"]["amount"], "1")
                 response = client.get(
-                    "/cockpit/statistics/api/export?user=%3Ddanger&model=claude-a&start=2026-07-26&end=2026-08-25",
+                    "/cockpit/api/statistics/export?user=%3Ddanger&model=claude-a&start=2026-07-26&end=2026-08-25",
                     auth=session_auth("test_admin"),
                 )
                 workbook = load_workbook(BytesIO(response.data))
@@ -856,11 +856,11 @@ class ReportTest(unittest.TestCase):
     def test_token_detail_endpoint_is_separate_from_excel(self):
         token_rows = [dict(self.rows[0], token_id=7, token_name="key-a")]
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_report", return_value=token_rows) as load,
         ):
             response = app.test_client().get(
-                "/cockpit/statistics/api/usage/by-token?start=2026-07-26&end=2026-08-25",
+                "/cockpit/api/statistics/usage/by-token?start=2026-07-26&end=2026-08-25",
                 auth=session_auth("test_admin"),
             )
             self.assertEqual(response.status_code, 200)
@@ -870,7 +870,7 @@ class ReportTest(unittest.TestCase):
     def test_token_group_options_and_filtered_summary_endpoints(self):
         token_rows = [dict(token_id=7, token_name="key-a")]
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.app.load_token_options", return_value=token_rows
             ) as options,
@@ -882,19 +882,19 @@ class ReportTest(unittest.TestCase):
         ):
             client = app.test_client()
             response = client.get(
-                "/cockpit/statistics/api/usage/tokens?start=2026-07-26&end=2026-08-25",
+                "/cockpit/api/statistics/usage/tokens?start=2026-07-26&end=2026-08-25",
                 auth=session_auth("test_admin"),
             )
             self.assertEqual(response.json["rows"], token_rows)
             options.assert_called_once_with("2026-07-26", "2026-08-25")
             response = client.get(
-                "/cockpit/statistics/api/usage/groups?start=2026-07-26&end=2026-08-25",
+                "/cockpit/api/statistics/usage/groups?start=2026-07-26&end=2026-08-25",
                 auth=session_auth("test_admin"),
             )
             self.assertEqual(response.json["rows"], [{"group_name": "auto"}])
             groups.assert_called_once_with("2026-07-26", "2026-08-25")
             response = client.get(
-                "/cockpit/statistics/api/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=9&token_id=7&group=auto&by_token=1",
+                "/cockpit/api/statistics/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=9&token_id=7&group=auto&by_token=1",
                 auth=session_auth("test_admin"),
             )
             self.assertEqual(response.status_code, 200)
@@ -906,7 +906,7 @@ class ReportTest(unittest.TestCase):
                 groups=["auto"],
             )
             response = client.get(
-                "/cockpit/statistics/api/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=bad",
+                "/cockpit/api/statistics/usage/by-selection?start=2026-07-26&end=2026-08-25&token_id=bad",
                 auth=session_auth("test_admin"),
             )
             self.assertEqual(response.status_code, 400)

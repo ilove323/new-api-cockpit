@@ -477,26 +477,30 @@ class ScheduleDatabaseTest(unittest.TestCase):
             )
             for name, config in configs.items():
                 with self.subTest(channel=name):
+                    with self.connect() as conn:
+                        conn.execute("UPDATE notification_settings SET enabled=false")
                     notifications.save(
                         {
                             "enabled": True,
                             "channel": name,
-                            "version": notifications.snapshot()["version"],
+                            "version": notifications.snapshot(name)["version"],
                             **config,
                         },
                         "admin",
                     )
-                    version = notifications.snapshot()["version"]
+                    version = notifications.snapshot(name)["version"]
                     with (
                         patch.object(balance, "connect", delivery_connect),
                         patch.object(notifications.CHANNELS[name], "send") as send,
                     ):
-                        notifications.deliver(test=True, expected_version=version)
+                        notifications.deliver(
+                            test=True, expected_version=version, channel=name
+                        )
                         notifications.deliver(scope_id=1)
                     self.assertEqual(send.call_count, 2)
                     self.assertIn("余额监控测试", send.call_args_list[0].args[2])
                     self.assertIn("余额不足报警", send.call_args_list[1].args[2])
-                    state = notifications.snapshot()
+                    state = notifications.snapshot(name)
                     self.assertIsNotNone(state["last_success_at"])
                     self.assertIsNone(state["last_error"])
             with self.connect() as other:

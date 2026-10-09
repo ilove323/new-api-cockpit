@@ -20,7 +20,7 @@ function environment({sid = 'session-a', expires = Date.now() / 1000 + 900, logi
   const h = {calls, redirects, events, elements, storage, channels, locksUsed};
   h.handle = (url, init) => {
     if (url === '/api/user/auth/refresh') return response({success: true, data: bundle()});
-    if (url === '/cockpit/auth/session') return response(init.method === 'DELETE' ? {ok: true} : identity());
+    if (url === '/cockpit/api/auth/session') return response(init.method === 'DELETE' ? {ok: true} : identity());
     if (url === '/api/user/auth/logout') return response({success: true});
     if (url === '/api/status') return response({success: true, data: {password_login_enabled: true}});
     if (url === '/api/user/login' || url === '/api/user/login/verify') return response({success: true, data: bundle()});
@@ -48,7 +48,7 @@ test('shared session uses official refresh path, same browser lock and verified 
   const h = environment({sid: '', expires: 0});
   const user = await h.api.refresh();
   assert.equal(user.session_id, 'session-a');
-  assert.deepEqual(h.calls.map(c => c.url), ['/api/user/auth/refresh', '/cockpit/auth/session']);
+  assert.deepEqual(h.calls.map(c => c.url), ['/api/user/auth/refresh', '/cockpit/api/auth/session']);
   assert.deepEqual(h.locksUsed, ['new-api:auth-refresh']);
   assert.equal(h.calls[0].init.credentials, 'same-origin');
   assert.equal(h.calls[1].init.headers['X-Cockpit-Auth'], '1');
@@ -58,56 +58,56 @@ test('shared session uses official refresh path, same browser lock and verified 
 
 test('concurrent requests share one renewal and carry current session identity', async () => {
   const h = environment({expires: 0});
-  await Promise.all([h.context.fetch('/cockpit/keys/api/options'), h.context.fetch('/cockpit/users/api/users')]);
+  await Promise.all([h.context.fetch('/cockpit/api/keys/options'), h.context.fetch('/cockpit/api/users')]);
   assert.equal(h.calls.filter(c => c.url === '/api/user/auth/refresh').length, 1);
-  assert.equal(h.calls.filter(c => c.url === '/cockpit/auth/session').length, 1);
-  for (const call of h.calls.filter(c => c.url.includes('/api/') && c.url.startsWith('/cockpit/'))) {
+  assert.equal(h.calls.filter(c => c.url === '/cockpit/api/auth/session').length, 1);
+  for (const call of h.calls.filter(c => c.url.startsWith('/cockpit/api/') && c.url !== '/cockpit/api/auth/session')) {
     assert.equal(call.init.headers.get('X-Cockpit-Session'), 'session-a');
   }
 });
 
 test('writes are never replayed after 401, reads can renew and retry once', async () => {
   const h = environment();
-  h.handle = url => url === '/cockpit/users/api/apply' ? response({error: 'expired'}, 401) : response({ok: true});
-  const r = await h.context.fetch('/cockpit/users/api/apply', {method: 'POST', body: '{}'});
+  h.handle = url => url === '/cockpit/api/users/quota/apply' ? response({error: 'expired'}, 401) : response({ok: true});
+  const r = await h.context.fetch('/cockpit/api/users/quota/apply', {method: 'POST', body: '{}'});
   assert.equal(r.status, 401); assert.equal(h.calls.length, 1); assert.equal(h.redirects.length, 1);
   const read = environment(); let reads = 0;
   const fallback = read.handle;
-  read.handle = (url, init) => url === '/cockpit/users/api/users' ? response({ok: true}, ++reads === 1 ? 401 : 200) : fallback(url, init);
-  assert.equal((await read.context.fetch('/cockpit/users/api/users')).status, 200);
+  read.handle = (url, init) => url === '/cockpit/api/users' ? response({ok: true}, ++reads === 1 ? 401 : 200) : fallback(url, init);
+  assert.equal((await read.context.fetch('/cockpit/api/users')).status, 200);
   assert.equal(reads, 2); assert.equal(read.redirects.length, 0);
 });
 
 test('switching accounts during renewal blocks the old page before any mutation is sent', async () => {
   const h = environment({expires: 0});
   h.handle = (url, init) => url === '/api/user/auth/refresh' ? response({success: true, data: bundle('session-b')}) : response(identity('session-b'));
-  await assert.rejects(h.context.fetch('/cockpit/users/api/apply', {method: 'POST', body: '{}'}), /切换/);
+  await assert.rejects(h.context.fetch('/cockpit/api/users/quota/apply', {method: 'POST', body: '{}'}), /切换/);
   assert.ok(!h.calls.some(c => c.url.endsWith('/apply'))); assert.equal(h.redirects.length, 1);
 });
 
 test('server-detected late account switch aborts old UI without retrying its write', async () => {
   const h = environment(); h.handle = () => response({code: 'AUTH_SESSION_CHANGED'}, 409);
-  const r = await h.context.fetch('/cockpit/keys/api/token/2/action', {method: 'POST', body: '{}'});
+  const r = await h.context.fetch('/cockpit/api/keys/2/action', {method: 'POST', body: '{}'});
   assert.equal(r.status, 409); assert.equal(h.calls.length, 1); assert.equal(h.redirects.length, 1);
 });
 
 test('upstream outage and rate limits preserve existing session without redirect or mutation', async () => {
   for (const status of [429, 503]) {
     const h = environment({expires: 0}); h.handle = () => response({message: 'temporarily unavailable'}, status);
-    await assert.rejects(h.context.fetch('/cockpit/users/api/apply', {method: 'POST', body: '{}'}), /unavailable/);
+    await assert.rejects(h.context.fetch('/cockpit/api/users/quota/apply', {method: 'POST', body: '{}'}), /unavailable/);
     assert.equal(h.calls.length, 1); assert.deepEqual(h.redirects, []);
   }
 });
 
 test('external PAT APIs and unrelated fetches are not intercepted', async () => {
   const h = environment({sid: '', expires: 0});
-  for (const url of ['/cockpit/statistics/api/balance', '/cockpit/statistics/api/alert', '/api/status', 'https://other.test/api/example']) await h.context.fetch(url);
+  for (const url of ['/cockpit/api/statistics/balance', '/cockpit/api/statistics/alert', '/api/status', 'https://other.test/api/example']) await h.context.fetch(url);
   assert.equal(h.calls.length, 4); assert.ok(h.calls.every(c => !c.init.headers));
 });
 
 test('logout revokes official browser session before clearing bridge and publishing sign-out', async () => {
   const h = environment(); await h.elements.get('logout').fire('click');
-  assert.deepEqual(h.calls.map(c => c.url), ['/api/user/auth/logout', '/cockpit/auth/session']);
+  assert.deepEqual(h.calls.map(c => c.url), ['/api/user/auth/logout', '/cockpit/api/auth/session']);
   assert.equal(h.calls[0].init.headers['X-Auth-Session'], 'session-a');
   assert.equal(h.calls[1].init.method, 'DELETE');
   assert.equal(h.channels[0].messages[0].kind, 'signed_out');
@@ -158,7 +158,7 @@ test('2FA challenge cannot establish a session until official verification succe
   h.elements.get('login-username').value = 'admin'; h.elements.get('login-password').value = 'fixture-password';
   await h.elements.get('login-form').fire('submit');
   assert.equal(h.elements.get('verification-form').hidden, false);
-  assert.ok(!h.calls.some(c => c.url === '/cockpit/auth/session'));
+  assert.ok(!h.calls.some(c => c.url === '/cockpit/api/auth/session'));
   h.elements.get('verification-code').value = '123456'; await h.elements.get('verification-form').fire('submit');
   const verify = h.calls.find(c => c.url === '/api/user/login/verify');
   assert.deepEqual(verify.body, {flow_token: 'fixture-flow', method: '2fa', code: '123456'});
@@ -202,7 +202,7 @@ test('ordinary upstream user can explicitly sign out and switch accounts instead
   const h = environment({sid: '', expires: 0, login: true}); let signedOut = false;
   h.handle = (url, init) => {
     if (url === '/api/user/auth/refresh') return signedOut ? response({code: 'AUTH_UNAUTHORIZED'}, 401) : response({success: true, data: bundle('ordinary-session')});
-    if (url === '/cockpit/auth/session') return init.method === 'DELETE' ? response({ok: true}) : response({code: 'AUTH_FORBIDDEN', error: '仅管理员可访问'}, 403);
+    if (url === '/cockpit/api/auth/session') return init.method === 'DELETE' ? response({ok: true}) : response({code: 'AUTH_FORBIDDEN', error: '仅管理员可访问'}, 403);
     if (url === '/api/user/auth/logout') {signedOut = true; return response({success: true});}
     if (url === '/api/status') return response({success: true, data: {password_login_enabled: true}});
     return response({ok: true});

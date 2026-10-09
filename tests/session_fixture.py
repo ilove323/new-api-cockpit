@@ -1,7 +1,7 @@
 """Business-route actor fixtures; actual authentication is covered by test_auth.
 
 No network or password validation in business tests. Each test explicitly mocks
-browser_identity; these opaque fixture credentials are invalid in production.
+request_identity; these opaque fixture credentials are invalid in production.
 """
 
 from flask import request

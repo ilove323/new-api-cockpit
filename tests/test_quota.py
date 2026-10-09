@@ -210,7 +210,7 @@ class QuotaTest(unittest.TestCase):
         client = app.test_client()
         self.assertEqual(client.get("/cockpit/users/").status_code, 302)
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Test"),
             patch.object(quota, "preview", return_value={"users": []}) as preview,
         ):
@@ -226,14 +226,14 @@ class QuotaTest(unittest.TestCase):
             )
             self.assertEqual(
                 client.post(
-                    "/cockpit/users/api/preview",
+                    "/cockpit/api/users/quota/preview",
                     json=self.body,
                     auth=session_auth("admin"),
                 ).status_code,
                 403,
             )
             response = client.post(
-                "/cockpit/users/api/preview",
+                "/cockpit/api/users/quota/preview",
                 json=self.body,
                 headers={"X-Quota-Action": "preview"},
                 auth=session_auth("admin"),

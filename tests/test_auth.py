@@ -3,11 +3,15 @@
 import base64
 import io
 import json
+import re
 import time
 import unittest
 from contextlib import contextmanager
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
+
+import psycopg
+from flask import g, jsonify
 
 from new_api_cockpit import auth
 from new_api_cockpit.app import app, safe_next
@@ -150,7 +154,7 @@ class AuthTest(unittest.TestCase):
     ):
         with upstream():
             response = self.client.post(
-                "/cockpit/auth/session",
+                "/cockpit/api/auth/session",
                 json={"access_token": self.token},
                 headers=HEADERS,
             )
@@ -180,14 +184,14 @@ class AuthTest(unittest.TestCase):
             ):
                 self.assertEqual(
                     self.client.post(
-                        "/cockpit/auth/session", json=body, headers=headers
+                        "/cockpit/api/auth/session", json=body, headers=headers
                     ).status_code,
                     expected,
                 )
             verify.assert_not_called()
         with patch.dict("os.environ", {"COCKPIT_COOKIE_SECURE": "false"}), upstream():
             response = self.client.post(
-                "/cockpit/auth/session",
+                "/cockpit/api/auth/session",
                 json={"access_token": self.token},
                 headers=HEADERS,
             )
@@ -214,7 +218,7 @@ class AuthTest(unittest.TestCase):
         with self.client.get("/cockpit/static/auth.js") as response:
             self.assertEqual(response.status_code, 200)
         for suffix in ("usage", "balance/status", "usage/by-token", "usage/tokens"):
-            response = self.client.get("/cockpit/statistics/api/" + suffix)
+            response = self.client.get("/cockpit/api/statistics/" + suffix)
             self.assertEqual(response.status_code, 401)
             self.assertEqual(response.json["code"], "AUTH_REQUIRED")
         for value in (
@@ -222,7 +226,7 @@ class AuthTest(unittest.TestCase):
             "//foreign.invalid",
             "/cockpit\\evil",
             "/cockpit/login",
-            "/cockpit/auth/session",
+            "/cockpit/api/auth/session",
             "/cockpit/users/\n",
             "/cockpit/users/\t",
         ):
@@ -231,18 +235,28 @@ class AuthTest(unittest.TestCase):
             safe_next("/cockpit/keys/?user_id=2"), "/cockpit/keys/?user_id=2"
         )
 
-    def test_basic_and_pat_never_grant_browser_access(self):
-        for path in ("/cockpit/users/api/users", "/cockpit/statistics/api/usage"):
+    def test_basic_never_grants_api_access_and_pat_never_grants_page_access(self):
+        for path in ("/cockpit/api/users", "/cockpit/api/statistics/usage"):
             with patch("new_api_cockpit.app.verify_session") as verify:
                 response = self.client.get(path, auth=("admin", "password"))
                 self.assertEqual(response.status_code, 401)
                 verify.assert_not_called()
+        with patch("new_api_cockpit.app.verify_pat") as pat:
             self.assertEqual(
                 self.client.get(
-                    path, headers={"Authorization": "Bearer pat-fixture"}
+                    "/cockpit/users/", headers={"Authorization": "Bearer pat-fixture"}
+                ).status_code,
+                302,
+            )
+            self.assertEqual(
+                self.client.post(
+                    "/cockpit/api/auth/session",
+                    json={"access_token": "pat-fixture"},
+                    headers=HEADERS,
                 ).status_code,
                 401,
             )
+            pat.assert_not_called()
 
     def test_every_request_rechecks_session_and_account_switch_blocks_writes(self):
         self.login_cookie()
@@ -250,17 +264,13 @@ class AuthTest(unittest.TestCase):
             upstream(),
             patch("new_api_cockpit.app.quota_backend.list_users", return_value=[]),
         ):
-            self.assertEqual(
-                self.client.get("/cockpit/users/api/users").status_code, 200
-            )
+            self.assertEqual(self.client.get("/cockpit/api/users").status_code, 200)
         with upstream(error=HTTPError("http://fixture", 401, "", {}, io.BytesIO())):
-            self.assertEqual(
-                self.client.get("/cockpit/users/api/users").status_code, 401
-            )
+            self.assertEqual(self.client.get("/cockpit/api/users").status_code, 401)
         self.login_cookie()
         with upstream(), patch("new_api_cockpit.app.quota_backend.apply") as apply:
             response = self.client.post(
-                "/cockpit/users/api/apply",
+                "/cockpit/api/users/quota/apply",
                 json={},
                 headers={
                     "X-Quota-Action": "confirm",
@@ -278,7 +288,7 @@ class AuthTest(unittest.TestCase):
             patch("new_api_cockpit.app.quota_backend.list_users", return_value=[]),
         ):
             response = self.client.get(
-                "/cockpit/users/api/users", auth=("old-admin", "obsolete-password")
+                "/cockpit/api/users", auth=("old-admin", "obsolete-password")
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(
@@ -291,16 +301,16 @@ class AuthTest(unittest.TestCase):
         with upstream(
             error=HTTPError("http://fixture", 500, "private", {}, io.BytesIO())
         ):
-            response = self.client.get("/cockpit/users/api/users")
+            response = self.client.get("/cockpit/api/users")
             self.assertEqual(response.status_code, 503)
             self.assertNotIn("Set-Cookie", response.headers)
         with upstream({**USER, "role": 1}):
-            response = self.client.get("/cockpit/users/api/users")
+            response = self.client.get("/cockpit/api/users")
             self.assertEqual(response.status_code, 403)
             self.assertIn("Max-Age=0", response.headers["Set-Cookie"])
         self.login_cookie()
         response = self.client.post(
-            "/cockpit/users/api/apply",
+            "/cockpit/api/users/quota/apply",
             json={},
             headers={"X-Quota-Action": "confirm", "Origin": "https://foreign.invalid"},
         )
@@ -316,7 +326,7 @@ class AuthTest(unittest.TestCase):
             ) as records,
         ):
             response = self.client.get(
-                "/cockpit/operations/api/records",
+                "/cockpit/api/operations",
                 headers={"Authorization": "Bearer " + self.token},
             )
             self.assertEqual(response.status_code, 200)
@@ -326,7 +336,7 @@ class AuthTest(unittest.TestCase):
         self.login_cookie()
         with patch("new_api_cockpit.app.verify_session") as verify:
             response = self.client.delete(
-                "/cockpit/auth/session", json={}, headers=HEADERS
+                "/cockpit/api/auth/session", json={}, headers=HEADERS
             )
             self.assertEqual(response.status_code, 200)
             self.assertIn("Max-Age=0", response.headers["Set-Cookie"])
@@ -338,29 +348,164 @@ class AuthTest(unittest.TestCase):
         self.login_cookie()
         with (
             patch("new_api_cockpit.app.verify_session") as verify,
-            patch("new_api_cockpit.app.verify_api_key", return_value=False),
+            patch(
+                "new_api_cockpit.app.verify_pat",
+                side_effect=auth.LoginRequired("PAT required"),
+            ),
         ):
             for suffix in ("balance", "alert"):
-                response = self.client.get("/cockpit/statistics/api/" + suffix)
+                response = self.client.get("/cockpit/api/statistics/" + suffix)
                 self.assertEqual(response.status_code, 401)
                 self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+                self.assertNotIn("Set-Cookie", response.headers)
             verify.assert_not_called()
 
-    def test_api_key_retains_existing_admin_pat_sql_and_no_prefix_rewriting(self):
+    def test_pat_resolves_admin_identity_readonly_verbatim_and_without_caching(self):
         with patch("new_api_cockpit.auth.psycopg.connect") as connect:
             conn = connect.return_value.__enter__.return_value
-            conn.execute.return_value.fetchone.return_value = {"id": 12}
-            self.assertTrue(auth.verify_api_key("sk-fixture"))
+            identity = {k: USER[k] for k in ("id", "username", "role")}
+            conn.execute.return_value.fetchone.return_value = identity
+            for credential in ("sk-fixture", "fixture+/=="):
+                self.assertEqual(auth.verify_pat(credential), identity)
+                self.assertEqual(conn.execute.call_args.args[1], (credential,))
             query, params = conn.execute.call_args.args
             self.assertIn("access_token=%s", query)
             self.assertIn("role>=10 AND status=1 AND deleted_at IS NULL", query)
-            self.assertEqual(params[0], "sk-fixture")
+            self.assertIn("SELECT id,username,role", query)
+            self.assertNotIn("tokens", query)
+            self.assertIn(
+                "default_transaction_read_only=on", connect.call_args.kwargs["options"]
+            )
             conn.execute.return_value.fetchone.return_value = None
-            self.assertFalse(auth.verify_api_key("fixture"))
+            with self.assertRaises(auth.LoginRequired):
+                auth.verify_pat("sk-fixture")
+            self.assertEqual(connect.call_count, 3)
         with patch("new_api_cockpit.auth.psycopg.connect") as connect:
-            for value in (None, "", "x" * 257):
-                self.assertFalse(auth.verify_api_key(value))
+            for value in (None, "", "x" * 257, "a b", "a\nb"):
+                with self.assertRaises(auth.LoginRequired):
+                    auth.verify_pat(value)
             connect.assert_not_called()
+        with patch(
+            "new_api_cockpit.auth.psycopg.connect",
+            side_effect=psycopg.OperationalError("private-secret"),
+        ):
+            with self.assertRaises(auth.AuthUnavailable) as caught:
+                auth.verify_pat("fixture")
+            self.assertNotIn("private-secret", str(caught.exception))
+
+    def test_all_business_api_methods_accept_pat_and_keep_its_real_actor(self):
+        """Exercise the real guard on every business route, without live writes."""
+        identity = {k: USER[k] for k in ("id", "username", "role")}
+        with (
+            patch("new_api_cockpit.app.verify_pat", return_value=identity) as pat,
+            patch("new_api_cockpit.app.verify_session") as session,
+        ):
+            for rule in app.url_map.iter_rules():
+                if (
+                    not rule.rule.startswith("/cockpit/api/")
+                    or rule.endpoint == "browser_session"
+                ):
+                    continue
+                path = rule.rule
+                for argument in rule.arguments:
+                    converter = rule._converters[argument]
+                    value = (
+                        "00000000-0000-4000-8000-000000000001"
+                        if converter.__class__.__name__ == "UUIDConverter"
+                        else "2"
+                    )
+                    path = re.sub(r"<(?:(?:\w+):)?" + argument + r">", value, path)
+                for method in sorted(rule.methods - {"HEAD", "OPTIONS"}):
+                    with (
+                        self.subTest(path=path, method=method),
+                        patch.dict(
+                            app.view_functions,
+                            {rule.endpoint: lambda **kw: jsonify(g.current_user)},
+                        ),
+                    ):
+                        response = self.client.open(
+                            path,
+                            method=method,
+                            json={},
+                            headers={
+                                "Authorization": "Bearer fixture+/==",
+                                "New-Api-User": "999",
+                            },
+                        )
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(response.json, identity)
+                        self.assertNotIn("Set-Cookie", response.headers)
+            self.assertGreater(pat.call_count, 35)
+            session.assert_not_called()
+
+    def test_pat_writes_require_confirmation_and_audit_uses_pat_owner(self):
+        identity = {k: USER[k] for k in ("id", "username", "role")}
+        headers = {"Authorization": "Bearer fixture"}
+        body = {
+            "action": "group",
+            "changes": {"group": "default"},
+            "username": "forged",
+        }
+        with (
+            patch("new_api_cockpit.app.verify_pat", return_value=identity),
+            patch(
+                "new_api_cockpit.app.user_management.single_action",
+                return_value={"ok": True},
+            ) as action,
+        ):
+            self.assertEqual(
+                self.client.post(
+                    "/cockpit/api/users/2/action", json=body, headers=headers
+                ).status_code,
+                403,
+            )
+            response = self.client.post(
+                "/cockpit/api/users/2/action",
+                json=body,
+                headers={
+                    **headers,
+                    "X-Management-Action": "confirm",
+                    "New-Api-User": "999",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            action.assert_called_once_with("admin", "user", 2, body)
+            self.assertEqual(
+                self.client.post(
+                    "/cockpit/api/users/2/action",
+                    json=body,
+                    headers={
+                        **headers,
+                        "X-Management-Action": "confirm",
+                        "Origin": "https://foreign.invalid",
+                    },
+                ).status_code,
+                403,
+            )
+            self.assertEqual(action.call_count, 1)
+
+    def test_invalid_explicit_bearer_never_falls_back_or_erases_cookie(self):
+        self.login_cookie()
+        with (
+            patch(
+                "new_api_cockpit.app.verify_pat",
+                side_effect=auth.LoginRequired("invalid"),
+            ),
+            patch("new_api_cockpit.app.verify_session") as session,
+            patch("new_api_cockpit.app.export_excel") as export,
+        ):
+            for path in ("/cockpit/api/users", "/cockpit/api/statistics/export"):
+                for credential in ("Bearer fixture", "Bearer", "Bearer fixture extra"):
+                    response = self.client.get(
+                        path, headers={"Authorization": credential}
+                    )
+                    self.assertEqual(response.status_code, 401)
+                    self.assertEqual(response.json["code"], "AUTH_REQUIRED")
+                    self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+                    self.assertNotIn("Location", response.headers)
+                    self.assertNotIn("Set-Cookie", response.headers)
+            session.assert_not_called()
+            export.assert_not_called()
 
 
 if __name__ == "__main__":

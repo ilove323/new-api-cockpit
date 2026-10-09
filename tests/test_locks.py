@@ -34,7 +34,7 @@ class AdvisoryLockTest(unittest.TestCase):
             patch.object(notifications, "provider_config", return_value={}),
         ):
             connect.return_value.__enter__.return_value = conn
-            notifications.deliver()
+            notifications.deliver_channel("feishu_app")
         conn.execute.assert_any_call(
             "SELECT pg_advisory_xact_lock(%s)", (locks.NOTIFICATION_LOCK,)
         )

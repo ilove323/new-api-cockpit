@@ -58,7 +58,7 @@ class UITest(unittest.TestCase):
 
     def page(self, route):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_site_name", return_value="Fixture <site>"),
         ):
             response = self.client.get("/cockpit/" + route + "/", auth=self.auth)
@@ -147,7 +147,7 @@ class UITest(unittest.TestCase):
                 self.assertTrue((ROOT / "static" / file).is_file(), (css, file))
                 assets.add(file)
         with patch(
-            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
         ):
             for file in assets:
                 path = "/cockpit/static/" + file

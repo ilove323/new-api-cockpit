@@ -1,5 +1,5 @@
 # Include inside the existing HTTPS server used by New API.
-# Forward the whole cockpit prefix unchanged. Keep New API's / location as-is.
+# Forward pages and /cockpit/api/ unchanged. Keep New API's / location as-is.
 location = /cockpit {
     absolute_redirect off;
     return 302 /cockpit/statistics/$is_args$args;

@@ -104,7 +104,6 @@ class NotificationsTest(unittest.TestCase):
             version=1,
             enabled=True,
             channel="feishu_app",
-            active_channel="feishu_app",
             **self.config,
             last_attempt_at=None,
             last_success_at=None,
@@ -122,7 +121,6 @@ class NotificationsTest(unittest.TestCase):
                 version=2,
                 enabled=False,
                 channel="dingtalk_webhook",
-                active_channel="dingtalk_webhook",
                 webhook_encrypted="encrypted-webhook",
                 secret_encrypted="encrypted-signing-secret",
                 signing_enabled=True,
@@ -225,16 +223,19 @@ class NotificationsTest(unittest.TestCase):
 
     def test_routes_and_csrf(self):
         client = app.test_client()
-        base = "/cockpit/statistics/api/balance/channel"
+        base = "/cockpit/api/statistics/balance/channel"
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.notifications.save") as save,
             patch(
                 "new_api_cockpit.notifications.snapshot", return_value={"version": 2}
             ),
             patch("new_api_cockpit.notifications.deliver") as send,
         ):
-            args = dict(auth=session_auth("fixture_admin"), json={"version": 2})
+            args = dict(
+                auth=session_auth("fixture_admin"),
+                json={"version": 2, "channel": "feishu_app"},
+            )
             self.assertEqual(client.put(base, **args).status_code, 403)
             self.assertEqual(client.post(base + "/test", **args).status_code, 403)
             save.assert_not_called()
@@ -244,7 +245,9 @@ class NotificationsTest(unittest.TestCase):
             self.assertEqual(
                 client.post(base + "/test", headers=headers, **args).status_code, 200
             )
-            send.assert_called_once_with(test=True, expected_version=2)
+            send.assert_called_once_with(
+                test=True, expected_version=2, channel="feishu_app"
+            )
             send.side_effect = ValueError("失败")
             self.assertEqual(
                 client.post(base + "/test", headers=headers, **args).status_code, 400
@@ -276,11 +279,15 @@ class NotificationsTest(unittest.TestCase):
 
     def test_alert_api_uses_new_api_bearer_auth(self):
         client = app.test_client()
-        url = "/cockpit/statistics/api/alert"
+        url = "/cockpit/api/statistics/alert"
         with (
             patch(
-                "new_api_cockpit.app.verify_api_key",
-                side_effect=lambda token: token == "sk-fixture",
+                "new_api_cockpit.app.verify_pat",
+                side_effect=lambda token: (
+                    {"id": 1, "username": "admin", "role": 100}
+                    if token == "sk-fixture"
+                    else None
+                ),
             ),
             patch("new_api_cockpit.balance.check_once", return_value=True) as check,
             patch(

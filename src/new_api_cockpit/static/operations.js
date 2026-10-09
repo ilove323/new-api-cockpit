@@ -29,7 +29,7 @@
   }
   function safe(value){const v={...value};for(const k of ['password','password_confirm','key','access_token','target_user'])delete v[k];return v;}
   function summary(value){const v=safe(value);if(v.amount_units!==undefined){v.amount_yuan='¥ '+money(Number(v.amount_units)/500000);delete v.amount_units;}if(v.quota!==undefined){v.balance='¥ '+money(Number(v.quota)/500000);delete v.quota;}return Object.keys(v).length?JSON.stringify(v):'—';}
-  async function api(path){const response=await fetch('/cockpit/operations/api/records'+path,{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||'操作记录读取失败。');return data;}
+  async function api(path){const response=await fetch('/cockpit/api/operations'+path,{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||'操作记录读取失败。');return data;}
   function controls(){$('records-prev').disabled=busy||page===0;$('records-next').disabled=busy||!next;$('records-refresh').disabled=busy;$('records-kind').disabled=busy;}
   async function load(){
     if(busy)return;busy=true;controls();const ticket=++epoch;

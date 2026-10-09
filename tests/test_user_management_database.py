@@ -13,11 +13,13 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 from new_api_cockpit import (
+    auth,
     balance,
     quota,
     operation_records,
     user_management as manage,
 )
+from new_api_cockpit.app import app
 
 DSN = os.environ.get("TEST_SCHEDULE_DATABASE_URL")
 
@@ -129,6 +131,100 @@ class UserManagementDatabaseTest(unittest.TestCase):
         self.assertEqual(
             manage.list_grouped("admin", {"user_statuses": [2]})["total"], 1
         )
+
+    def test_pat_api_identity_revocation_permissions_and_audit_on_real_fixture(self):
+        """Real SQL/auth/routes/audit; only the official mutation is mocked."""
+        client = app.test_client()
+        real_connect = psycopg.connect
+
+        def fixture_connect(*args, **kwargs):
+            return real_connect(*(args or (DSN,)), **kwargs)
+
+        with real_connect(DSN) as conn:
+            conn.execute("UPDATE users SET access_token='fixture-user-pat' WHERE id=2")
+            conn.execute(
+                "UPDATE users SET access_token='fixture-disabled-pat' WHERE id=4"
+            )
+            conn.execute(
+                "INSERT INTO users(id,username,role,status,access_token,deleted_at) VALUES(5,'deleted',100,1,'fixture-deleted-pat',now())"
+            )
+        headers = {
+            "Authorization": "Bearer fixture-manager-pat",
+            "X-Management-Action": "confirm",
+            "New-Api-User": "1",
+        }
+        body = {"action": "group", "changes": {"group": "b"}}
+        with (
+            patch.object(auth.psycopg, "connect", side_effect=fixture_connect),
+            patch.object(auth, "verify_session") as session,
+        ):
+            for credential in (
+                "fixture-user-pat",
+                "fixture-disabled-pat",
+                "fixture-deleted-pat",
+                "fixture-secret-one",
+            ):
+                response = client.get(
+                    "/cockpit/api/keys/options",
+                    headers={"Authorization": "Bearer " + credential},
+                )
+                self.assertEqual(response.status_code, 401)
+            response = client.get("/cockpit/api/keys/options", headers=headers)
+            self.assertEqual(
+                response.json["operator"], {"id": 3, "username": "manager", "role": 10}
+            )
+            with patch.object(
+                manage,
+                "call_api",
+                side_effect=[
+                    {
+                        "username": "alice",
+                        "display_name": "Alice",
+                        "group": "a",
+                        "remark": "",
+                        "role": 1,
+                    },
+                    None,
+                ],
+            ) as upstream:
+                self.assertEqual(
+                    client.post(
+                        "/cockpit/api/users/1/action", json=body, headers=headers
+                    ).status_code,
+                    403,
+                )
+                upstream.assert_not_called()
+                response = client.post(
+                    "/cockpit/api/users/2/action", json=body, headers=headers
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(upstream.call_args.args[0]["id"], 3)
+            records = client.get("/cockpit/api/operations", headers=headers)
+            self.assertEqual(len(records.json["rows"]), 1)
+            record = records.json["rows"][0]
+            self.assertEqual(record["operator_id"], 3)
+            self.assertEqual(record["operator_name"], "manager")
+            self.assertEqual(record["target_users"], [{"id": 2, "username": "alice"}])
+            with real_connect(DSN) as conn:
+                conn.execute(
+                    "UPDATE users SET access_token='fixture-rotated-manager' WHERE id=3"
+                )
+            self.assertEqual(
+                client.get("/cockpit/api/keys/options", headers=headers).status_code,
+                401,
+            )
+            headers["Authorization"] = "Bearer fixture-rotated-manager"
+            self.assertEqual(
+                client.get("/cockpit/api/keys/options", headers=headers).status_code,
+                200,
+            )
+            with real_connect(DSN) as conn:
+                conn.execute("UPDATE users SET role=1 WHERE id=3")
+            self.assertEqual(
+                client.get("/cockpit/api/keys/options", headers=headers).status_code,
+                401,
+            )
+            session.assert_not_called()
 
     def test_quick_group_options_are_permission_checked_without_pat_or_audit_writes(
         self,

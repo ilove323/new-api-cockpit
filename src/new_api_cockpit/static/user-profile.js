@@ -10,7 +10,7 @@
     const options={cache:'no-store'};
     if(body!==undefined)Object.assign(options,{method:'POST',headers:{'Content-Type':'application/json','X-Management-Action':'confirm'},body:JSON.stringify(body)});
     let response,data;
-    try{response=await fetch('/cockpit/users/api/user/'+path,options);data=await response.json();}
+    try{response=await fetch('/cockpit/api/users/'+path,options);data=await response.json();}
     catch{const e=new Error('请求中断，结果需核对。请刷新用户及操作记录，不要重复提交。');e.uncertain=body!==undefined;throw e;}
     if(!response.ok){const e=new Error(data.error||'用户操作失败。');e.uncertain=body!==undefined&&response.status>=500;throw e;}
     return data;
@@ -28,7 +28,7 @@
     if(blocked())return;
     const ticket=++epoch;busy=true;controls();
     try{
-      const options=await fetch('/cockpit/keys/api/options',{cache:'no-store'});
+      const options=await fetch('/cockpit/api/keys/options',{cache:'no-store'});
       const config=await options.json();if(!options.ok)throw new Error(config.error||'无法读取管理选项。');
       const data=action==='create'||action==='password'?{}:await api(id);
       if(ticket!==epoch)return;

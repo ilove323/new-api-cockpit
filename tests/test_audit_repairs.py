@@ -70,12 +70,12 @@ class RepairUnitTest(unittest.TestCase):
             with (
                 self.subTest(value=value),
                 patch(
-                    "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+                    "new_api_cockpit.app.request_identity", side_effect=fixture_identity
                 ),
                 patch.object(quota, "connect") as connect,
             ):
                 response = app.test_client().post(
-                    "/cockpit/users/api/preview",
+                    "/cockpit/api/users/quota/preview",
                     auth=session_auth("admin"),
                     headers={"X-Quota-Action": "preview"},
                     json=dict(user_ids=[1], mode="add", amount_yuan=value),
@@ -379,10 +379,10 @@ class PerformanceDatabaseTest(unittest.TestCase):
         rows = report.decorate(fallback.aggregate([log()], False), {})
         client = app.test_client()
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.app.load_report", return_value=rows),
         ):
-            url = "/cockpit/statistics/api/usage?start=2026-09-01&end=2026-09-01"
+            url = "/cockpit/api/statistics/usage?start=2026-09-01&end=2026-09-01"
             normal = client.get(url, auth=session_auth("alice"))
             self.assertIn("cost_formula", normal.json["rows"][0])
             lazy = client.get(url + "&details=lazy", auth=session_auth("alice"))
@@ -392,7 +392,7 @@ class PerformanceDatabaseTest(unittest.TestCase):
             self.assertEqual(lazy.json["totals"], normal.json["totals"])
             self.assertEqual(lazy.json["rankings"], normal.json["rankings"])
             payload = dict(report_id=row["report_id"], row_ids=[row["row_id"]])
-            route = "/cockpit/statistics/api/usage/details"
+            route = "/cockpit/api/statistics/usage/details"
             self.assertEqual(
                 client.post(
                     route, json=payload, auth=session_auth("alice")

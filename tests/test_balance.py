@@ -26,13 +26,16 @@ class BalanceTest(unittest.TestCase):
             },
         }
         with (
-            patch("new_api_cockpit.app.verify_api_key", return_value=True) as verify,
+            patch(
+                "new_api_cockpit.app.verify_pat",
+                return_value={"id": 1, "username": "test_admin", "role": 100},
+            ) as verify,
             patch("new_api_cockpit.balance.snapshot", return_value=snapshot) as load,
             patch("new_api_cockpit.app.load_site_name", return_value="三生AI网关"),
             patch("new_api_cockpit.balance.check_once") as check,
         ):
             response = app.test_client().get(
-                "/cockpit/statistics/api/balance",
+                "/cockpit/api/statistics/balance",
                 headers={"Authorization": "Bearer sk-fixture"},
             )
         self.assertEqual(response.status_code, 200)
@@ -59,22 +62,25 @@ class BalanceTest(unittest.TestCase):
     def test_external_balance_api_rejects_basic_and_unavailable_data(self):
         client = app.test_client()
         with patch(
-            "new_api_cockpit.app.browser_identity", side_effect=fixture_identity
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
         ):
             response = client.get(
-                "/cockpit/statistics/api/balance", auth=("test_admin", "fixture")
+                "/cockpit/api/statistics/balance", auth=("test_admin", "fixture")
             )
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
         with (
-            patch("new_api_cockpit.app.verify_api_key", return_value=True),
+            patch(
+                "new_api_cockpit.app.verify_pat",
+                return_value={"id": 1, "username": "test_admin", "role": 100},
+            ),
             patch(
                 "new_api_cockpit.balance.snapshot",
                 return_value={"configured": True, "valid": False},
             ),
         ):
             response = client.get(
-                "/cockpit/statistics/api/balance",
+                "/cockpit/api/statistics/balance",
                 headers={"Authorization": "Bearer fixture"},
             )
         self.assertEqual(response.status_code, 503)
@@ -93,7 +99,10 @@ class BalanceTest(unittest.TestCase):
             },
         }
         with (
-            patch("new_api_cockpit.app.verify_api_key", return_value=True),
+            patch(
+                "new_api_cockpit.app.verify_pat",
+                return_value={"id": 1, "username": "test_admin", "role": 100},
+            ),
             patch("new_api_cockpit.balance.snapshot", return_value=fixture) as load,
             patch("new_api_cockpit.app.load_site_name", return_value="fixture"),
             patch("new_api_cockpit.balance.check_once") as check,
@@ -101,7 +110,7 @@ class BalanceTest(unittest.TestCase):
         ):
             for _ in range(2):
                 response = app.test_client().get(
-                    "/cockpit/statistics/api/balance",
+                    "/cockpit/api/statistics/balance",
                     headers={"Authorization": "Bearer fixture"},
                 )
                 self.assertEqual(response.status_code, 200)
@@ -124,14 +133,14 @@ class BalanceTest(unittest.TestCase):
 
     def test_manual_check_endpoint(self):
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.balance.check_once", return_value=True) as check,
             patch(
                 "new_api_cockpit.balance.snapshot", return_value={"configured": True}
             ) as snapshot,
         ):
             client = app.test_client()
-            url = "/cockpit/statistics/api/balance/check"
+            url = "/cockpit/api/statistics/balance/check"
             self.assertEqual(
                 client.post(url, json={}, auth=session_auth("test_admin")).status_code,
                 403,
@@ -195,14 +204,14 @@ class BalanceTest(unittest.TestCase):
             }
         ]
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.balance.usage_channels_snapshot",
                 return_value=rows,
             ),
         ):
             response = app.test_client().get(
-                "/cockpit/statistics/api/balance/usage-channels",
+                "/cockpit/api/statistics/balance/usage-channels",
                 auth=session_auth("test_admin"),
             )
         self.assertEqual(response.status_code, 200)
@@ -213,7 +222,7 @@ class BalanceTest(unittest.TestCase):
         body = self.body()
         preview_rows = [{"month": "2026-01", "before": "10", "after": "12"}]
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch(
                 "new_api_cockpit.balance.history_preview",
                 return_value={"version": 1, "rows": preview_rows},
@@ -223,8 +232,8 @@ class BalanceTest(unittest.TestCase):
                 return_value={"version": 2, "months": 1},
             ) as recalculate,
         ):
-            preview_url = "/cockpit/statistics/api/balance/recalculate-history/preview"
-            apply_url = "/cockpit/statistics/api/balance/recalculate-history"
+            preview_url = "/cockpit/api/statistics/balance/recalculate-history/preview"
+            apply_url = "/cockpit/api/statistics/balance/recalculate-history"
             self.assertEqual(
                 client.post(
                     preview_url, json=body, auth=session_auth("test_admin")
@@ -270,27 +279,27 @@ class BalanceTest(unittest.TestCase):
 
     def test_api_writes_require_auth_and_custom_header(self):
         client = app.test_client()
-        with patch("new_api_cockpit.app.browser_identity", return_value=None):
+        with patch("new_api_cockpit.app.request_identity", return_value=None):
             self.assertEqual(
                 client.put(
-                    "/cockpit/statistics/api/balance/settings", json=self.body()
+                    "/cockpit/api/statistics/balance/settings", json=self.body()
                 ).status_code,
                 401,
             )
         with (
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity),
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity),
             patch("new_api_cockpit.balance.save_settings") as save,
         ):
             args = dict(auth=session_auth("test_admin"), json=self.body())
             self.assertEqual(
                 client.put(
-                    "/cockpit/statistics/api/balance/settings", **args
+                    "/cockpit/api/statistics/balance/settings", **args
                 ).status_code,
                 403,
             )
             self.assertEqual(
                 client.put(
-                    "/cockpit/statistics/api/balance/settings",
+                    "/cockpit/api/statistics/balance/settings",
                     headers={
                         "X-Statistics-Request": "1",
                         "Sec-Fetch-Site": "cross-site",
@@ -302,7 +311,7 @@ class BalanceTest(unittest.TestCase):
             save.assert_not_called()
             self.assertEqual(
                 client.put(
-                    "/cockpit/statistics/api/balance/settings",
+                    "/cockpit/api/statistics/balance/settings",
                     headers={"X-Statistics-Request": "1"},
                     **args,
                 ).status_code,
@@ -312,7 +321,7 @@ class BalanceTest(unittest.TestCase):
             save.side_effect = balance.SettingsConflict()
             self.assertEqual(
                 client.put(
-                    "/cockpit/statistics/api/balance/settings",
+                    "/cockpit/api/statistics/balance/settings",
                     headers={"X-Statistics-Request": "1"},
                     **args,
                 ).status_code,

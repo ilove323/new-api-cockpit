@@ -1,6 +1,6 @@
-"""Delegate browser sessions to New API; keep external PAT auth separate.
+"""Validate browser sessions via New API and administrator PATs via source SQL.
 
-JWT payload parsing only filters transport/type. Authorization always requires
+JWT payload parsing only filters transport/type. Session authorization requires
 New API /api/user/self; Cockpit never signs credentials or reads Redis sessions.
 """
 
@@ -132,18 +132,31 @@ def verify_session(token):
     }
 
 
-def verify_api_key(value):
-    """Validate an existing New API administrator PAT, not an inference token."""
-    if not value or len(value) > 256:
-        return False
-    with psycopg.connect(
-        connect_timeout=8,
-        row_factory=dict_row,
-        options="-c default_transaction_read_only=on -c statement_timeout=5000",
-    ) as conn:
-        row = conn.execute(
-            """SELECT id FROM users WHERE access_token=%s
-               AND role>=10 AND status=1 AND deleted_at IS NULL LIMIT 1""",
-            (value,),
-        ).fetchone()
-    return row is not None
+def verify_pat(value):
+    """Resolve the PAT's real administrator on every request, without caching.
+
+    The credential is compared verbatim with users.access_token. Model keys and
+    request-supplied identities never grant access or determine the audit actor.
+    """
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 256
+        or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise LoginRequired("请提供有效的 New API 管理员 PAT。")
+    try:
+        with psycopg.connect(
+            connect_timeout=8,
+            row_factory=dict_row,
+            options="-c default_transaction_read_only=on -c statement_timeout=5000",
+        ) as conn:
+            row = conn.execute(
+                """SELECT id,username,role FROM users WHERE access_token=%s
+                   AND role>=10 AND status=1 AND deleted_at IS NULL LIMIT 1""",
+                (value,),
+            ).fetchone()
+    except psycopg.Error:
+        raise AuthUnavailable("管理员认证服务暂不可用，请稍后重试。") from None
+    if row is None:
+        raise LoginRequired("无效的 New API 管理员 PAT，或账号已停用。")
+    return {key: row[key] for key in ("id", "username", "role")}

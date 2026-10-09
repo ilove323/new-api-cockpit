@@ -23,7 +23,7 @@ function environment(html){const elements=new Map([...html.matchAll(/id="([^"]+)
 async function users(){
   const h=environment(fs.readFileSync(path.join(root,'templates/users.html'),'utf8')+fs.readFileSync(path.join(root,'templates/partials/user-profile.html'),'utf8'));
   h.calls=[];h.handle=()=>undefined;const user=h.user={id:2,username:'alice',display_name:'Alice',user_group:'a',status:1,quota_yuan:'1.234567',used_quota_yuan:'2',token_count:2,remark:'fixture'};
-  h.ctx.fetch=async(url,init={})=>{const c={url,init,body:init.body?JSON.parse(init.body):undefined};h.calls.push(c);let data=await h.handle(c);if(data===undefined)data=url.endsWith('/options')?{groups:['a','b'],persistence:true}:url==='/cockpit/users/api/users'?{rows:[user]}:url.endsWith('/user/2/groups')?{id:2,username:user.username,group:user.user_group,available_groups:['a','b'],persistence:true}:url.endsWith('/user/2')?{...user,group:user.user_group}:{ok:true};return {ok:true,json:async()=>data};};
+  h.ctx.fetch=async(url,init={})=>{const c={url,init,body:init.body?JSON.parse(init.body):undefined};h.calls.push(c);let data=await h.handle(c);if(data===undefined)data=url.endsWith('/options')?{groups:['a','b'],persistence:true}:url==='/cockpit/api/users'?{rows:[user]}:url.endsWith('/users/2/groups')?{id:2,username:user.username,group:user.user_group,available_groups:['a','b'],persistence:true}:url.endsWith('/users/2')?{...user,group:user.user_group}:{ok:true};return {ok:true,json:async()=>data};};
   h.run('user-profile.js');h.run('quota.js');await settle();return h;
 }
 test('user list includes quota, KEY link, remark and user-only actions in final column',async()=>{
@@ -32,15 +32,15 @@ test('user list includes quota, KEY link, remark and user-only actions in final 
   assert.deepEqual(cells[9].children.map(c=>c.textContent),['编辑','重置密码','禁用','删除']);
   assert.deepEqual(cells[9].children.map(c=>c['data-icon']),['pencil','key-round','power-off','trash-2']);
   assert.ok(cells[9].children.every(c=>c.className.includes('action-icon')&&c.title&&c['aria-label'].includes('alice')));
-  assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/cockpit/users/api/users');
+  assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/cockpit/api/users');
 });
 test('user edit sends whitelist profile fields, not quota, KEY or PAT fields',async()=>{
   const h=await users();await h.elements.get('users').firstChild.lastChild.children[0].fire('click');
-  assert.equal(h.elements.get('user-profile-dialog').open,true);assert.equal(h.calls.at(-1).url,'/cockpit/users/api/user/2');
+  assert.equal(h.elements.get('user-profile-dialog').open,true);assert.equal(h.calls.at(-1).url,'/cockpit/api/users/2');
   const fields=h.elements.get('user-profile-fields').querySelectorAll('[name]');assert.deepEqual(fields.map(f=>f.name),['username','display_name','group','remark']);
   fields.find(f=>f.name==='username').value='alice-renamed';await h.elements.get('user-profile-form').fire('submit');
-  const request=h.calls.find(c=>c.body);assert.equal(request.url,'/cockpit/users/api/user/2/action');assert.equal(request.init.headers['X-Management-Action'],'confirm');assert.equal(request.body.action,'edit');assert.equal(request.body.changes.username,'alice-renamed');
-  assert.equal(h.elements.get('user-profile-fields').children.length,0);assert.equal(h.calls.at(-1).url,'/cockpit/users/api/users');
+  const request=h.calls.find(c=>c.body);assert.equal(request.url,'/cockpit/api/users/2/action');assert.equal(request.init.headers['X-Management-Action'],'confirm');assert.equal(request.body.action,'edit');assert.equal(request.body.changes.username,'alice-renamed');
+  assert.equal(h.elements.get('user-profile-fields').children.length,0);assert.equal(h.calls.at(-1).url,'/cockpit/api/users');
 });
 test('password reset validates confirmation and clears both password inputs on close',async()=>{
   const h=await users();await h.elements.get('users').firstChild.lastChild.children[1].fire('click');
@@ -63,7 +63,7 @@ test('user group column lazily opens configured groups with literal keyword filt
   const h=await users();assert.equal(userGroupPicker(h).firstChild.textContent,'a');
   h.handle=c=>c.url.endsWith('/groups')?{id:2,username:'alice',group:'a',available_groups:['a','b','Team.*'],persistence:true}:undefined;
   const picker=await openUserGroups(h),buttons=groupButtons(picker);
-  assert.equal(h.calls.at(-1).url,'/cockpit/users/api/user/2/groups');assert.equal(h.calls.at(-1).init.method,undefined);
+  assert.equal(h.calls.at(-1).url,'/cockpit/api/users/2/groups');assert.equal(h.calls.at(-1).init.method,undefined);
   assert.deepEqual(buttons.map(n=>n.dataset.group),['a','b','Team.*']);assert.ok(!h.calls.some(c=>c.body));
   const search=picker.children[1].children.find(n=>n.tag==='input');search.value='team.*';await search.fire('input');
   assert.deepEqual(buttons.filter(n=>!n.hidden).map(n=>n.dataset.group),['Team.*']);
@@ -82,9 +82,9 @@ test('confirmed user group switch sends only the group once and refreshes rows a
   const picker=await openUserGroups(h);await groupButtons(picker).find(n=>n.dataset.group==='b').fire('click');
   h.handle=c=>{if(c.body){h.user.user_group='b';return {ok:true};}};
   await h.elements.get('user-group-form').fire('submit');await h.elements.get('user-group-form').fire('submit');
-  const actions=h.calls.filter(c=>c.body);assert.equal(actions.length,1);assert.equal(actions[0].url,'/cockpit/users/api/user/2/action');assert.deepEqual(actions[0].body,{action:'group',changes:{group:'b'}});
+  const actions=h.calls.filter(c=>c.body);assert.equal(actions.length,1);assert.equal(actions[0].url,'/cockpit/api/users/2/action');assert.deepEqual(actions[0].body,{action:'group',changes:{group:'b'}});
   assert.equal(actions[0].init.headers['X-Management-Action'],'confirm');assert.equal(h.elements.get('user-group-dialog').open,false);assert.equal(userGroupPicker(h).firstChild.textContent,'b');
-  assert.equal(h.calls.at(-1).url,'/cockpit/users/api/users');assert.equal(h.elements.get('group-options').firstChild.children[1].textContent,'b（1 人）');assert.equal(h.elements.get('group-summary').textContent,'选择用户组');
+  assert.equal(h.calls.at(-1).url,'/cockpit/api/users');assert.equal(h.elements.get('group-options').firstChild.children[1].textContent,'b（1 人）');assert.equal(h.elements.get('group-summary').textContent,'选择用户组');
 });
 test('in-flight and ambiguous user group writes cannot be duplicated or cancelled mid-request',async()=>{
   const h=await users(),picker=await openUserGroups(h);await groupButtons(picker).find(n=>n.dataset.group==='b').fire('click');
@@ -112,7 +112,7 @@ test('quota execution blocks inline user group changes; disabled users stay disa
 });
 test('unified records list/details are paginated, read-only, two-decimal and safely rendered',async()=>{
   const h=environment(fs.readFileSync(path.join(root,'templates/operations.html'),'utf8'));const calls=[];
-  h.ctx.fetch=async(url,init)=>{calls.push({url,init});const detail=url.includes('/records/schedule/7'),user={id:2,username:'<img src=x>'};return {ok:true,json:async()=>detail?{rows:[{target_type:'user',target_id:2,user_id:2,target_user:user,before_data:{username:user.username},after_data:{amount_units:617283945,operation:'add'},state:'unknown',message:'请核对'}],next_after:2}:{rows:[{source:'schedule',id:'7',occurred_at:'2026-10-01T00:00:00+08:00',operator_name:'admin',action:'schedule.execute',parameters:{amount_units:617283945},target_users:[user],target_user_count:1,state:'unknown',counts:{success:4,uncertain:1,pending:5}}],next_before:'fixture-cursor'} };};
+  h.ctx.fetch=async(url,init)=>{calls.push({url,init});const detail=url.includes('/operations/schedule/7'),user={id:2,username:'<img src=x>'};return {ok:true,json:async()=>detail?{rows:[{target_type:'user',target_id:2,user_id:2,target_user:user,before_data:{username:user.username},after_data:{amount_units:617283945,operation:'add'},state:'unknown',message:'请核对'}],next_after:2}:{rows:[{source:'schedule',id:'7',occurred_at:'2026-10-01T00:00:00+08:00',operator_name:'admin',action:'schedule.execute',parameters:{amount_units:617283945},target_users:[user],target_user_count:1,state:'unknown',counts:{success:4,uncertain:1,pending:5}}],next_before:'fixture-cursor'} };};
   h.run('operations.js');await settle();const row=h.elements.get('records-rows').firstChild;assert.match(row.children[3].textContent,/1,234\.57/);assert.equal(row.children[4].textContent,'结果不明确');assert.equal(row.children[5].textContent,'4 / 0 / 1');assert.doesNotMatch(fs.readFileSync(path.join(root,'templates/operations.html'),'utf8'),/未发起/);
   await row.lastChild.firstChild.fire('click');const item=h.elements.get('records-items').firstChild;assert.match(item.children[3].textContent,/1,234\.57/);assert.match(item.children[2].textContent,/<img src=x>/);assert.equal(item.children[1].textContent,'<img src=x>（ID 2）');
   await h.elements.get('records-items-more').fire('click');assert.ok(calls.some(c=>c.url.endsWith('?after=2')));
@@ -139,7 +139,7 @@ test('all user, KEY and quota operation labels identify their targets in the lis
 });
 test('batch targets are summarized; rule operations name their groups rather than the executor',async()=>{
   const h=environment(fs.readFileSync(path.join(root,'templates/operations.html'),'utf8')),rules=[['schedule.create','新增定时规则'],['schedule.edit','编辑定时规则'],['schedule.enable','启用定时规则'],['schedule.disable','停用定时规则'],['schedule.delete','删除定时规则']],targetRule={id:9,groups:['team-a','team-b']};
-  h.ctx.fetch=async url=>({ok:true,json:async()=>url.includes('/records/management/')?{rows:[{target_type:'quota_rule',target_id:9,user_id:null,target_rule:targetRule,before_data:{groups:['team-a']},after_data:{groups:['team-a','team-b']},state:'success',message:''}],next_after:null}:{rows:[
+  h.ctx.fetch=async url=>({ok:true,json:async()=>url.includes('/operations/management/')?{rows:[{target_type:'quota_rule',target_id:9,user_id:null,target_rule:targetRule,before_data:{groups:['team-a']},after_data:{groups:['team-a','team-b']},state:'success',message:''}],next_after:null}:{rows:[
     {source:'management',id:'batch',operator_name:'admin',action:'quota.add',target_users:[{id:2,username:'alice'},{id:3,username:'bob'},{id:4,username:'carol'}],target_user_count:8,parameters:{}},
     ...rules.map(([action],i)=>({source:'management',id:'rule-'+i,operator_name:'admin',action,target_users:[],target_user_count:0,target_rule:targetRule,parameters:{}}))
   ],next_before:null}});

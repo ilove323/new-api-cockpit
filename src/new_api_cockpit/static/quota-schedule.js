@@ -13,7 +13,7 @@
   async function api(path,method='GET',body){
     const options={cache:'no-store',method};
     if(method!=='GET')Object.assign(options,{headers:{'Content-Type':'application/json','X-Quota-Action':'schedule'},body:JSON.stringify(body)});
-    let response;try{response=await fetch('/cockpit/users/api/'+path,options);}catch{const error=new Error('网络中断，请刷新核对结果，不要重复提交。');error.ambiguous=true;throw error;}
+    let response;try{response=await fetch('/cockpit/api/users/'+path,options);}catch{const error=new Error('网络中断，请刷新核对结果，不要重复提交。');error.ambiguous=true;throw error;}
     let result;try{result=await response.json();}catch{const error=new Error('服务响应无效，请刷新核对结果，不要重复提交。');error.ambiguous=true;throw error;}
     if(!response.ok){const error=new Error(result.error||`请求失败（HTTP ${response.status}）`);error.ambiguous=response.status>=500||response.status===409;throw error;}
     return result;

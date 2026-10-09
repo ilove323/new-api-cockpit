@@ -102,18 +102,19 @@ New API 增减接口不提供本功能所需的请求幂等键。因此不能承
 
 ### 管理接口
 
-以下接口用于管理员设置页面，不是模型调用接口；使用相同的 New API 管理员登录会话。
+以下接口供管理员页面或外部程序调用，支持 New API 管理员会话和 PAT Bearer，不是模型调用接口。
+完整请求字段、响应与调用示例见 [API 参考](api.md)。
 写请求须包含 `Content-Type: application/json` 和 `X-Quota-Action: schedule`。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET / POST | `/cockpit/users/api/schedules` | 读取规则及用户组选项 / 新建规则 |
-| PUT | `/cockpit/users/api/schedules/<id>` | 编辑规则 |
-| PATCH | `/cockpit/users/api/schedules/<id>` | 启用或停用规则 |
-| DELETE | `/cockpit/users/api/schedules/<id>` | 软删除规则，保留历史 |
+| GET / POST | `/cockpit/api/users/schedules` | 读取规则及用户组选项 / 新建规则 |
+| PUT | `/cockpit/api/users/schedules/<id>` | 编辑规则 |
+| PATCH | `/cockpit/api/users/schedules/<id>` | 启用或停用规则 |
+| DELETE | `/cockpit/api/users/schedules/<id>` | 软删除规则，保留历史 |
 
 编辑、启停、删除要求提交当前规则 `version`；版本冲突返回 `409`，应刷新后重新核对，不要直接重发。
-执行记录统一通过 `/cockpit/operations/api/records` 及其详情接口查询，见[操作记录](users.md#统一操作记录与数据库)。
+执行记录统一通过 `/cockpit/api/operations` 及其详情接口查询，见[操作记录](users.md#统一操作记录与数据库)。
 
 ### 停用
 

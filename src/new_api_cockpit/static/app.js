@@ -267,7 +267,7 @@ async function loadTokenDetails(){
   const ticket=Scope.epoch;
   if(tokenSnapshot||!snapshot)return;
   const expected=snapshot,params=reportParams();
-  const response=await Scope.request('/cockpit/statistics/api/usage/by-token?'+params+'&details=lazy');
+  const response=await Scope.request('/cockpit/api/statistics/usage/by-token?'+params+'&details=lazy');
   if(!response.ok){let msg='分令牌查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
   if(expected===snapshot)tokenSnapshot=result;
@@ -275,7 +275,7 @@ async function loadTokenDetails(){
 async function loadTokenOptions(){
   const ticket=Scope.epoch;
   const expected=snapshot,params=reportParams();
-  const response=await Scope.request('/cockpit/statistics/api/usage/tokens?'+params);
+  const response=await Scope.request('/cockpit/api/statistics/usage/tokens?'+params);
   if(!response.ok){let msg='令牌列表查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
   if(expected===snapshot)tokenOptions=result.rows;
@@ -283,7 +283,7 @@ async function loadTokenOptions(){
 async function loadGroupOptions(){
   const ticket=Scope.epoch;
   const expected=snapshot,params=reportParams();
-  const response=await Scope.request('/cockpit/statistics/api/usage/groups?'+params);
+  const response=await Scope.request('/cockpit/api/statistics/usage/groups?'+params);
   if(!response.ok){let msg='分组列表查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
   if(expected===snapshot)groupOptions=result.rows;
@@ -297,7 +297,7 @@ async function loadFilteredSelection(){
   tokenIds.forEach(id=>params.append('token_id',id));
   groups.forEach(group=>params.append('group',group));
   if(detailMode==='token')params.set('by_token','1');
-  const response=await Scope.request('/cockpit/statistics/api/usage/by-selection?'+params+'&details=lazy');
+  const response=await Scope.request('/cockpit/api/statistics/usage/by-selection?'+params+'&details=lazy');
   if(!response.ok){let msg='筛选查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
   const result=await response.json();Scope.guard(ticket);
   const current=`${detailMode}\n${[...selectedFilterValues('token')].sort().join(',')}\n${[...selectedFilterValues('group')].sort().join(',')}`;
@@ -388,7 +388,7 @@ async function query(event,range){
   const params=new URLSearchParams(range||{start:$('start').value,end:$('end').value});
   if(includeFailures)params.set('include_failures','1');
   try{
-    const response=await Scope.request('/cockpit/statistics/api/usage?'+params+'&details=lazy');
+    const response=await Scope.request('/cockpit/api/statistics/usage?'+params+'&details=lazy');
     if(!response.ok){let msg='查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
     const result=await response.json();Scope.guard(ticket);snapshot=result;snapshotIncludesFailures=includeFailures;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
     const userNames=[...new Set(snapshot.rows.map(r=>r.username))].sort();
@@ -423,7 +423,7 @@ document.querySelectorAll('[data-column-toggle]').forEach(input=>input.addEventL
   return columnSelectionChanged();
 }));
 $('show-all-columns').addEventListener('click',()=>{document.querySelectorAll('[data-column-toggle]:not(:disabled)').forEach(input=>input.checked=true);return columnSelectionChanged();});
-$('export').addEventListener('click',async()=>{if(!snapshot)return;try{await window.CockpitAuth?.ensure();if(snapshot)window.location.assign(Scope.url('/cockpit/statistics/api/export?'+new URLSearchParams({start:snapshot.start,end:snapshot.end})));}catch(error){$('status').className='error';$('status').textContent=error.message;}});
+$('export').addEventListener('click',async()=>{if(!snapshot)return;try{await window.CockpitAuth?.ensure();if(snapshot)window.location.assign(Scope.url('/cockpit/api/statistics/export?'+new URLSearchParams({start:snapshot.start,end:snapshot.end})));}catch(error){$('status').className='error';$('status').textContent=error.message;}});
 loadVisibleColumns();applyColumnVisibility();
 // Reset every ledger-dependent view before starting requests for the next ledger.
 window.addEventListener('scopechange',()=>{

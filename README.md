@@ -32,8 +32,9 @@
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
 
 统计页按渠道标签区分上游账本，也有“全部”和“未分组”。每个账本单独设置预算、报警阈值和监控开关，
-共用飞书或钉钉通知配置。费用按月、按渠道归档，查看时按渠道当前分组汇总。
-每天北京时间 10:00 检查余额，也可以手动检查；[余额与报警 API](docs/api.md) 使用 New API 管理员 PAT。
+共用飞书、钉钉和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
+可使用账号认证或匿名发信，配置方法见[通知渠道](docs/notifications.md)。费用按月、按渠道归档，查看时按渠道当前分组汇总。
+每天北京时间 10:00 检查余额，也可以手动检查。
 
 **金额以消费日志为准。** 同一模型按请求发生时的价格分行，匹配当前价格的行显示对应档位。
 倍率变化时的缓存 Token 配平属于数学换算，原始日志和实际金额不变。
@@ -41,6 +42,10 @@
 
 用户和 KEY 的修改通过 New API 官方接口执行，每组最多 5 个并发请求。
 所有写操作需要监控库保存操作记录；只记录已发起的操作。KEY 管理使用所属用户的 PAT，缺失时通过受限函数补建。
+
+页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
+统计、用户、令牌和操作记录的地址、参数及调用示例见 [API 参考](docs/api.md)。
+余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
 
 ## 部署
 
@@ -61,7 +66,7 @@ chmod 600 .env
 - `PG*`：New API 原库的专用查询账号，授予所需表的 SELECT 权限。
 - `NEW_API_NETWORK`、`NEW_API_INTERNAL_URL`：现有 Docker 网络和 New API 内部地址。
 - `MONITOR_DATABASE_URL`：独立监控库，保存预算、归档、通知配置、定时规则和操作记录。建库方法见[监控库配置](docs/monitoring.md#独立数据库)。留空时提供只读查询。
-- `NOTIFICATION_ENCRYPTION_KEY`：使用飞书或钉钉时填写，并与监控库一起备份。
+- `NOTIFICATION_ENCRYPTION_KEY`：保存通知凭据时填写（飞书、钉钉、邮件认证密码），并与监控库一起备份。
 
 需要补建用户 PAT 时，由源库表所有者安装 [source_pat_function.sql](sql/source_pat_function.sql)，
 再给查询账号授予函数执行权限，步骤见[用户管理部署](docs/users.md#安装补建函数与最小权限)。
@@ -103,7 +108,7 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 ![用量统计](docs/assets/statistics.png)
 
 <details>
-<summary>用户管理、令牌管理、操作记录与登录页</summary>
+<summary>用户管理、令牌管理、操作记录、通知设置与登录页</summary>
 
 ### 用户管理
 
@@ -117,6 +122,10 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 
 ![操作记录](docs/assets/operations.png)
 
+### 通知设置
+
+![邮件通知设置](docs/assets/notifications.jpg)
+
 ### 管理员登录
 
 ![管理员登录页](docs/assets/login.jpg)
@@ -126,8 +135,9 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 ## 文档
 
 - 安装与维护：[部署](docs/deployment.md) · [兼容范围](docs/compatibility.md) · [升级与备份](docs/upgrading.md) · [发版与镜像](docs/releasing.md)
-- 统计与告警：[统计口径](docs/calculation.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md) · [余额与报警 API](docs/api.md)
+- 统计与告警：[统计口径](docs/calculation.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
+- 程序接入：[API 参考](docs/api.md)（认证、统计、归档、用户、KEY、配额、规则和操作记录）
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)
 
 问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。

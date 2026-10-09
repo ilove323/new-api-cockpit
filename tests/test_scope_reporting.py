@@ -23,10 +23,7 @@ class ScopeReportingTest(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(
-            patch("new_api_cockpit.app.browser_identity", side_effect=fixture_identity)
-        )
-        self.stack.enter_context(
-            patch("new_api_cockpit.app.verify_api_key", return_value=True)
+            patch("new_api_cockpit.app.request_identity", side_effect=fixture_identity)
         )
         self.stack.enter_context(
             patch("new_api_cockpit.app.balance.configured", return_value=True)
@@ -52,7 +49,7 @@ class ScopeReportingTest(unittest.TestCase):
 
     def get(self, path, query=None):
         return self.client.get(
-            "/cockpit/statistics/api/" + path + "?" + (query or self.query),
+            "/cockpit/api/statistics/" + path + "?" + (query or self.query),
             headers=self.headers,
         )
 
@@ -165,7 +162,7 @@ class ScopeReportingTest(unittest.TestCase):
                 ) as call,
             ):
                 response = getattr(self.client, method)(
-                    "/cockpit/statistics/api/" + path + "?scope_id=3",
+                    "/cockpit/api/statistics/" + path + "?scope_id=3",
                     headers=self.headers,
                     json={},
                 )
@@ -177,7 +174,7 @@ class ScopeReportingTest(unittest.TestCase):
             patch("new_api_cockpit.app.balance.snapshot", return_value={}) as snapshot,
         ):
             response = self.client.post(
-                "/cockpit/statistics/api/balance/check?scope_id=3",
+                "/cockpit/api/statistics/balance/check?scope_id=3",
                 json={},
                 headers=self.headers,
             )
@@ -204,8 +201,8 @@ class ScopeReportingTest(unittest.TestCase):
             patch("new_api_cockpit.app.load_site_name", return_value="test"),
         ):
             response = self.client.get(
-                "/cockpit/statistics/api/balance?scope_id=3",
-                headers={"Authorization": "Bearer fixture"},
+                "/cockpit/api/statistics/balance?scope_id=3",
+                headers={"Authorization": "Bearer fixture-session-a"},
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json["data"]["scope"], TAG)
@@ -219,8 +216,8 @@ class ScopeReportingTest(unittest.TestCase):
             ) as alert,
         ):
             response = self.client.get(
-                "/cockpit/statistics/api/alert?scope_id=3",
-                headers={"Authorization": "Bearer fixture"},
+                "/cockpit/api/statistics/alert?scope_id=3",
+                headers={"Authorization": "Bearer fixture-session-a"},
             )
             self.assertEqual(
                 response.json, {"scope": TAG, "has_alert": False, "alert": None}
