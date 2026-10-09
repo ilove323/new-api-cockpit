@@ -1,0 +1,2 @@
+# Keep the upstream bundle intact, including whitespace inside string literals.
+src/new_api_cockpit/static/scalar-*.js -whitespace linguist-vendored
