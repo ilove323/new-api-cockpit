@@ -33,6 +33,7 @@ from new_api_cockpit import (
     timers,
     user_management,
     operation_records,
+    openapi,
 )
 
 from new_api_cockpit.report import (
@@ -95,6 +96,8 @@ def safe_next(value):
         "/cockpit/keys/",
         "/cockpit/operations",
         "/cockpit/operations/",
+        "/cockpit/docs",
+        "/cockpit/docs/",
         "/cockpit/api/statistics/export",
     }
     return value if not parsed.netloc and parsed.path in paths else default
@@ -166,6 +169,7 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
         "users_page",
         "keys_page",
         "operations_page",
+        "api_docs_page",
     }
     if is_page and status == 401:
         response = redirect(login_url(), 302)
@@ -295,6 +299,13 @@ def headers(response):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
     )
+    if request.endpoint == "api_docs_page":
+        # Scalar injects its local stylesheet. Scripts/connections remain same-origin.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+            "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        )
     return response
 
 
@@ -310,6 +321,19 @@ def health():
 @app.get("/cockpit/")
 def cockpit_home():
     return redirect("/cockpit/statistics/", 302)
+
+
+@app.get("/cockpit/docs")
+@app.get("/cockpit/docs/")
+def api_docs_page():
+    return render_template("api-docs.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/api/openapi.json")
+def api_schema():
+    response = make_response(openapi.serialized_document())
+    response.mimetype = "application/json"
+    return response
 
 
 @app.get("/cockpit/operations")

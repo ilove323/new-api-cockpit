@@ -25,7 +25,7 @@ New API 的 `user_sessions` 属于上游自身结构，Redis 仅作缓存。Cock
 ## 续期、并发与安全边界
 
 - 前端在访问凭据临近到期时续期；同页共享续期任务，并使用与 New API 相同的 `new-api:auth-refresh` Web Lock 协调多个标签页。无 Web Lock 的浏览器依赖上游刷新竞争处理，最多短暂重试一次。
-- 只有只读 GET/HEAD 可以在认证失效后续期重试一次。额度、用户、KEY、规则等写操作不会自动重放，避免重复执行。
+- 普通查询的 GET/HEAD 可以在认证失效后续期重试一次。可能补建 PAT 的用户/KEY 详情、写请求及文档调试都只发送一次，避免重复执行。
 - 浏览器的业务 API 请求携带 `X-Cockpit-Session`；会话与当前 Cookie 不一致时返回 409，旧页面操作不执行。
 - 写接口验证同源及各功能 JSON/自定义请求头。会话承接、清除也要求 JSON 和 `X-Cockpit-Auth: 1`；第三方表单不能注入登录或触发修改。
 - 登录失效返回 401，普通用户/禁用账号返回 403，上游故障或限流返回 503。503 不清除已有 Cookie、不降级为本地密码或 PAT 认证。
@@ -42,7 +42,9 @@ PAT 每次按原值查询 `users.access_token`，要求管理员账号启用且�
 会话凭据只交官方接口验证，PAT 只交源库验证，认证服务故障不会尝试其他凭据。
 PAT 不用于打开 HTML 管理页面，不能通过 `/cockpit/api/auth/session` 换取浏览器 Cookie；
 这不改变 New API 网页登录、二次验证和会话退出流程。
-PAT 调用不需要 `X-Cockpit-Session`，JSON/确认头要求不变；服务器调用不需要 `Origin`。
+PAT 调用不携带 `X-Cockpit-Session`，JSON/确认头要求不变；服务器调用不需要 `Origin`。
+前端遇到显式 Bearer 时单次直发，不续期页面会话，也不混入浏览器 Cookie 或会话身份。
+API 文档页面通过浏览器登录打开；页面内调试可用当前会话或手动输入的 PAT，所有调试请求只发送一次。
 带浏览器来源的写请求仍须同源，不提供跨域 CORS。PAT 与 JWT 均只通过 HTTPS 传递，不进入 URL 或日志。
 
 ## 部署要求

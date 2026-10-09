@@ -78,6 +78,30 @@ test('writes are never replayed after 401, reads can renew and retry once', asyn
   assert.equal(reads, 2); assert.equal(read.redirects.length, 0);
 });
 
+test('user and KEY detail reads that may create PATs are not replayed', async () => {
+  for (const path of ['/cockpit/api/users/23', '/cockpit/api/keys/42']) {
+    const h = environment();
+    h.handle = () => response({error: 'expired'}, 401);
+    assert.equal((await h.context.fetch(path)).status, 401);
+    assert.equal(h.calls.length, 1, path);
+    assert.equal(h.redirects.length, 1, path);
+  }
+});
+
+test('explicit PAT business calls bypass renewal and never inherit browser identity', async () => {
+  const h = environment({expires: 0});
+  h.handle = () => response({error: 'invalid PAT'}, 401);
+  const result = await h.context.fetch('/cockpit/api/users', {
+    headers: {'Authorization': 'Bearer fixture-pat', 'X-Cockpit-Session': 'old-page'},
+  });
+  assert.equal(result.status, 401);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].init.headers.get('Authorization'), 'Bearer fixture-pat');
+  assert.equal(h.calls[0].init.headers.has('X-Cockpit-Session'), false);
+  assert.equal(h.calls[0].init.credentials, 'omit');
+  assert.equal(h.redirects.length, 0);
+});
+
 test('switching accounts during renewal blocks the old page before any mutation is sent', async () => {
   const h = environment({expires: 0});
   h.handle = (url, init) => url === '/api/user/auth/refresh' ? response({success: true, data: bundle('session-b')}) : response(identity('session-b'));
@@ -103,6 +127,19 @@ test('external PAT APIs and unrelated fetches are not intercepted', async () => 
   const h = environment({sid: '', expires: 0});
   for (const url of ['/cockpit/api/statistics/balance', '/cockpit/api/statistics/alert', '/api/status', 'https://other.test/api/example']) await h.context.fetch(url);
   assert.equal(h.calls.length, 4); assert.ok(h.calls.every(c => !c.init.headers));
+});
+
+test('documentation fetchOnce never replays side-effecting GETs or mixes PAT with browser session', async () => {
+  const session = environment(); session.handle = () => response({error: 'expired'}, 401);
+  assert.equal((await session.api.fetchOnce('/cockpit/api/keys/23')).status, 401);
+  assert.equal(session.calls.length, 1);
+  assert.equal(session.calls[0].init.headers.get('X-Cockpit-Session'), 'session-a');
+  const pat = environment({sid: '', expires: 0});
+  await pat.api.fetchOnce('/cockpit/api/users', {headers: {'Authorization': 'Bearer fixture-pat', 'X-Cockpit-Session': 'stale-session'}});
+  assert.equal(pat.calls.length, 1);
+  assert.equal(pat.calls[0].init.credentials, 'omit');
+  assert.equal(pat.calls[0].init.headers.has('X-Cockpit-Session'), false);
+  assert.equal(pat.api.safeNext('/cockpit/docs/'), '/cockpit/docs/');
 });
 
 test('logout revokes official browser session before clearing bridge and publishing sign-out', async () => {

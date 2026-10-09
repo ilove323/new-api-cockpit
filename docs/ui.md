@@ -1,6 +1,6 @@
 # 界面规范
 
-四个页面使用同一套顶栏、侧边栏和基础控件，视觉规范参考 New API `v1.0.0-rc.40`
+业务页面和 API 文档使用同一套顶栏、侧边栏和基础控件，视觉规范参考 New API `v1.0.0-rc.40`
 的[主题](https://github.com/QuantumNous/new-api/blob/v1.0.0-rc.40/web/src/styles/theme.css)、
 [按钮](https://github.com/QuantumNous/new-api/blob/v1.0.0-rc.40/web/src/components/ui/button.tsx)
 和[表格](https://github.com/QuantumNous/new-api/blob/v1.0.0-rc.40/web/src/components/ui/table.tsx)。

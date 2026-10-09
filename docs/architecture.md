@@ -20,7 +20,8 @@ statistics：一个应用容器
 
 两个数据库可以位于同一 PostgreSQL 实例，但必须分库配置。
 余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。所有时间边界使用北京时间。
-四个页面为 `/cockpit/statistics/`、`/cockpit/users/`、`/cockpit/keys/`、`/cockpit/operations/`，共用顶栏与侧边栏。
+业务页面为 `/cockpit/statistics/`、`/cockpit/users/`、`/cockpit/keys/`、`/cockpit/operations/`；
+`/cockpit/docs/` 提供接口指南和在线调试，共用顶栏与侧边栏。
 业务接口统一为 `/cockpit/api/statistics/...`、`/cockpit/api/users/...`、`/cockpit/api/keys/...`、`/cockpit/api/operations`，
 页面与外部程序调用同一套接口和权限，不另建一份外部管理逻辑。
 部署参数见[部署](deployment.md)，视觉规范见[界面](ui.md)。
@@ -39,7 +40,8 @@ statistics：一个应用容器
 
 | 模块 | 职责 |
 |---|---|
-| `app.py`、`auth.py` | 四个页面及 API、输入边界、管理员身份校验 |
+| `app.py`、`auth.py` | 页面及 API、输入边界、管理员身份校验 |
+| `openapi.py`、`static/api-docs*.js` | 显式接口契约、请求示例、单次调试与操作确认；不替代后端授权 |
 | `runtime.py`、`gunicorn_conf.py`、`timers.py`、`quota_timer.py` | 启动迁移、进程生命周期、两种内置调度与健康检查 |
 | `report.py`、`usage.sql`、`metadata_fallback.py` | 只读用量聚合、异常日志兼容、排名与 Excel |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
@@ -89,6 +91,7 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 余额与报警接口仅接受 PAT。PAT 不能换取网页 Cookie，不能使用客户端指定的身份执行或记录操作。
 敏感写请求检查同源 JSON 与对应请求头；前端不自动重发写请求，账号切换时阻止旧页面继续提交。详见[登录与会话](authentication.md)。
 PAT 每次从源库读取，不放在浏览器、配置或监控库；缺失时才经受限函数补建。
+文档调试可由管理员手动输入 PAT，仅留在页面内存；不会从数据库取出 PAT 展示给前端。
 通知 Secret 用独立密钥加密，密钥与监控库均需备份。
 完整 KEY 仅在明确查看后显示，窗口关闭后清除，不进入 URL 或持久缓存。
 普通管理员仅查看自身操作，超级管理员可查看全部；统一记录和逐条详情采用同一权限边界。

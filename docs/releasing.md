@@ -46,6 +46,6 @@ docker compose -f compose.release.yml up -d statistics
 ```
 
 当前架构是一个 `statistics` 容器，余额和配额定时器随应用启动。
-镜像、配置和操作文档必须匹配；若当前分支的实现尚未包含在正式镜像中，应按[部署文档](deployment.md)从源码构建，
-不要将当前分支的 Compose 与不含对应实现的发布镜像混用。
+镜像、配置和操作文档必须来自同一个 Release；测试开发分支时按[部署文档](deployment.md)从源码构建，
+不要混用开发分支的配置与正式镜像。
 升级与回退遵循[升级说明](upgrading.md)，不会通过发版自动清空监控库。

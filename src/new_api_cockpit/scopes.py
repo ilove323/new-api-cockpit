@@ -5,7 +5,6 @@ from new_api_cockpit import balance
 from new_api_cockpit.locks import BALANCE_LOCK
 
 ALL = 1
-UNGROUPED = 2
 
 
 def scope_name(scope):

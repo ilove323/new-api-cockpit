@@ -14,7 +14,7 @@
   const channelName = 'new-api:auth-session';
   const storageKey = 'new-api:auth-session:event';
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(channelName) : null;
-  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/api/statistics/export']);
+  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/docs', '/cockpit/docs/', '/cockpit/api/statistics/export']);
 
   function safeNext(value) {
     if (typeof value !== 'string' || /[\\\x00-\x1f\x7f]/.test(value) || !value.startsWith('/cockpit')) return '/cockpit/statistics/';
@@ -105,8 +105,10 @@
   window.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url, location.href);
     if (!isProtected(url)) return rawFetch(input, init);
-    await ensure();
     const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined));
+    // Explicit API credentials must not inherit the page's session identity.
+    if (headers.has('Authorization')) return fetchOnce(input, {...init, headers});
+    await ensure();
     headers.set('X-Cockpit-Session', sid);
     const options = {...init, headers, credentials: 'same-origin'};
     const response = await rawFetch(input, options);
@@ -116,7 +118,9 @@
     }
     if (response.status !== 401) return response;
     const method = (init.method || (typeof input === 'object' ? input.method : '') || 'GET').toUpperCase();
-    if (!['GET', 'HEAD'].includes(method)) { toLogin(); return response; }
+    // Detail GETs may provision a user PAT; never replay those on expiry.
+    const mayCreatePAT = /^\/cockpit\/api\/(users|keys)\/\d+$/.test(url.pathname);
+    if (!['GET', 'HEAD'].includes(method) || mayCreatePAT) { toLogin(); return response; }
     await ensure(true);
     headers.set('X-Cockpit-Session', sid);
     return rawFetch(input, options); // Read-only retry, at most once.
@@ -152,5 +156,16 @@
     }
   });
   async function clear() { await bridge('DELETE'); sid = ''; expires = 0; }
-  window.CockpitAuth = {refresh, accept, ensure, safeNext, json, publish, clear};
+  // Documentation calls must never replay: even some GETs can create a PAT.
+  async function fetchOnce(input, init = {}) {
+    const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined));
+    if (headers.has('Authorization')) {
+      headers.delete('X-Cockpit-Session');
+      return rawFetch(input, {...init, headers, credentials: 'omit', redirect: 'error'});
+    }
+    await ensure();
+    headers.set('X-Cockpit-Session', sid);
+    return rawFetch(input, {...init, headers, credentials: 'same-origin', redirect: 'error'});
+  }
+  window.CockpitAuth = {refresh, accept, ensure, safeNext, json, publish, clear, fetchOnce};
 })();

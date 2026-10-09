@@ -86,7 +86,7 @@ curl --fail-with-body http://127.0.0.1:8091/healthz
 
 把 [nginx.conf.example](../nginx.conf.example) 的 `/cockpit` 与 `/cockpit/` location 加入现有 HTTPS `server` 块，
 New API 的 `/`、`/api/` 和 `/sign-in` 等路由继续转发到 New API。
-四个页面、统一的 `/cockpit/api/` 业务接口和静态资源均由 Cockpit 处理。
+业务页面、`/cockpit/docs/`、统一的 `/cockpit/api/` 接口和静态资源均由 Cockpit 处理。
 `proxy_pass` 不加末尾斜杠，必须把完整路径前缀转发到应用。
 使用 `Host $http_host` 保留原域名和端口，同源管理请求校验依赖此信息。
 侧边栏使用相对路径，始终保留浏览器当前协议、域名与端口。

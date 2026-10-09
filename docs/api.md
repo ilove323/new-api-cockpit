@@ -9,6 +9,9 @@ Cockpit 的业务接口统一放在 `/cockpit/api/`，与页面共用站点入�
 - 独立余额和报警：`/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert`。
 - New API 自己的 `/api/...` 不属于本项目，仍由 New API 处理。
 
+登录后在 `/cockpit/docs/` 可查看交互式文档并试调用，使用方法见[交互式文档](interactive-api.md)。
+`GET /cockpit/api/openapi.json` 返回 OpenAPI 3.1 描述，接受管理员 PAT 或浏览器会话，不访问业务数据。
+
 Nginx 转发完整 `/cockpit/` 前缀，覆盖页面、API 和静态资源。
 
 ## 认证与调用约定
@@ -98,6 +101,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| `GET` | `/cockpit/api/openapi.json` | 下载 OpenAPI 描述 |
 | `GET` | `/cockpit/api/statistics/balance` | 实时余额，不报警 |
 | `GET` | `/cockpit/api/statistics/alert` | 即时检查并按配置发送报警 |
 | `GET` | `/cockpit/api/statistics/scopes` | 渠道标签账本 |

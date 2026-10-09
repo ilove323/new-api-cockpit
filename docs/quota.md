@@ -1,6 +1,6 @@
 # 用户管理与配额
 
-`/cockpit/users/` 提供用户资料与配额管理。四个页面通过统一侧边栏切换，
+`/cockpit/users/` 提供用户资料与配额管理。页面通过统一侧边栏切换，
 Nginx 统一转发 `/cockpit/`，见[部署文档](deployment.md)。
 最后一列支持用户资料编辑、重置密码、启停和删除；列表提供新增用户、KEY 数量链接与备注。
 KEY 配置在 `/cockpit/keys/` 管理，所有用户/KEY/配额记录在 `/cockpit/operations/` 查看。

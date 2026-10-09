@@ -22,7 +22,7 @@
 
 ## 功能
 
-四个页面通过侧边栏切换：
+页面通过侧边栏切换：
 
 | 页面 | 地址 | 可以做什么 |
 | --- | --- | --- |
@@ -30,6 +30,7 @@
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
+| API 文档 | `/cockpit/docs/` | 按流程试调用接口，填写参数、查看响应、复制程序示例，查阅和下载 OpenAPI 描述 |
 
 统计页按渠道标签区分上游账本，也有“全部”和“未分组”。每个账本单独设置预算、报警阈值和监控开关，
 共用飞书、钉钉和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
@@ -46,6 +47,8 @@
 页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
 统计、用户、令牌和操作记录的地址、参数及调用示例见 [API 参考](docs/api.md)。
 余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
+登录后从侧边栏打开 API 文档即可在线调试，使用方法见[交互式文档](docs/interactive-api.md)。
+请求发往当前站点，修改和通知需要确认，不自动重试。
 
 ## 部署
 
@@ -137,7 +140,7 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 - 安装与维护：[部署](docs/deployment.md) · [兼容范围](docs/compatibility.md) · [升级与备份](docs/upgrading.md) · [发版与镜像](docs/releasing.md)
 - 统计与告警：[统计口径](docs/calculation.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
-- 程序接入：[API 参考](docs/api.md)（认证、统计、归档、用户、KEY、配额、规则和操作记录）
+- 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)（认证、统计、归档、用户、KEY、配额、规则和操作记录）
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)
 
 问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。
@@ -148,4 +151,4 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 维护者：[@ilove323](https://github.com/ilove323)。感谢 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)。
 本项目为第三方扩展，采用 [Apache-2.0](LICENSE) 许可证，允许商业使用。
 New API 和其他依赖各自遵循其许可证；字体与图标归属见 [NOTICE](NOTICE)、
-[Lucide 许可](src/new_api_cockpit/static/LUCIDE-LICENSE) 和 [Public Sans 许可](src/new_api_cockpit/static/fonts/OFL-LICENSE.txt)。
+[Lucide 许可](src/new_api_cockpit/static/LUCIDE-LICENSE)、[Public Sans 许可](src/new_api_cockpit/static/fonts/OFL-LICENSE.txt) 和 [Scalar 许可](src/new_api_cockpit/static/SCALAR-LICENSE)。
