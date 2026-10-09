@@ -3,6 +3,8 @@
 维护者：[@ilove323](https://github.com/ilove323)。
 维护最新发布版本；修复经开发分支与 PR 合并后发布。
 
+CI 扫描完整 Git 历史中的密钥。确认误报后仅在 `.gitleaksignore` 中登记精确提交指纹，不按整个源码文件或测试目录跳过扫描。
+
 请勿在公开 Issue 中提交密码、令牌、数据库备份、客户数据或可直接利用的漏洞详情。
 若仓库已启用 GitHub 私密漏洞报告，请使用仓库 Security 页的 Report a vulnerability。
 若该入口不可用，请先提交不含漏洞细节的 Issue，请维护者提供私密报告方式。
