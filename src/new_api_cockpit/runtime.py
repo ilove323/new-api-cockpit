@@ -12,7 +12,10 @@ from new_api_cockpit import balance
 
 
 def main():
-    if balance.configured():
+    if (
+        os.environ.get("COCKPIT_PROCESS_ROLE", "web") != "image"
+        and balance.configured()
+    ):
         try:
             balance.initialize()
         except Exception as exc:

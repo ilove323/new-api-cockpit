@@ -1,11 +1,11 @@
 # API 参考
 
 Cockpit 的业务接口统一放在 `/cockpit/api/`，与页面共用站点入口。
-报表、渠道质量、智力测试、模型使用、用户、令牌、配额、规则和操作记录接口支持 **New API 管理员 PAT** 调用。
-网页通过 New API 登录会话调用同一套接口；模型使用和智力测试向启用的普通用户开放，其余管理功能要求管理员。
+报表、渠道质量、智力测试、模型使用、生图工作站、用户、令牌、配额、规则和操作记录接口支持 **New API 管理员 PAT** 调用。
+网页通过 New API 登录会话调用同一套接口；模型使用、智力测试和生图工作站向所有启用用户开放，其余管理功能要求管理员。
 
 - 页面地址见 [README](../README.md#功能)。
-- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`manual`、`users`、`keys`、`operations` 模块。
+- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`manual`、`image-studio`、`users`、`keys`、`operations` 模块。
 - 独立余额和报警：`/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert`。
 - New API 自己的 `/api/...` 不属于本项目，仍由 New API 处理。
 
@@ -37,7 +37,7 @@ PAT 不放在 URL、请求体或 Cookie，也不需要写入 Cockpit 的 `.env`�
 显式 Bearer 优先于 Cookie，凭据无效时不会回退到另一个登录身份。
 统计模块的 `/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert` 仅接受管理员 PAT。
 会话桥接 `/cockpit/api/auth/session` 用于网页登录，不接受 PAT 换取网页登录 Cookie。
-模型使用的 `/cockpit/api/manual/` 和智力测试的 `/cockpit/api/intelligence/` 接口允许启用的普通用户会话，仅针对当前账号；使用管理员 PAT 时也不能指定其他用户。
+`/cockpit/api/manual/`、`/cockpit/api/intelligence/`、`/cockpit/api/image-studio/` 接口允许启用的普通用户会话或访问 JWT，仅针对当前账号；使用管理员 PAT 时也不能指定其他用户。
 不开放跨域 CORS；服务器、脚本直接调用不需要 `Origin`。浏览器写请求的来源必须与站点一致。
 
 下文示例假定调用环境已安全注入 `ADMIN_PAT`，只需设置站点地址：
@@ -62,10 +62,13 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | 浏览器会话承接、清除 | `X-Cockpit-Auth: 1` |
 | 智力测试发起、JSON HTML 预览 | `X-Intelligence-Request: 1` |
 | 模型使用：按令牌读取模型、读取 KEY | `X-Cockpit-Manual: 1` |
+| 生图工作站：模型目录、生成、编辑 | `X-Cockpit-Studio: 1` |
 
 确认头只是防误操作和跨站表单的校验，**不表示幂等**。
 用户/KEY/额度写操作必须配置监控库保存审计，未配置时不能执行。
 浏览器请求另外携带 `X-Cockpit-Session` 防止旧页面误操作；PAT 调用不需要该头。
+图片编辑使用 `multipart/form-data`，不是 JSON；浏览器发送 FormData 时由浏览器生成 Content-Type 和 boundary。
+生成/编辑属于真实计费写操作，交互式客户端须明确确认且不得自动重放；文档调试器不开放这两个接口的试运行。
 
 ### 数据类型与错误
 
@@ -129,6 +132,10 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | `GET` | `/cockpit/api/intelligence/models` | 可测试模型及自动分组 |
 | `POST` | `/cockpit/api/intelligence/test` | 同步鹈鹕骑车测试，真实计费 |
 | `POST` | `/cockpit/api/intelligence/preview` | 当前 HTML 的沙箱预览，不调用模型 |
+| `GET` | `/cockpit/api/image-studio/tokens` | 本人 GPT KEY 脱敏摘要 |
+| `POST` | `/cockpit/api/image-studio/models` | 所选 KEY 的模型、操作能力与参数，不生成内容 |
+| `POST` | `/cockpit/api/image-studio/generations` | 同步文生图，真实计费 |
+| `POST` | `/cockpit/api/image-studio/edits` | multipart 图片编辑，真实计费 |
 | `GET` | `/cockpit/api/users` | 用户与配额列表 |
 | `GET` | `/cockpit/api/users/{user_id}` | 用户资料详情 |
 | `GET` | `/cockpit/api/users/{user_id}/groups` | 用户可切换的组 |
@@ -815,3 +822,91 @@ POST 使用 JSON、`X-Cockpit-Manual: 1`，请求体仅接受 `{"token_id": 123}
 令牌列表最多 2000 个，超过返回 413；令牌不可用返回 409，无归属权限或受 IP 限制返回 403，上游响应无效/不可用返回 502/503。
 KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY 复制，不进入交互式文档调试器，避免在响应面板泄露。
 官方可能记录 KEY 读取审计，但不新增 Cockpit 操作记录。教程与协议地址规则见[模型使用](manual.md)。
+
+## 生图工作站接口
+
+所有启用用户可用，始终限定本人 GPT 分组 KEY。管理员 PAT 也不能代用其他用户。生成/编辑是收费操作，交互式 API 文档不提供试运行。
+
+### GET /cockpit/api/image-studio/tokens
+
+返回 `tokens` 和固定的 `token_manager_path`。令牌摘要包含 `id`、名称、脱敏 KEY、`group: "GPT"`、`usable` 与不可用原因，不返回原始 KEY。
+
+### POST /cockpit/api/image-studio/models
+
+携带 `X-Cockpit-Studio: 1`，发送 `{"token_id": 123}`，请求最多 1024 字节。这一步只读取模型目录，不生成图片。
+
+每项模型返回：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 当前 KEY 授权的精确 gpt-image 型号 |
+| `revision` | 有效路由契约的 64 位十六进制摘要，提交时带回 |
+| `generation` | `null` 或 `{parameters}`，独立的生成参数 |
+| `edit` | `null` 或 `{parameters, local_strategy, max_images, inputs}` |
+| `unavailable_reason` | 没有共同契约时的说明，可省略 |
+
+`local_strategy` 为 `native-mask`、`reference-only` 或 `unavailable`。
+`inputs` 提供当前渠道的 MIME 类型、单图字节/像素、总像素、最长边与宽高比上限；页面会在提交前校验实际导出的主图、指导图和参考图。
+`parameters` 包含 `allowed_fields`、`sizes`、`custom_size`、`qualities`、`formats`、`backgrounds`、`input_fidelity`、`max_images`。按操作使用对应参数，未出现在 `allowed_fields` 中的字段不要发送。
+
+目录按本人模型限制、GPT 启用 abilities、启用渠道、KEY 的 `/v1/models` 准入与显式协议配置求交；同模型所有可能路由使用共同契约。不默认选择型号，不通过收费请求探测能力。
+
+### POST /cockpit/api/image-studio/generations
+
+携带 `X-Cockpit-Studio: 1`，JSON 请求最多 192 KiB，七个顶层字段必填：
+
+```json
+{
+  "token_id": 123,
+  "model": "gpt-image-1",
+  "prompt": "一只站在窗边的橘猫",
+  "parameters": {"size": "1024x1024", "quality": "medium", "output_format": "png"},
+  "request_id": "studio-request-1",
+  "contract_revision": "从模型目录原样读取的 revision",
+  "intent": {"operation": "generate", "has_annotations": false, "reference_roles": []}
+}
+```
+
+上例 `contract_revision` 是说明占位值，实际必须使用目录返回的摘要。
+`token_id` 是 1～2147483647 的整数；`request_id` 是 8～128 个英文字母、数字、下划线或连字符。生成提示词必须非空，最多 32000 字符、不含 NUL。
+
+参数来自 `generation.parameters`。按配置允许时可省略自动值；服务端固定 `n=1`，不接受客户端传入 `n`、上游地址、凭据、渠道、`response_format` 等字段。
+自定义尺寸为 16 的倍数、最长边 3840、比例不超过 3:1、像素 655360～8294400；JPEG 不支持透明背景。`input_fidelity` 不用于生成。
+
+### POST /cockpit/api/image-studio/edits
+
+携带 `X-Cockpit-Studio: 1`，使用 `multipart/form-data`：
+
+| 字段 | 类型与约定 |
+|---|---|
+| `token_id` | 正整数的表单文本，仅一次 |
+| `model` / `prompt` / `request_id` / `contract_revision` | 普通表单文本，各仅一次 |
+| `parameters` | `edit.parameters` 允许的参数对象，JSON 文本 |
+| `intent` | `{operation,has_annotations,reference_roles}` 的 JSON 文本 |
+| `image[]` | 1～4 个真实文件，同名 part 保序：主图、可选指导图、参考图 |
+| `mask` | 仅 `native-mask` 局部修改必填；整图或 `reference-only` 禁止发送 |
+
+`operation` 为 `whole` 或 `local`。`has_annotations` 表示指导图是否有用户标注。每张用户参考图对应一个 `reference_roles` 值：`reference`、`subject`、`style` 或 `composition`。
+
+有指导标注时 `prompt` 可以为空，后台添加固定的编辑说明；没有标注则需要明确的文字要求。
+`reference-only` 局部修改的第二张图必须是同坐标的选区指导图，即使没有标注也需要它；`native-mask` 仅在有标注时追加指导图。图片角色与数量必须一致。
+
+输入只接受 PNG/JPEG/WebP，统一 EXIF 方向，拒绝动画、SVG/HTML 和 URL。主图最多 16 MP、全部输入合计 32 MP；单张最多 8 MiB，总上传含表单和遮罩最多 24 MiB，实际还受契约的更小上限约束。
+原生遮罩小于 4 MB、带 alpha、与第一张工作图同尺寸；alpha 0 表示可修改，255 表示保护。重复标量、额外字段和不匹配尺寸会在付费请求前拒绝。
+
+### 响应与去重
+
+成功返回 `images: [{b64_json,mime,width,height}]`、`model`、`request_id`、`duration_seconds`；上游提供时另有 `usage`、`upstream_request_id`。
+无论供应商返回 Base64 还是经管理员许可的 HTTPS 图片链接，API 最终只返回验证后的图片数据，不暴露临时链接。输出最多 8.5 MP，上游 JSON 最多 48 MiB。
+
+失败返回 `error`、`code`、`uncertain`，以及可用的 `details`：错误类别、HTTP 状态、参数名、安全供应商错误码、上游请求 ID。不会原样回传供应商报文。认证错误可附 `login_url`。
+
+- 契约修订变化返回 `409`，此时未调用模型；重新读取目录并让用户确认新提交。
+- 回执有效期内，同账号相同请求 ID 不再派发，返回 `IMAGE_REQUEST_DUPLICATE`；同 ID 的输入摘要不同返回 `IMAGE_REQUEST_CONFLICT`。默认 TTL 24 小时，到期后不保证幂等。
+- 回执只保存摘要与状态，没有图片、提示词、KEY；无后台任务、结果查询或断线恢复接口。
+- 同用户最多一笔、全站默认两笔，忙时 `429`；监控库或 Redis 回执不可用时 `503`，不降级成本地锁。
+- 连接 10 秒、上传 30 秒、总截止 300 秒。应用不自动重试、不换模型，认证刷新不重放付费 POST。
+- 超时、断网或 `uncertain: true` 表示结果可能已生效；结束等待不取消上游，需人工核对 New API 日志。New API 的下游重试另由其配置决定。
+- 严格局部合成发生在工作站浏览器；直接调用 edits 得到的是模型结果，不承诺选区外像素未变。
+
+操作见[生图工作站](image-studio.md)，能力文件、Redis 与数据库读权限见[部署](deployment.md#生图工作站请求池)。

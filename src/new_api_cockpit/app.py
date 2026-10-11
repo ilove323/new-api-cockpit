@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Usage: PGHOST=... PGPASSWORD=... python -m new_api_cockpit.app
 # Production: docker compose up -d --build (Gunicorn serves /cockpit/).
-"""Single-container statistics, quota and user management with protected APIs."""
+"""Cockpit pages/APIs, with an isolated synchronous image-request role."""
 
 import os
 import re
@@ -37,6 +37,8 @@ from new_api_cockpit import (
     quality,
     intelligence,
     manual,
+    image_studio,
+    image_receipts,
 )
 
 from new_api_cockpit.report import (
@@ -74,6 +76,11 @@ USER_ENDPOINTS = {
     "intelligence_models",
     "intelligence_test",
     "intelligence_preview",
+    "image_studio_page",
+    "image_studio_tokens",
+    "image_studio_models",
+    "image_studio_generations",
+    "image_studio_edits",
 }
 
 
@@ -120,6 +127,8 @@ def safe_next(value):
         "/cockpit/intelligence/",
         "/cockpit/manual",
         "/cockpit/manual/",
+        "/cockpit/image-studio",
+        "/cockpit/image-studio/",
         "/cockpit/api/statistics/export",
     }
     return value if not parsed.netloc and parsed.path in paths else default
@@ -201,6 +210,7 @@ def auth_failure(
         "quality_page",
         "intelligence_page",
         "manual_page",
+        "image_studio_page",
     }
     if is_page and status == 401:
         response = redirect(login_url(), 302)
@@ -228,6 +238,12 @@ def auth_failure(
 
 @app.before_request
 def authenticate():
+    if image_studio.process_role() == "image" and request.endpoint not in {
+        "health",
+        "image_studio_generations",
+        "image_studio_edits",
+    }:
+        return jsonify(error="该实例只处理图片请求。"), 404
     if request.endpoint is None or request.endpoint in {
         "static",
         "health",
@@ -250,7 +266,7 @@ def authenticate():
         return auth_failure()
     if user["role"] < 10 and request.endpoint not in USER_ENDPOINTS:
         return auth_failure(
-            "此功能仅管理员可访问；普通用户可使用模型使用和智力测试。",
+            "此功能仅管理员可访问；普通用户可使用模型使用、智力测试和生图工作站。",
             403,
             "AUTH_FORBIDDEN",
             clear_cookie=False,
@@ -371,12 +387,28 @@ def headers(response):
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
         )
+    if request.endpoint == "image_studio_page" or request.path.startswith(
+        "/cockpit/api/image-studio/"
+    ):
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "connect-src 'self'; img-src 'self' data: blob:; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
     return response
 
 
 @app.get("/healthz")
 def health():
-    state = timers.status()
+    state = (
+        image_studio.health()
+        if image_studio.process_role() == "image"
+        else timers.status()
+    )
+    if image_studio.process_role() == "image":
+        state["receipts_ready"] = image_receipts.health()
+        state["ready"] = state["ready"] and state["receipts_ready"]
     return jsonify(status="ok" if state["ready"] else "unhealthy", timers=state), (
         200 if state["ready"] else 503
     )
@@ -424,6 +456,168 @@ def manual_key():
 @app.errorhandler(manual.ManualError)
 def manual_error(exc):
     return jsonify(error=str(exc), code=exc.code), exc.status
+
+
+@app.get("/cockpit/image-studio")
+@app.get("/cockpit/image-studio/")
+def image_studio_page():
+    return render_template("studio.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/api/image-studio/tokens")
+def image_studio_tokens():
+    return jsonify(image_studio.list_tokens(g.current_user, new_api_credential()))
+
+
+def studio_request(*, multipart=False):
+    if request.headers.get("X-Cockpit-Studio") != "1":
+        raise image_studio.StudioError("请求缺少 X-Cockpit-Studio: 1。", 403)
+    if multipart:
+        if request.mimetype != "multipart/form-data":
+            raise image_studio.StudioError("改图请求需要 multipart/form-data。", 400)
+        request.max_content_length = 24 * 1024 * 1024
+        request.max_form_memory_size = 192 * 1024
+        request.max_form_parts = 16
+    else:
+        if not request.is_json:
+            raise image_studio.StudioError("请求需要 JSON。", 400)
+        request.max_content_length = 192 * 1024
+    if request.content_length and request.content_length > request.max_content_length:
+        raise image_studio.StudioError("图片请求过大。", 413)
+
+
+@app.post("/cockpit/api/image-studio/models")
+def image_studio_models():
+    studio_request()
+    request.max_content_length = 1024
+    return jsonify(
+        image_studio.models(
+            g.current_user, new_api_credential(), request.get_json(silent=True)
+        )
+    )
+
+
+@app.post("/cockpit/api/image-studio/generations")
+def image_studio_generations():
+    studio_request()
+    with image_studio.capacity(g.current_user):
+        return jsonify(
+            image_studio.run(
+                g.current_user, new_api_credential(), request.get_json(silent=True)
+            )
+        )
+
+
+def studio_edit_body():
+    from . import image_transport
+    from PIL import Image
+    from io import BytesIO
+    import json
+
+    form = request.form
+    required = {
+        "token_id",
+        "model",
+        "prompt",
+        "parameters",
+        "request_id",
+        "contract_revision",
+        "intent",
+    }
+    if "contract_revision" not in form or "intent" not in form:
+        raise image_studio.StudioError(
+            "工作站协议已更新，请刷新模型后重新提交。", 409, "IMAGE_CONTRACT_CHANGED"
+        )
+    if set(form) != required or any(len(form.getlist(k)) != 1 for k in required):
+        raise image_studio.StudioError("改图表单字段无效或重复。")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", form["token_id"]):
+        raise image_studio.StudioError("令牌 ID 无效。")
+    try:
+        params = json.loads(form["parameters"])
+        intent = json.loads(form["intent"])
+    except ValueError:
+        raise image_studio.StudioError("图片参数或编辑意图不是有效的 JSON。") from None
+    body = image_studio.parse_request(
+        {
+            **form.to_dict(),
+            "token_id": int(form["token_id"]),
+            "parameters": params,
+            "intent": intent,
+        }
+    )
+    uploads = request.files
+    images = uploads.getlist("image[]")
+    masks = uploads.getlist("mask")
+    if (
+        set(uploads) - {"image[]", "mask"}
+        or not 1 <= len(images) <= 4
+        or len(masks) > 1
+    ):
+        raise image_studio.StudioError("请上传 1–4 张图像，遮罩最多一张。")
+    inspected, total_pixels, sent_bytes = [], 0, 0
+    try:
+        for index, file in enumerate(images):
+            data = file.read(image_transport.MAX_INPUT_BYTES + 1)
+            image = image_transport.inspect_image(
+                data, max_pixels=16_000_000 if index == 0 else 32_000_000
+            )
+            total_pixels += image["width"] * image["height"]
+            sent_bytes += len(image["data"])
+            if total_pixels > 32_000_000:
+                raise image_studio.StudioError(
+                    "输入图像的解码像素合计超过 32 MP。", 413
+                )
+            inspected.append(image)
+        mask = None
+        if masks:
+            mask = image_transport.inspect_image(masks[0].read(4_000_001), mask=True)
+            if (mask["width"], mask["height"]) != (
+                inspected[0]["width"],
+                inspected[0]["height"],
+            ):
+                raise image_studio.StudioError("遮罩尺寸必须与第一张实际输入图像一致。")
+            with Image.open(BytesIO(mask["data"])) as decoded:
+                if decoded.getchannel("A").getextrema()[0] == 255:
+                    raise image_studio.StudioError("局部修改请先画出修改区域。")
+            sent_bytes += len(mask["data"])
+        if sent_bytes > image_transport.MAX_UPLOAD_BYTES - 65536:
+            raise image_studio.StudioError(
+                "规范化后的输入图片过大，请减少参考图。", 413
+            )
+        return body, inspected, mask
+    finally:
+        for file in images + masks:
+            file.close()
+
+
+@app.post("/cockpit/api/image-studio/edits")
+def image_studio_edits():
+    from . import image_transport
+
+    studio_request(multipart=True)
+    try:
+        with image_studio.capacity(g.current_user):
+            body, images, mask = studio_edit_body()
+            return jsonify(
+                image_studio.run(
+                    g.current_user, new_api_credential(), body, images=images, mask=mask
+                )
+            )
+    except image_transport.ImageError as exc:
+        raise image_studio.StudioError(
+            str(exc), exc.status, exc.code, exc.uncertain
+        ) from None
+
+
+@app.errorhandler(image_studio.StudioError)
+@app.errorhandler(image_receipts.ReceiptError)
+def image_studio_error(exc):
+    return jsonify(
+        error=str(exc),
+        code=exc.code,
+        uncertain=exc.uncertain,
+        details=getattr(exc, "details", {}),
+    ), exc.status
 
 
 @app.get("/cockpit/docs")
@@ -1129,7 +1323,14 @@ def http_error(exc):
     if not request.path.startswith("/cockpit/api/"):
         return exc
     response = exc.get_response()
-    response.set_data(app.json.dumps({"error": exc.description}))
+    body = {"error": exc.description}
+    if request.path.startswith("/cockpit/api/image-studio/"):
+        body.update(
+            code="IMAGE_TOO_LARGE" if exc.code == 413 else "IMAGE_INVALID_REQUEST",
+            uncertain=exc.code >= 500
+            and request.endpoint in {"image_studio_generations", "image_studio_edits"},
+        )
+    response.set_data(app.json.dumps(body))
     response.content_type = "application/json"
     return response
 

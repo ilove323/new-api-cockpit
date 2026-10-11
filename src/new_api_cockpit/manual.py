@@ -7,20 +7,15 @@ database writes, key persistence, automatic retries or user-supplied upstreams.
 from http.client import HTTPConnection, HTTPSConnection, HTTPException
 import json
 import os
-import re
 import time
 from urllib.parse import urlsplit
+
+from . import personal_tokens
+from .personal_tokens import TokenError as ManualError
 
 MAX_RESPONSE = 1024 * 1024
 MAX_TOKENS = 2000
 PROTOCOLS = {"openai": "chat", "openai-response": "responses", "anthropic": "anthropic"}
-
-
-class ManualError(ValueError):
-    def __init__(self, message, status=400, code="MANUAL_ERROR"):
-        super().__init__(message)
-        self.status = status
-        self.code = code
 
 
 def upstream(path, credential, user_id, *, body=None, model_key=False):
@@ -101,53 +96,11 @@ def upstream(path, credential, user_id, *, body=None, model_key=False):
 
 
 def token_id(body):
-    if (
-        not isinstance(body, dict)
-        or set(body) != {"token_id"}
-        or type(body["token_id"]) is not int
-        or not 1 <= body["token_id"] <= 2147483647
-    ):
-        raise ManualError("请选择有效的令牌；不接受用户 ID 或上游地址。")
-    return body["token_id"]
+    return personal_tokens.token_id(body)
 
 
 def token_summary(row, user):
-    # Even a mistaken upstream response must not disclose another user's token.
-    if (
-        not isinstance(row, dict)
-        or type(row.get("id")) is not int
-        or row["id"] <= 0
-        or type(row.get("user_id")) is not int
-        or row["user_id"] != user["id"]
-        or any(
-            type(row.get(field)) is not int
-            for field in ("status", "expired_time", "remain_quota")
-        )
-        or type(row.get("unlimited_quota")) is not bool
-    ):
-        raise ManualError("New API 令牌响应无效或不属于当前账号。", 403)
-    reason = ""
-    if row["status"] != 1:
-        reason = "未启用"
-    elif row["expired_time"] != -1 and row["expired_time"] <= time.time():
-        reason = "已过期"
-    elif not row["unlimited_quota"] and row["remain_quota"] <= 0:
-        reason = "额度不足"
-    key = str(row.get("key") or "").removeprefix("sk-")
-    # Mask locally as well: never rely on upstream masking to protect the UI.
-    masked = key[:4] + "********" + key[-4:] if len(key) >= 12 else "********"
-    return {
-        "id": row["id"],
-        "name": str(row.get("name") or "未命名令牌")[:128],
-        "key_masked": masked,
-        "group": str(row.get("group") or "")[:256],
-        "status": row["status"],
-        "expired_time": row["expired_time"],
-        "remain_quota": row["remain_quota"],
-        "unlimited_quota": row["unlimited_quota"],
-        "usable": not reason,
-        "unavailable_reason": reason,
-    }
+    return personal_tokens.summary(row, user)
 
 
 def list_tokens(user, credential):
@@ -177,33 +130,11 @@ def list_tokens(user, credential):
 
 
 def owned_token(user, credential, body):
-    target = token_id(body)
-    result = upstream(f"/api/token/{target}", credential, user["id"])
-    row = result.get("data")
-    summary = token_summary(row, user)
-    if summary["id"] != target:
-        raise ManualError("New API 返回了不同的令牌。", 502)
-    if not summary["usable"]:
-        raise ManualError(
-            "所选令牌" + summary["unavailable_reason"] + "，请换一个令牌。", 409
-        )
-    return target
+    return personal_tokens.owned_row(user, credential, body, upstream=upstream)["id"]
 
 
 def reveal_key(user, credential, body):
-    target = owned_token(user, credential, body)
-    # Official endpoint performs the ownership check again and audits the reveal.
-    result = upstream(f"/api/token/{target}/key", credential, user["id"], body={})
-    data = result.get("data")
-    raw = data.get("key") if isinstance(data, dict) else None
-    if not isinstance(raw, str):
-        raise ManualError("New API 未返回有效的模型调用 KEY。", 502)
-    raw = raw.removeprefix("sk-")
-    if not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", raw) or raw.startswith("sk-"):
-        raise ManualError("New API 模型调用 KEY 格式无效。", 502)
-    # Reveal checks ownership upstream, not expiry/status. Recheck after lookup.
-    owned_token(user, credential, body)
-    return "sk-" + raw
+    return personal_tokens.key_for(user, credential, body, upstream=upstream)
 
 
 def models(user, credential, body):

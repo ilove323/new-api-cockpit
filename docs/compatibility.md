@@ -15,6 +15,7 @@ KEY 读取接口需按当前身份核对归属；本页不使用公开 `/api/pri
 | tokens | id, user_id, key, name, status, created_time, accessed_time, expired_time, remain_quota, used_quota, unlimited_quota, model_limits_enabled, model_limits, allow_ips, group, cross_group_retry, auto_groups, deleted_at |
 | options | key, value |
 | channels | id, name, status, tag；智力测试还读取 type, models, group, priority |
+| abilities | 生图工作站读取 group, model, enabled, channel_id, priority, weight |
 
 用户管理还读取 `users.remark`；PAT 补建按版本存在的 `access_token_created_at` 写入创建时间。
 源库 PAT 须是可回读的原生格式；加密或只保存哈希的 fork 不适用。
@@ -24,7 +25,7 @@ KEY 编辑依赖官方令牌接口，自动分组选项依赖其 `auto_groups` �
 `type=5`，从 `other.status_code` 读取错误码；元数据损坏或缺少可解析错误码时保留失败次数，显示“未知”。
 消费日志元数据损坏时保留消费金额，无法确认的用量为 `null`，详见[异常日志](calculation.md#异常日志与展示详情)。
 网页登录依赖 New API 的短期访问 JWT、`POST /api/user/auth/refresh`、
-`POST /api/user/auth/logout` 与 `GET /api/user/self`；只允许 role >= 10、status=1 的有效会话。
+`POST /api/user/auth/logout` 与 `GET /api/user/self`；账号须为 status=1，管理功能要求 role >= 10，三个模型工具页向普通用户开放。
 登录协议按 v1.0.0-rc.40 对应源码核对，接入版本须提供上述 JWT 会话接口。
 会话验证通过官方 API 完成，无需读取 `user_sessions` 或 Redis，也无需额外数据库权限。
 
@@ -48,3 +49,9 @@ Token 单价可能留空，但消费金额仍取日志，不能用当前单价�
 Anthropic 类型 14 使用 `/v1/messages`，其他渠道使用 `/v1/chat/completions`。
 管理员目录按文本能力筛选；普通用户接口仅返回本人可用模型名，不提供文本能力声明。测试前以本人专用 KEY 再核对模型权限；对应渠道不接受上述协议时直接报错，不切换协议重试。
 Claude 必需的 `max_tokens` 由 New API 常规转发按配置补齐，请求体透传模式需由上游提供默认值，见[智力测试](intelligence.md)。
+
+生图工作站通过本人令牌接口获取 GPT KEY，使用 `/v1/models` 核对模型授权；生成和编辑分别调用 `/v1/images/generations` 与 `/v1/images/edits`。
+路由契约额外读取 `channels.type/model_mapping/base_url/setting/settings/param_override/header_override`，只投影必要字段与摘要，不读取渠道 KEY。
+`options` 中仅核对全局透传开关、渠道亲和启用状态及是否存在影响图片的覆盖规则。源列存在却无读取权限时停止派发，不将缺权限当作默认值。
+当前协议编译器按 rc.40 OpenAI adaptor 的重构/透传行为实现，不以 `type=1` 推断图片编辑能力。
+具体输入、响应格式和局部编辑路径由版本化协议档声明；接入其他网关版本前需核对字段转换，见[工作站部署](deployment.md#生图工作站请求池)。

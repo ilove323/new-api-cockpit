@@ -17,6 +17,7 @@ credentials/
 
 # Deployment-specific files
 DEPLOYMENT.private.md
+image-studio-capabilities.json
 docker-compose.override.yml
 docker-compose.override.yaml
 docker-compose.*.private.yml

@@ -17,3 +17,7 @@ BALANCE_SCHEDULER_LOCK = 90216325
 
 # Per-administrator, request-scoped model testing. No task or result persistence.
 INTELLIGENCE_NAMESPACE = 90216326
+
+# Image requests use session locks on dedicated connections, never a pool.
+IMAGE_STUDIO_USER_NAMESPACE = 90216327
+IMAGE_STUDIO_SLOT_NAMESPACE = 90216328

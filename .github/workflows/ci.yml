@@ -50,6 +50,7 @@ jobs:
       - run: python -m unittest discover -s tests
       - run: for file in src/new_api_cockpit/static/*.js; do node --check "$file"; done
       - run: node --test tests/*.cjs
+      - run: npx --yes --package typescript@6.0.3 tsc -p tests/tsconfig.studio.json
       - run: python -m build
 
   container:

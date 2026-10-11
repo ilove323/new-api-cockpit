@@ -13,6 +13,10 @@ Bundled Scalar API Reference 1.73.1 retains its original MIT license:
 src/new_api_cockpit/static/SCALAR-LICENSE.
 Source: https://github.com/scalar/scalar, package @scalar/api-reference.
 
+Bundled Konva 10.7.1 retains its original MIT license:
+src/new_api_cockpit/static/KONVA-LICENSE.
+Source: https://github.com/konvajs/konva, package konva.
+
 TRAE tutorial screenshots retain the original rights of their respective owners;
 they are not relicensed under this project's Apache License.
 Documentation: https://docs.trae.cn/ide_models

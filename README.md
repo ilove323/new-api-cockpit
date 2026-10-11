@@ -14,12 +14,12 @@
 </div>
 
 给 [New API](https://github.com/QuantumNous/new-api) 补一套统计和管理页面：查用量、对账、设余额告警，
-批量管理用户、令牌和额度，比较渠道质量，也可以现场测试模型生成动画的效果。
+批量管理用户、令牌和额度，比较渠道质量，也可以测试模型生成动画，或用自己的 GPT KEY 生成和编辑图片。
 页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 账号；管理功能仅对管理员开放，
-普通用户也能使用智力测试和模型使用教程：测试自己的可用模型，选择自己的令牌生成客户端配置。
+普通用户也能使用智力测试、模型使用教程和生图工作站：测试自己的可用模型、生成客户端配置、创作图片。
 在同站点登录过 New API，可以直接进入。
 
-本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，单独运行一个容器，
+本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，网页与图片请求使用独立容器，
 和 New API 共用 Docker 网络，通过同一 HTTPS 入口访问。
 
 ## 功能
@@ -31,6 +31,7 @@
 | 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
 | 渠道质量 | `/cockpit/quality/` | 查看性能健康和高频模型，比较渠道成功率、失败码、首字与总耗时分位数、平均输出 token/s 和费用，跳到对应日志 |
 | 智力测试 | `/cockpit/intelligence/` | 选择模型做鹈鹕骑车测试，直接查看生成的 SVG 动画和 HTML 源码；结果仅留在当前页面 |
+| 生图工作站 | `/cockpit/image-studio` | 使用本人 GPT KEY 创作图片，选区与标注指导修改，比较候选后应用或下载 |
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
@@ -54,7 +55,7 @@
 各模块的地址、参数及调用示例见 [API 参考](docs/api.md)。
 余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
 登录后从侧边栏打开 API 文档即可在线调试，使用方法见[交互式文档](docs/interactive-api.md)。
-请求发往当前站点，修改和通知需要确认，不自动重试。
+请求发往当前站点，修改、通知和付费操作需要确认，不自动重试；图片生成/编辑不开放文档内试运行。
 
 渠道质量默认查看近 24 小时，当前启用渠道的上游在同一列表比较，不跟随余额账本或计费分组筛选；识别重试、流式异常与客户端取消，缺失数据不填成零。
 它只读取已有日志，不改变渠道或计费，口径与限制见[渠道质量](docs/quality.md)。
@@ -68,6 +69,11 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 地址取当前站点，按工具分别生成 Chat Completions、Responses 或 Anthropic Messages 配置；
 模型在客户端会话中选择，配置不固定默认模型；需要转换协议的 CC Switch 接入会列出本地路由设置。
 只查询本人令牌和模型，不改分组或额度，也不发起收费生成，详见[模型使用](docs/manual.md)。
+
+生图工作站向所有启用用户开放，只用本人已有且分组精确为 `GPT` 的 KEY，管理员也不例外，原始 KEY 不进入浏览器。
+每次生成一张，同步等待、不排队，不保存图库或提示词；选区和标注分开，候选需明确采用，局部合成保留选区外原图。
+改图有指导标注时，提示词可留空；有选区就做局部修改，只有标注时直接按标注编辑整图。
+生成/编辑正常计费，超时或断网不自动重发；认证刷新不重放付费请求，详见[生图工作站](docs/image-studio.md)。
 
 ## 部署
 
@@ -89,6 +95,7 @@ chmod 600 .env
 - `NEW_API_NETWORK`、`NEW_API_INTERNAL_URL`：现有 Docker 网络和 New API 内部地址。
 - `MONITOR_DATABASE_URL`：独立监控库，保存预算、归档、通知配置、定时规则和操作记录。建库方法见[监控库配置](docs/monitoring.md#独立数据库)。留空时提供只读查询。
 - `NOTIFICATION_ENCRYPTION_KEY`：保存通知凭据时填写（飞书、钉钉、邮件认证密码），并与监控库一起备份。
+- 生图工作站：源库查询账号增加 `abilities` 的路由列 SELECT（含 `priority`、`weight`）；图片池使用 `COCKPIT_PROCESS_ROLE=image`，必须配置版本化 `IMAGE_STUDIO_CAPABILITIES_FILE` 和短期 Redis 请求回执。见[图片池配置](docs/deployment.md#生图工作站请求池)。
 
 需要补建用户 PAT 时，由源库表所有者安装 [source_pat_function.sql](sql/source_pat_function.sql)，
 再给查询账号授予函数执行权限，步骤见[用户管理部署](docs/users.md#安装补建函数与最小权限)。
@@ -97,7 +104,7 @@ chmod 600 .env
 ### 2. 启动
 
 ```bash
-docker compose up -d --build statistics
+docker compose up -d --build
 docker compose ps
 curl --fail-with-body http://127.0.0.1:8091/healthz
 ```
@@ -120,6 +127,7 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 详细流程见[登录与会话](docs/authentication.md)。
 
 应用端口默认只监听宿主机 `127.0.0.1:8091`，用于反向代理和探活，不应直接公开到公网。
+图片池监听 `127.0.0.1:8092`，代理仅将生成/编辑两个精确路径转到图片池，页面和模型目录仍走 `8091`。
 
 ## 界面预览
 
@@ -154,7 +162,7 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 
 - 安装与维护：[部署](docs/deployment.md) · [兼容范围](docs/compatibility.md) · [升级与备份](docs/upgrading.md) · [发版与镜像](docs/releasing.md)
 - 统计与告警：[统计口径](docs/calculation.md) · [渠道质量](docs/quality.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
-- 模型接入与测试：[模型使用教程](docs/manual.md) · [鹈鹕骑车测试](docs/intelligence.md)
+- 模型接入与创作：[模型使用教程](docs/manual.md) · [鹈鹕骑车测试](docs/intelligence.md) · [生图工作站](docs/image-studio.md)
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)

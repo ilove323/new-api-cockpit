@@ -7,7 +7,7 @@
         |
    同源 HTTPS 入口（Nginx 等反向代理）
         |
-statistics：一个应用容器
+statistics：网页与调度容器
   ├─ Gunicorn：网页与 API
   ├─ 内置余额定时器：北京时间每天 10:00
   └─ 内置配额定时器：每天 / 每周一 / 每月1日 00:00
@@ -17,13 +17,20 @@ statistics：一个应用容器
         ├─ New API 管理 API：用户、KEY 和配额修改
         ├─ New API 模型 API：同步测试生成；结果只返回浏览器
         └─ 飞书 / 钉钉 / SMTP 邮件：独立启停、报警分发
+
+同源入口的两条图片付费端点
+        |
+image-studio：独立同步请求池
+  ├─ 监控 PostgreSQL：跨进程并发锁，不新增工作站表
+  ├─ image-studio-receipts：隔离 Redis，短期派发回执
+  └─ New API 图片 API：本人 GPT KEY；结果只返回浏览器
 ```
 
 两个数据库可以位于同一 PostgreSQL 实例，但必须分库配置。
 余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。所有时间边界使用北京时间。
-`/cockpit/` 下包含用量统计、渠道质量、智力测试、用户管理、令牌管理、操作记录、API 文档和模型使用，
+`/cockpit/` 下包含用量统计、渠道质量、智力测试、生图工作站、用户管理、令牌管理、操作记录、API 文档和模型使用，
 共用顶栏与侧边栏；完整页面地址见 [README](../README.md#功能)。
-业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`users`、`keys`、`operations`、`manual` 模块，
+业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`image-studio`、`users`、`keys`、`operations`、`manual` 模块，
 页面与外部程序调用同一套接口和权限，不另建一份外部管理逻辑。
 部署参数见[部署](deployment.md)，视觉规范见[界面](ui.md)。
 
@@ -36,6 +43,7 @@ statistics：一个应用容器
 - 退出时停止领取任务和发起下一组请求，等待当前组保存结果；不自动续跑或重试结果不明确的请求。
 - `/healthz` 核对线程与两种领导锁；配置监控库但未就绪返回 `503`。探活不计算费用、不发送报警、不修改额度。
 - 未配置监控库时只提供查询，不启动定时器；用户、KEY、配额写操作必须有监控库审计。
+- `COCKPIT_PROCESS_ROLE=image` 不执行迁移或调度，仅处理图片生成和编辑；探活检查并发锁和持久回执，不发送模型请求。
 
 ## 模块与数据流
 
@@ -47,6 +55,11 @@ statistics：一个应用容器
 | `quality.py`、`quality.sql`、`static/quality.js` | 只读渠道尝试去重、当前标签对比、结果分类、性能健康、耗时分位数和历史价格查询 |
 | `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、本人专用 KEY 复用与自适应沙箱预览，不保存结果 |
 | `manual.py`、`static/manual*.js` | 本人令牌和模型查询、九类工具的接入教程、脱敏预览及显式含 KEY 复制，不生成内容或保存凭据 |
+| `personal_tokens.py` | 模型使用与生图工作站共享的本人令牌归属、状态和原始 KEY 获取 |
+| `image_studio.py`、`image_contracts.py` | 版本化路由契约、输入角色编译、权限复核及付费派发 |
+| `image_transport.py`、`image_results.py`、`image_receipts.py` | 单次有界请求、安全图片结果解析和 Redis 去重回执 |
+| `static/studio-domain.js`、`studio-request.js`、`studio-results.js` | 编辑规则、冻结提交、候选/版本及 Blob 生命周期 |
+| `static/studio.js`、`studio-canvas.js` | DOM 状态投影、Konva 工具、图层导出与局部像素合成 |
 | `report.py`、`usage.sql`、`metadata_fallback.py` | 只读用量聚合、异常日志兼容、排名与 Excel |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
 | `report_snapshots.py` | 按管理员与账本隔离、限时保留的不可变展示详情 |
@@ -89,7 +102,7 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 
 ## 认证与审计
 
-网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，每次会话请求经官方 `/api/user/self` 验证身份和账号状态。管理路由默认要求管理员；普通用户允许模型使用、智力测试及其本人接口、会话桥接和入口重定向，后端使用显式端点白名单。
+网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，每次会话请求经官方 `/api/user/self` 验证身份和账号状态。管理路由默认要求管理员；普通用户允许模型使用、智力测试、生图工作站及其本人接口、会话桥接和入口重定向，后端使用显式端点白名单。
 浏览器在官方路径刷新 HttpOnly Cookie，再将短期访问凭据交给 Cockpit 保存为 `/cockpit` 范围的 HttpOnly Cookie；会话由 New API 管理。
 业务 API 同时接受管理员 PAT Bearer，每次从源库读取其 ID、用户名及角色并验证启禁状态；
 余额与报警接口仅接受 PAT。PAT 不能换取网页 Cookie，不能使用客户端指定的身份执行或记录操作。

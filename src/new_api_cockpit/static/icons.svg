@@ -134,5 +134,9 @@
     <symbol id="shield-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 3 3 7v5c0 5 5 8 9 10 4-2 9-5 9-10V7Z"/><path d="m8 12 3 3 5-5"/>
     </symbol>
+    <symbol id="image-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 5h6m-3-3v6M21 11v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8" />
+      <circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" />
+    </symbol>
   </defs>
 </svg>

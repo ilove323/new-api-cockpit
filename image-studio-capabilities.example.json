@@ -1,0 +1,134 @@
+{
+  "schema": 2,
+  "profiles": {
+    "native-mask-v1": {
+      "revision": "example-1",
+      "evidence": "EXAMPLE ONLY: replace channel IDs, models and parameter values with administrator-verified rc40/provider evidence.",
+      "generation": {
+        "parameters": {
+          "allowed_fields": [
+            "size",
+            "quality",
+            "output_format"
+          ],
+          "sizes": [
+            "auto",
+            "1024x1024"
+          ],
+          "custom_size": false,
+          "qualities": [
+            "auto",
+            "high"
+          ],
+          "formats": [
+            "png"
+          ],
+          "backgrounds": [],
+          "input_fidelity": [],
+          "max_images": 0
+        },
+        "response": {
+          "format": "b64_json",
+          "allowed_hosts": [],
+          "allowed_networks": []
+        }
+      },
+      "edit": {
+        "parameters": {
+          "allowed_fields": [
+            "size",
+            "quality",
+            "output_format"
+          ],
+          "sizes": [
+            "auto",
+            "1024x1024"
+          ],
+          "custom_size": false,
+          "qualities": [
+            "auto",
+            "high"
+          ],
+          "formats": [
+            "png"
+          ],
+          "backgrounds": [],
+          "input_fidelity": [],
+          "max_images": 4
+        },
+        "response": {
+          "format": "b64_json",
+          "allowed_hosts": [],
+          "allowed_networks": []
+        },
+        "local_strategy": "native-mask",
+        "image_fields": {
+          "single": "image",
+          "multiple": "image[]"
+        }
+      }
+    },
+    "reference-only-array-v1": {
+      "revision": "example-1",
+      "evidence": "EXAMPLE ONLY: verify array-only single-image support and channel pass_through_body_enabled=true; no model mapping or overrides.",
+      "generation": null,
+      "edit": {
+        "parameters": {
+          "allowed_fields": [
+            "size"
+          ],
+          "sizes": [
+            "auto",
+            "1024x1024"
+          ],
+          "custom_size": false,
+          "qualities": [],
+          "formats": [],
+          "backgrounds": [],
+          "input_fidelity": [],
+          "max_images": 4
+        },
+        "response": {
+          "format": "b64_json",
+          "allowed_hosts": [],
+          "allowed_networks": []
+        },
+        "local_strategy": "reference-only",
+        "image_fields": {
+          "single": "image[]",
+          "multiple": "image[]"
+        }
+      }
+    }
+  },
+  "channels": {
+    "1001": {
+      "type": 1,
+      "gateway": "new-api-rc40-openai",
+      "mode": "rebuild",
+      "global_pass_through": false,
+      "channel_pass_through": false
+    },
+    "1002": {
+      "type": 1,
+      "gateway": "new-api-rc40-openai",
+      "mode": "pass-through",
+      "global_pass_through": false,
+      "channel_pass_through": true
+    }
+  },
+  "models": {
+    "gpt-image-1.5": {
+      "1001": {
+        "profile": "native-mask-v1",
+        "mapped_model": "gpt-image-1.5"
+      }
+    },
+    "gpt-image-2": {
+      "1002": {
+        "profile": "reference-only-array-v1",
+        "mapped_model": "gpt-image-2"
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@
 - 已运行的 New API、PostgreSQL 和 Docker Compose。
 - 统计容器加入 New API 的现有 Docker 网络，不新建或替换其数据库。
 - 数据库账号具有 SELECT `logs`、`options`、`users`、`channels`、`tokens` 的权限，建议使用专用查询账号，不授予业务表写权限。
+- 生图工作站另需 SELECT `abilities` 的 `"group"`、`model`、`enabled`、`channel_id` 四列，以及可用的独立监控库控制并发。
 - 网页通过同源 HTTPS 反向代理访问。下文以宿主机 Nginx 为例，也可使用容器化 Nginx 或同等代理。
 
 ## 配置与启动
@@ -21,6 +22,10 @@
 | `PGUSER` / `PGPASSWORD` | 源库查询账号及密码；用户管理还可授予受限 PAT 补建函数 EXECUTE，不能授予业务表 UPDATE |
 | `BIND_HOST` | 宿主机监听地址，默认 `127.0.0.1`；仅跨主机代理或可信内网调用需要调整 |
 | `PORT` | 暴露到宿主机的端口，默认 `8091` |
+| `IMAGE_STUDIO_PORT` | 图片池宿主机端口，默认 `8092`；调整时同步反向代理 |
+| `IMAGE_STUDIO_MEMORY` | 图片池内存上限，默认 `1g`；结合图片大小和两笔并发核算 |
+| `COCKPIT_PROCESS_ROLE` | 默认 `web`；图片池固定为 `image`，仅承担生成/编辑，不启动定时器或迁移 |
+| `IMAGE_STUDIO_CAPABILITIES_FILE` | 可选能力 JSON 文件在容器内的路径；只读挂载，网页池与图片池使用同一份配置 |
 | `PYTHON_IMAGE` | 构建使用的 Python 镜像，默认 `python:3.12-slim` |
 | `PIP_INDEX_URL` | 可选 Python 包索引地址 |
 | `NEW_API_NETWORK` | 已有 New API Docker 网络名，默认 `new-api-network` |
@@ -42,7 +47,7 @@
 
 ```bash
 chmod 600 .env
-docker compose up -d --build statistics
+docker compose up -d --build
 docker compose ps
 docker compose logs --tail 100 statistics
 ```
@@ -86,6 +91,7 @@ curl --fail-with-body http://127.0.0.1:8091/healthz
 
 把 [nginx.conf.example](../nginx.conf.example) 的 `/cockpit` 与 `/cockpit/` location 加入现有 HTTPS `server` 块，
 New API 的 `/`、`/api/` 和 `/sign-in` 等路由继续转发到 New API。
+生图/改图的两个精确 location 转发到独立图片池 `127.0.0.1:8092`，配置见[生图工作站请求池](#生图工作站请求池)。
 同步智力测试还需加入示例中 `/cockpit/api/intelligence/test` 的精确 location，读取超时为 300 秒；
 `/cockpit/api/intelligence/preview` 的精确 location 允许最多 2 MiB 表单，用于承载编码后的预览 HTML。
 其他接口继续使用普通 `/cockpit/` 的超时配置。已有 Nginx 不会随应用代码自动更新。
@@ -146,10 +152,10 @@ curl --fail-with-body 'https://<你的域名>/cockpit/api/statistics/balance' \
 ## 登录与权限
 
 网页使用 `/cockpit/login`，先尝试复用同源 New API 登录；没有有效会话才显示账号登录。
-密码和二次验证码直接交给官方接口，服务端每次经 `/api/user/self` 校验会话和启用状态。管理功能要求 `role >= 10`；启用的普通用户也能访问模型使用和智力测试及其本人接口；其他管理路由仍默认禁止普通用户访问。
+密码和二次验证码直接交给官方接口，服务端每次经 `/api/user/self` 校验会话和启用状态。管理功能要求 `role >= 10`；所有启用用户也能访问模型使用、智力测试和生图工作站及其本人接口；其他管理路由仍默认禁止普通用户访问。
 New API 撤销会话或禁用账号后，Cockpit 也拒绝访问；降权后不再允许管理功能。上游暂不可用返回 503，恢复后可重试。
 浏览器必须能访问同源 New API `/api/` 和官方 `/sign-in` 页面；内部地址仅用于后台校验，不发送给浏览器。
-无需新增表、迁移或数据库权限；不需要 New API 的 SESSION_SECRET，也不配置 Redis。详见[登录与会话](authentication.md)。
+登录本身无需新增表、迁移或数据库权限；不需要 New API 的 SESSION_SECRET，也不读取它的会话 Redis。生图工作站的 abilities 读权限见下节。详见[登录与会话](authentication.md)。
 统计查询不会修改 New API 数据；管理员在 `/cockpit/users/`
 确认配额增减时，服务才会通过 New API 官方管理接口修改所选用户额度，详情见
 [用户配额](quota.md)。启用定时配额规则后，主程序内置定时器会在对应周期按执行管理员权限调用同一接口。
@@ -159,9 +165,95 @@ New API 撤销会话或禁用账号后，Cockpit 也拒绝访问；降权后不�
 
 用户、KEY 和配额写操作均需要监控库用于审计。New API 源库须能 SELECT `tokens`；
 缺失用户 PAT 的补建仅授权受限函数，不授予业务表 UPDATE，安装 SQL 见[用户管理](users.md#安装补建函数与最小权限)。
-管理页面经过管理员会话认证；模型使用和智力测试页面允许普通用户登录后访问。`/cockpit/api/` 下的业务接口也接受管理员 PAT，权限与审计不变，模型使用和智力测试接口始终限定认证账号本人。普通用户智力测试使用自身会话操作 KEY，无须扩大源库 PAT 补建函数的权限或升级数据库。
+管理页面经过管理员会话认证；模型使用、智力测试和生图工作站页面允许普通用户登录后访问。`/cockpit/api/` 下的业务接口也接受管理员 PAT，权限与审计不变，这三个模块始终限定认证账号本人。普通用户智力测试使用自身会话操作 KEY；生图工作站使用本人既有 GPT KEY，无须扩大源库 PAT 补建函数的权限或升级数据库。
 登录页和无敏感信息的静态资源公开。接口地址、确认头及示例见 [API 参考](api.md)。
 Nginx 统一转发 `/cockpit/`。数据库仅在内部网络开放。
+
+## 生图工作站请求池
+
+网页与图片池使用同镜像、同代码和同源入口，分开处理同步 HTTP：
+
+| 请求 | 宿主机目标 | 进程角色 |
+|---|---|---|
+| 页面、静态资源、令牌/模型目录、其他业务 API | 现有 `127.0.0.1:8091` | `COCKPIT_PROCESS_ROLE=web`（默认） |
+| `/cockpit/api/image-studio/generations`、`/cockpit/api/image-studio/edits` | `127.0.0.1:8092` | `COCKPIT_PROCESS_ROLE=image` |
+
+图片池为 2 个 worker、每个 1 个线程，不执行迁移或余额/配额定时器，不承接其他业务接口。
+Compose 服务为 `image-studio`；`statistics` 保持原网页与调度职责。两个付费端点必须走图片池，误转网页池返回 `503`。
+文生图 JSON 上限 192 KiB，编辑 multipart 总上传上限 24 MiB；两条精确路径代理响应等待 330 秒，普通路径不放宽。
+应用连接 10 秒、上传 30 秒、总截止 300 秒，工作站浏览器等待 360 秒；反向代理不得自动重发付费请求。
+保留完整路径和 `Host $http_host`。容器化代理应使用图片服务的内部网络地址，不能使用指向代理自身的 `127.0.0.1`。
+
+图片池需要 `MONITOR_DATABASE_URL`，用独立 autocommit 连接的会话级 advisory lock 控制全站 2 个槽位、同用户 1 笔。
+JWT/PAT 按同一个真实用户 ID 共用限额，在解析 multipart/解码前非阻塞取锁，容量满返回 `429`，不排队。
+未配置监控库、锁连接失效或监控库重启后返回 `503`，停止新提交并排空/重启图片池再恢复，不降级成单机锁。
+浏览器结束等待不提前释放容量；锁连接只在服务端请求结束后解锁并关闭。
+
+### 源库最小读权限
+
+由源库表所有者执行，替换实际 schema 和查询角色：
+
+```sql
+GRANT SELECT ("group", model, enabled, channel_id, priority, weight)
+ON TABLE public.abilities TO cockpit_reader;
+```
+
+模型清单关联当前启用渠道，严格读取 GPT 启用 abilities，不以 `channels.models` 猜授权。
+新增查询只要求列级 SELECT，不授予源表写权限、不新增数据库函数或工作站迁移；保留其他管理功能已使用的 PAT 函数。
+旧部署已有 abilities 前四列授权时，本次需补 `priority`、`weight`，用于把路由优先级/权重变化纳入契约修订。
+源角色还需已有 `channels` 的 `id/status/type/model_mapping/base_url/setting/settings/param_override/header_override` 读取权限，以及 `options` 的 `key/value` 读取权限。程序先检查列是否存在和可读，只投影透传开关、覆盖是否为空与配置摘要，不读取渠道 KEY 或返回原始设置。旧版本缺失的可选列按已核对的默认处理，缺权限不冒充缺列。
+本人 KEY 由官方已审计的 `/api/token/{id}/key` 读取，无 PAT 补建，管理员也不能代用他人的 KEY。
+
+### 图片协议契约
+
+`IMAGE_STUDIO_CAPABILITIES_FILE` 必须指向容器内的 schema 2 JSON 文件，网页池和图片池读取同一文件，并以只读方式挂载。未配置的渠道没有默认图片能力，旧的四个布尔开关配置不再使用。
+
+从根目录的 [`image-studio-capabilities.example.json`](../image-studio-capabilities.example.json) 开始填写，文件中不放 KEY、密码或原始请求。示例渠道 ID 仅作格式演示，不能直接代表你的上游。
+
+- `profiles`：独立的生成/编辑参数、输入限制、响应格式及证据修订。编辑声明 `native-mask`、`reference-only` 或 `unavailable`，以及单图/多图字段名。
+- `channels`：实际渠道 ID、类型和 New API 转发方式，明确全局/渠道级透传前置条件。
+- `models`：精确的公开模型 ID，逐渠道绑定协议档与预期映射后的模型名。
+
+`sizes` 填该渠道实际支持的尺寸档位；没有确认支持任意像素尺寸时，`custom_size` 设为 `false`。模型官方支持自定义尺寸，不代表经由当前上游和 New API 转发后也支持。编辑的「自动」只选择已声明档位；只有 `auto` 的协议保持发送 `auto`，不会按上传图像另造尺寸。
+
+只有被允许的参数才发给上游；生成与编辑不共享一份模糊的“支持”开关。同模型的所有启用 GPT 路由都必须有兼容契约，否则对应操作不可用。配置不能授予模型权限、代替 KEY 鉴权或替普通用户锁定渠道。
+
+当前转发核对针对 New API `v1.0.0-rc.40` 的 OpenAI adaptor：重构模式下单图为 `image`、多图为 `image[]`；mask 会被转发。若供应商要求单图也必须为 `image[]`，必须有已核对的透传配置，不能补一张虚假图片绕过。透传时也不能依赖网关改写模型名。
+源渠道的透传/参数覆盖设置变化后，原契约不会继续盲发；修订不一致在生成前返回 `409`。不要为了工作站擅自修改 New API 全局透传或重试设置，先检查对应渠道和其他使用方。
+
+默认接收 Base64；需要 `response_format` 的兼容渠道应在各操作中显式声明。URL-only 响应须同时配置安全结果规则：仅 HTTPS、精确主机或公开网络白名单，逐跳验证与地址绑定，拒绝私网/环回/链路本地地址；不转发模型 KEY、Cookie 或 Referer。验证后仍向浏览器返回 Base64，不返回外链。
+
+文件最大 64 KiB，无效配置返回 `503`，不静默回退。更新前在本地运行契约测试与配置校验，不通过收费试错探测。
+
+### 短期请求回执
+
+Compose 的 `image-studio-receipts` 是独立 Redis，只与图片池共享内部网络，没有宿主机端口，不连接 New API 会话缓存。数据放在独立命名卷，配置 AOF、`appendfsync always` 和 `noeviction`。不要在更新/回退时删除该卷。
+
+图片池默认连接 `redis://image-studio-receipts:6379/0`。已有符合要求的 Redis 也可通过 `IMAGE_STUDIO_REDIS_URL` 指定；允许 `redis://` 或启用证书验证的 `rediss://`，URL 不带查询参数。跨主机使用受限 ACL 与 TLS。
+
+| 环境变量 | 默认值 / 要求 |
+|---|---|
+| `IMAGE_STUDIO_REDIS_URL` | Compose 提供独立回执服务；非 Compose 部署必须填写 |
+| `IMAGE_STUDIO_RECEIPT_NAMESPACE` | `cockpit:image-receipts:v1`；同一站点所有实例一致，不与其他站点混用 |
+| `IMAGE_STUDIO_RECEIPT_TTL` | 86400 秒；允许 3600～604800 |
+
+回执仅含账号 ID、输入 SHA-256 摘要、派发/结束状态和时间；Redis 键使用请求 ID 的摘要，不存图片、提示词或 KEY。不创建数据库任务表。
+
+受限 ACL 需允许所选命名空间的 `GET`、`SET`、`EVAL`，以及探活所需的 `INFO` 和 `CONFIG GET`；连接认证和客户端初始化依 Redis 版本授予必要权限。不得开放 `FLUSHDB`、`FLUSHALL` 或 `CONFIG SET`。服务不执行这些管理操作。
+
+Redis 不可用、AOF 写入失败、策略不符时，付费请求在派发前返回 `503`。检测到 Redis 重启时需核对持久化状态并重启图片池；不自动放弃去重。已派发但进程退出的回执保持“结果未知”，不会重新派发。
+终态回执保留至原 TTL；不提供取回图片的接口。持久卷丢失、旧备份恢复或 TTL 到期不保证去重，必须人工核对在途请求，不能清空 Redis 当成重试办法。
+
+### 探活、更新与回退
+
+图片池健康检查同时核对监控库并发锁和 Redis 回执存储。宿主机探活图片池：`curl --fail-with-body http://127.0.0.1:8092/healthz`，不发模型请求。
+图片池默认内存上限 1 GiB、`/tmp` 128 MiB、Gunicorn 排空 330 秒、容器停止窗口 360 秒。
+核算临时上传、解码像素、base64/JSON 和两个请求的内存峰值，不沿用网页池的 64 MiB `/tmp` 与 90 秒停止窗口。
+启动、健康检查和自动测试不得调用生成/编辑。
+
+更新前保留上一镜像、Compose、Nginx 与协议文件，保留回执卷；先停止新图片提交，等待服务端在途请求结束后替换图片池。
+回退时恢复这些配置与镜像，不改变 New API 的 `/api/`、`/v1/` 路由或业务数据；工作站无新增任务表或图库需要回迁。
+付费请求断连/超时可能已生效，不在回退后重放。资源规格和使用规则见[生图工作站](image-studio.md)。
 
 ## 数据库初始化与迁移
 

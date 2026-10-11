@@ -444,6 +444,336 @@ SCHEMAS = {
 }
 
 
+IMAGE_STUDIO_SCHEMAS = {
+    "ImageStudioToken": obj(
+        {
+            "id": integer(1),
+            "name": text(),
+            "key_masked": text("脱敏摘要；不返回模型 KEY 原值。"),
+            "group": choice("GPT"),
+            "status": integer(),
+            "expired_time": {
+                "type": "integer",
+                "description": "Unix 秒；-1 永不过期。",
+            },
+            "remain_quota": {"type": "integer", "description": "原始 quota 单位。"},
+            "unlimited_quota": BOOL,
+            "usable": BOOL,
+            "unavailable_reason": text(),
+        },
+        (
+            "id",
+            "name",
+            "key_masked",
+            "group",
+            "status",
+            "expired_time",
+            "remain_quota",
+            "unlimited_quota",
+            "usable",
+            "unavailable_reason",
+        ),
+    ),
+    "ImageStudioTokens": obj(
+        {
+            "tokens": array(ref("ImageStudioToken")),
+            "token_manager_path": {"type": "string", "const": "/keys"},
+        },
+        ("tokens", "token_manager_path"),
+    ),
+    "ImageStudioModelRequest": obj(
+        {"token_id": integer(1, maximum=2147483647)},
+        ("token_id",),
+        additionalProperties=False,
+    ),
+    "ImageStudioContractRevision": text(
+        "models 返回的有效路由契约摘要；提交时复核，变化返回 409，未调用模型。",
+        pattern=r"^[0-9a-f]{64}$",
+    ),
+    "ImageStudioAllowedParameters": obj(
+        {
+            "sizes": array(text()),
+            "custom_size": BOOL,
+            "qualities": array(text()),
+            "formats": array(choice("png", "jpeg", "webp")),
+            "backgrounds": array(text()),
+            "input_fidelity": array(text()),
+            "max_images": integer(0, maximum=4),
+            "allowed_fields": array(
+                choice(
+                    "size",
+                    "quality",
+                    "output_format",
+                    "background",
+                    "output_compression",
+                    "input_fidelity",
+                )
+            ),
+        },
+        (
+            "sizes",
+            "custom_size",
+            "qualities",
+            "formats",
+            "backgrounds",
+            "input_fidelity",
+            "max_images",
+            "allowed_fields",
+        ),
+        description="生成/编辑分别声明；实际参数取所有可路由渠道的交集。",
+    ),
+    "ImageStudioInputLimits": obj(
+        {
+            "mime_types": array(
+                choice("image/png", "image/jpeg", "image/webp"), minItems=1
+            ),
+            "max_bytes": integer(1, maximum=8388608),
+            "max_pixels": integer(1, maximum=16000000),
+            "max_total_pixels": integer(1, maximum=32000000),
+            "max_dimension": integer(1, maximum=16000),
+            "max_aspect_ratio": integer(1, maximum=100),
+        },
+        (
+            "mime_types",
+            "max_bytes",
+            "max_pixels",
+            "max_total_pixels",
+            "max_dimension",
+            "max_aspect_ratio",
+        ),
+    ),
+    "ImageStudioModel": obj(
+        {
+            "id": text("精确模型 ID；日期快照不继承基础型号授权。"),
+            "revision": ref("ImageStudioContractRevision"),
+            "generation": {
+                "anyOf": [
+                    obj(
+                        {"parameters": ref("ImageStudioAllowedParameters")},
+                        ("parameters",),
+                    ),
+                    {"type": "null"},
+                ]
+            },
+            "edit": {
+                "anyOf": [
+                    obj(
+                        {
+                            "parameters": ref("ImageStudioAllowedParameters"),
+                            "inputs": ref("ImageStudioInputLimits"),
+                            "local_strategy": choice(
+                                "native-mask", "reference-only", "unavailable"
+                            ),
+                            "max_images": integer(1, maximum=4),
+                        },
+                        ("parameters", "local_strategy", "max_images", "inputs"),
+                    ),
+                    {"type": "null"},
+                ]
+            },
+            "unavailable_reason": text("未配置或共同契约冲突时的简短说明。"),
+        },
+        ("id", "revision", "generation", "edit"),
+    ),
+    "ImageStudioIntent": obj(
+        {
+            "operation": choice("generate", "whole", "local"),
+            "has_annotations": BOOL,
+            "reference_roles": array(
+                choice("reference", "subject", "style", "composition"), maxItems=3
+            ),
+        },
+        ("operation", "has_annotations", "reference_roles"),
+        additionalProperties=False,
+        description="选区决定 local；没有选区的标注编辑用 whole。generate 不可携带标注或参考图。",
+    ),
+    "ImageStudioModels": obj({"models": array(ref("ImageStudioModel"))}, ("models",)),
+    "ImageStudioParameters": obj(
+        {
+            "size": text(
+                "从 models 返回的 sizes 选择；自定义尺寸为 16 的倍数、最长边 3840、比例不超过 3:1、像素 655360～8294400。",
+                default="auto",
+            ),
+            "quality": text("从所选模型的 qualities 选择。", default="auto"),
+            "output_format": {**choice("png", "jpeg", "webp"), "default": "png"},
+            "background": text(
+                "从所选模型的 backgrounds 选择；JPEG 不允许 transparent。",
+                default="auto",
+            ),
+            "output_compression": integer(
+                0, maximum=100, description="仅 JPEG/WebP 可发送；PNG 必须省略。"
+            ),
+            "input_fidelity": text(
+                "仅编辑模式且模型能力允许时发送；从 input_fidelity 选择。"
+            ),
+        },
+        additionalProperties=False,
+        description="各字段可省略，空对象使用默认参数；n 由服务端固定为 1，客户端不能指定。",
+        allOf=[
+            {
+                "if": {"properties": {"output_format": {"const": "png"}}},
+                "then": {"not": {"required": ["output_compression"]}},
+            },
+            {
+                "not": {
+                    "properties": {
+                        "background": {"const": "transparent"},
+                        "output_format": {"const": "jpeg"},
+                    },
+                    "required": ["background", "output_format"],
+                }
+            },
+        ],
+    ),
+    "ImageStudioGenerationParameters": {
+        "allOf": [
+            ref("ImageStudioParameters"),
+            {"not": {"required": ["input_fidelity"]}},
+        ],
+        "description": "文生图不接受 input_fidelity；其他字段可省略。",
+    },
+    "ImageStudioRequestId": text(
+        "当前账号下的短期去重 ID；回执有效期内同 ID 不再派发，输入改变返回 409。到期后不保证幂等。",
+        pattern=r"^[A-Za-z0-9_-]{8,128}$",
+        minLength=8,
+        maxLength=128,
+    ),
+    "ImageStudioGenerationRequest": obj(
+        {
+            "token_id": integer(1, maximum=2147483647),
+            "model": text(
+                "所选本人 GPT KEY 授权的精确模型 ID。",
+                minLength=1,
+                maxLength=256,
+                pattern=r"^gpt-image-[^\x00-\x1f\x7f]*$",
+            ),
+            "prompt": text(
+                "非空提示词，不含 NUL。",
+                minLength=1,
+                maxLength=32000,
+                pattern=r"^[^\x00]*$",
+            ),
+            "parameters": ref("ImageStudioGenerationParameters"),
+            "request_id": ref("ImageStudioRequestId"),
+            "contract_revision": ref("ImageStudioContractRevision"),
+            "intent": ref("ImageStudioIntent"),
+        },
+        (
+            "token_id",
+            "model",
+            "prompt",
+            "parameters",
+            "request_id",
+            "contract_revision",
+            "intent",
+        ),
+        additionalProperties=False,
+    ),
+    "ImageStudioEditRequest": obj(
+        {
+            "token_id": text(
+                "1～2147483647 的令牌 ID；普通表单字段，仅一次。",
+                pattern=r"^[1-9][0-9]{0,9}$",
+            ),
+            "model": text(
+                "精确模型 ID；普通表单字段，仅一次。",
+                minLength=1,
+                maxLength=256,
+                pattern=r"^gpt-image-[^\x00-\x1f\x7f]*$",
+            ),
+            "prompt": text(
+                "用户原始提示词，有指导标注时可为空；不含 NUL，仅一次。",
+                minLength=0,
+                maxLength=32000,
+                pattern=r"^[^\x00]*$",
+            ),
+            "parameters": text(
+                "ImageStudioParameters 的 JSON 文本；普通表单字段，仅一次，不是文件。",
+                contentMediaType="application/json",
+                contentSchema=ref("ImageStudioParameters"),
+            ),
+            "request_id": {
+                **ref("ImageStudioRequestId"),
+                "description": "普通表单字段，仅一次；短期去重 ID。",
+            },
+            "contract_revision": ref("ImageStudioContractRevision"),
+            "intent": text(
+                "ImageStudioIntent 的 JSON 文本；operation 为 whole 或 local。",
+                contentMediaType="application/json",
+                contentSchema=ref("ImageStudioIntent"),
+            ),
+            "image[]": array(
+                text("实际 PNG/JPEG/WebP 文件；单图最多 8 MiB。", format="binary"),
+                minItems=1,
+                maxItems=4,
+                description="重复的同名文件 part，保持顺序：主图、可选指导图、其他参考图；指导图也占名额。",
+            ),
+            "mask": text(
+                "仅 native-mask 局部编辑必填；reference-only 或整图编辑禁止发送；小于 4 MB 的带 alpha PNG，尺寸须与方向归一后的第一张工作图一致。alpha=0 可修改，255 保护。",
+                format="binary",
+            ),
+        },
+        (
+            "token_id",
+            "model",
+            "prompt",
+            "parameters",
+            "request_id",
+            "contract_revision",
+            "intent",
+            "image[]",
+        ),
+        additionalProperties=False,
+        description="multipart 总上传最多 24 MiB；单张输入最多 16 MP，输入图合计最多 32 MP。整图编辑省略 mask。",
+    ),
+    "ImageStudioImage": obj(
+        {
+            "b64_json": text(
+                "验证并解码后的图片；最多 8.5 MP。", contentEncoding="base64"
+            ),
+            "mime": choice("image/png", "image/jpeg", "image/webp"),
+            "width": integer(1),
+            "height": integer(1),
+        },
+        ("b64_json", "mime", "width", "height"),
+    ),
+    "ImageStudioResult": obj(
+        {
+            "images": array(ref("ImageStudioImage"), minItems=1, maxItems=1),
+            "model": text(),
+            "request_id": text(),
+            "duration_seconds": {"type": "number", "minimum": 0},
+            "usage": obj(description="上游提供时返回；字段取决于模型。"),
+            "upstream_request_id": text("上游提供时返回。"),
+        },
+        ("images", "model", "request_id", "duration_seconds"),
+        description="同步响应；不创建任务或持久保存图片、提示词、结果。",
+    ),
+    "ImageStudioError": obj(
+        {
+            "error": text(),
+            "code": text(),
+            "uncertain": BOOL,
+            "login_url": text(),
+            "details": obj(
+                {
+                    "category": text(),
+                    "http_status": integer(100, maximum=599),
+                    "provider_code": text(),
+                    "param": text(),
+                    "upstream_request_id": text(),
+                    "receipt_state": choice(
+                        "dispatched", "succeeded", "failed", "unknown"
+                    ),
+                }
+            ),
+        },
+        ("error", "code"),
+        description="uncertain=true 表示可能已计费，不能自动重发；认证错误可附 login_url。",
+    ),
+}
+
+
 def action_body(actions):
     return {
         "oneOf": [
@@ -1713,6 +2043,121 @@ def document():
             ),
         ]
     )
+    studio_auth = (
+        "所有已启用用户可用，不要求管理员；接受本人浏览器会话/访问 JWT 或管理员 PAT。"
+        "仅限本人既有且自身 group 精确为 GPT 的 KEY，管理员无代用例外。"
+        "后端重新核对归属、状态、到期、额度和模型授权；原始模型 KEY 不返回浏览器。"
+    )
+    studio_paid = (
+        studio_auth + "真实计费写操作，须用户明确确认；交互式文档不提供试运行。"
+        "固定本站 Images 接口，n=1，同步等待，不排队、不保存结果。"
+        "不接受用户、分组、渠道、上游地址或凭据字段；不切换模型、不自动重试。"
+        "认证刷新不重放 POST；断连/超时或结束等待不表示取消上游。"
+        "request_id 在回执有效期内去重；到期后不保证幂等。同用户至多一笔，全站默认两笔，忙时 429。"
+        "总截止 300 秒，未知结果可能已计费，应核对 New API 日志后再人工决定。"
+    )
+    studio_ops = [
+        operation(
+            "GET",
+            "/cockpit/api/image-studio/tokens",
+            "列出本人 GPT KEY",
+            "生图工作站",
+            ref("ImageStudioTokens"),
+            description=studio_auth + "只返回脱敏摘要；不可用的令牌带原因。",
+        ),
+        operation(
+            "POST",
+            "/cockpit/api/image-studio/models",
+            "查询本人 KEY 的图像模型与能力",
+            "生图工作站",
+            ref("ImageStudioModels"),
+            body=ref("ImageStudioModelRequest"),
+            example={"token_id": 23},
+            header=("X-Cockpit-Studio", "1"),
+            description=studio_auth
+            + "JSON 最多 1024 字节，仅接受 token_id。经官方已审计的 /api/token/{id}/key 在后台读取本人 KEY，无 PAT 补建；查询 /v1/models 不生成内容、不计模型调用费用。精确求交 GPT 启用 abilities、启用渠道、本人模型限制、KEY 的 /v1/models 计费准入和文件能力档；所有可能路由取共同操作能力。",
+        ),
+        operation(
+            "POST",
+            "/cockpit/api/image-studio/generations",
+            "文生图（真实计费）",
+            "生图工作站",
+            ref("ImageStudioResult"),
+            body=ref("ImageStudioGenerationRequest"),
+            header=("X-Cockpit-Studio", "1"),
+            effect="write",
+            testable=False,
+            description=studio_paid
+            + "JSON 请求最多 192 KiB；parameters 对象内各字段可省略。",
+        ),
+        operation(
+            "POST",
+            "/cockpit/api/image-studio/edits",
+            "编辑图片（真实计费）",
+            "生图工作站",
+            ref("ImageStudioResult"),
+            body=ref("ImageStudioEditRequest"),
+            header=("X-Cockpit-Studio", "1"),
+            effect="write",
+            testable=False,
+            description=studio_paid
+            + "使用 multipart/form-data；标量仅一次，image[] 保序。native-mask 局部编辑发送 mask，reference-only 局部编辑发送选区指导图而不发送 mask。有标注时 prompt 可为空。禁止远程 URL 输入、动画、SVG/HTML；URL-only 结果仅允许管理员配置的安全解析器。",
+        ),
+    ]
+    for path, method, spec in studio_ops:
+        spec["security"] = [
+            {"browserSession": []},
+            {"browserJWT": []},
+            {"adminPAT": []},
+        ]
+        spec["x-cockpit-auth"] = "enabled-user"
+        spec["x-cockpit-paid"] = spec["x-cockpit-effect"] == "write"
+        spec["responses"]["200"]["description"] = (
+            "成功；返回当前请求的结果，不创建后台任务。"
+        )
+        spec["responses"]["409"]["description"] = (
+            "令牌/操作不可用、契约变化、请求 ID 已提交或登录会话变化。"
+        )
+        spec["responses"]["502"]["description"] = (
+            "上游响应无效或调用失败；生成/编辑可能已计费，不自动重发。"
+        )
+        for code, response in spec["responses"].items():
+            if code != "200":
+                response["content"]["application/json"]["schema"] = ref(
+                    "ImageStudioError"
+                )
+        errors = [
+            (413, "上传体积、文件数或解码像素超过限制"),
+        ]
+        if spec["x-cockpit-paid"]:
+            errors.extend(
+                [
+                    (429, "本人请求进行中、图片容量已满或上游限流；不排队"),
+                    (504, "图片请求超过总截止，可能已计费；不自动重发"),
+                ]
+            )
+        for code, meaning in errors:
+            spec["responses"][str(code)] = {
+                "description": meaning,
+                "content": {"application/json": {"schema": ref("ImageStudioError")}},
+            }
+        if path.endswith("/edits"):
+            spec["requestBody"]["content"] = {
+                "multipart/form-data": {
+                    "schema": ref("ImageStudioEditRequest"),
+                    "encoding": {
+                        "parameters": {"contentType": "text/plain"},
+                        "intent": {"contentType": "text/plain"},
+                        "image[]": {
+                            "contentType": "image/png, image/jpeg, image/webp",
+                            "style": "form",
+                            "explode": True,
+                        },
+                        "mask": {"contentType": "image/png"},
+                    },
+                }
+            }
+    ops.extend(studio_ops)
     paths = {}
     for path, method, spec in ops:
         paths.setdefault(path, {})[method] = spec
@@ -1758,7 +2203,7 @@ def document():
         "info": {
             "title": "New API Cockpit API",
             "version": app_version,
-            "description": "管理接口使用 New API 管理员 PAT 或管理员浏览器会话；manual 和 intelligence 接口也允许启用的普通用户会话，仅读取或操作本人令牌与测试 KEY。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。所有写入仍受后端权限与审计约束；确认头不是幂等键。结果不明确时查实际数据和操作记录，不自动重发。",
+            "description": "管理接口使用 New API 管理员 PAT 或管理员浏览器会话；manual、intelligence 和 image-studio 接口也允许启用的普通用户会话。image-studio 仅使用本人既有 GPT KEY，管理员也不例外。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。写操作与真实计费操作须明确确认；确认头不是幂等键，认证失败不自动重放。结果不明确时查实际数据和 New API 日志，不自动重发。",
         },
         "servers": [{"url": "/", "description": "当前站点（保留协议、域名和端口）"}],
         "security": [{"adminPAT": []}, {"browserSession": []}],
@@ -1769,6 +2214,7 @@ def document():
                 "用量统计",
                 "渠道质量",
                 "智力测试",
+                "生图工作站",
                 "模型使用",
                 "通知渠道",
                 "用户管理",
@@ -1795,8 +2241,14 @@ def document():
                     "name": "cockpit_access",
                     "description": "HttpOnly 登录会话，由浏览器发送，不能从页面读取。",
                 },
+                "browserJWT": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "New API access JWT",
+                    "description": "已启用用户的访问 JWT；不是模型调用 KEY，不要求管理员。显式 Bearer 优先于 Cookie，失败不回退身份。",
+                },
             },
-            "schemas": {**SCHEMAS, **quality_schemas},
+            "schemas": {**SCHEMAS, **IMAGE_STUDIO_SCHEMAS, **quality_schemas},
         },
     }
 

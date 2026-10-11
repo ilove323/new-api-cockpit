@@ -2,6 +2,7 @@
 .env.*
 DEPLOYMENT.private.md
 docker-compose.override.yml
+image-studio-capabilities.json
 .venv
 __pycache__
 tests
