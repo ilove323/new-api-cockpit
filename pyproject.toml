@@ -24,7 +24,7 @@ dependencies = {file = ["requirements.txt"]}
 where = ["src"]
 
 [tool.setuptools.package-data]
-new_api_cockpit = ["*.sql", "migrations/*.sql", "templates/*.html", "templates/partials/*.html", "static/*", "static/icons/*.svg", "static/fonts/*"]
+new_api_cockpit = ["*.sql", "migrations/*.sql", "templates/*.html", "templates/partials/*.html", "static/*", "static/icons/*.svg", "static/fonts/*", "static/manual-images/*.webp"]
 
 [tool.ruff]
 target-version = "py312"

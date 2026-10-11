@@ -3,6 +3,8 @@
   'use strict';
   const auth = window.CockpitAuth, $ = id => document.getElementById(id);
   const next = auth.safeNext(document.querySelector('.login-card').dataset.next);
+  const userPages = new Set(['/cockpit/manual', '/cockpit/manual/', '/cockpit/intelligence', '/cockpit/intelligence/']);
+  const destination = user => user.role >= 10 || userPages.has(next.split('?')[0]) ? next : '/cockpit/manual';
   $('official-login').href = '/sign-in?' + new URLSearchParams({redirect: '/cockpit/login?' + new URLSearchParams({next})});
   let settings = null, challenge = null, busy = false, forbiddenSID = '';
   const status = (text, error = false) => { $('login-status').textContent = text; $('login-status').className = error ? 'error' : ''; };
@@ -15,16 +17,16 @@
     enabled(false); status('正在检查已有登录…'); $('login-retry').hidden = true;
     try {
       const user = await auth.refresh();
-      if (user) { status('登录成功，正在进入…'); location.replace(next); return; }
+      if (user) { status('登录成功，正在进入…'); location.replace(destination(user)); return; }
       const result = await auth.json('/api/status'); settings = result.data;
       if (!settings || typeof settings !== 'object') throw new Error('New API 站点配置读取失败。');
       resetChallenge();
-      status($('login-form').hidden ? '本站启用了额外登录验证，请使用下方 New API 登录页，完成后将自动返回。' : '请使用 New API 管理员账号登录。');
+      status($('login-form').hidden ? '本站启用了额外登录验证，请使用下方 New API 登录页，完成后将自动返回。' : '请使用 New API 账号登录。');
     } catch (error) {
       status(error.message, true); $('login-retry').hidden = false;
       if (error.code === 'AUTH_FORBIDDEN' && error.sessionID) {
         forbiddenSID = error.sessionID; $('login-switch').hidden = false;
-        status('当前 New API 账号没有管理权限，请退出当前登录后切换管理员账号。', true);
+        status('当前 New API 账号不可用，请退出当前登录后切换账号。', true);
       }
     }
     finally { enabled(true); }
@@ -61,8 +63,8 @@
       $('verification-code').focus(); status('请输入动态验证码或恢复码。');
       return;
     }
-    await auth.accept(data, true);
-    challenge = null; $('verification-code').value = ''; status('登录成功，正在进入…'); location.replace(next);
+    const user = await auth.accept(data, true);
+    challenge = null; $('verification-code').value = ''; status('登录成功，正在进入…'); location.replace(destination(user));
   }
   $('login-form').addEventListener('submit', async event => {
     event.preventDefault(); if (busy || !settings || !event.currentTarget.reportValidity()) return;

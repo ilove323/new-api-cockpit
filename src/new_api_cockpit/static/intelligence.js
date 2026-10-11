@@ -68,7 +68,7 @@
     try{
       const response=await fetch('/cockpit/api/intelligence/models',{signal:AbortSignal.timeout(20000)}),data=await response.json();
       if(!response.ok)throw new Error(data.error||'模型列表读取失败');
-      models=data.rows||[];options();if(!models.length)status('当前管理员没有可测试的文本模型。');
+      models=data.rows||[];options();if(!models.length)status('当前用户没有可测试的文本模型。');
     }catch(error){status(error.message,true);$('intelligence-model').replaceChildren();$('intelligence-model').disabled=true;}
   }
   $('intelligence-search').addEventListener('input',options);$('intelligence-model').addEventListener('change',select);

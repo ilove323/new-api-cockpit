@@ -13,6 +13,13 @@ from new_api_cockpit.app import app, safe_next
 
 HTML = '<html><body><svg><circle r="2"/></svg><script>window.animation=1</script></body></html>'
 ACTOR = {"id": 1, "username": "admin", "role": 100, "status": 1}
+MEMBER = {
+    "id": 12,
+    "username": "member",
+    "role": 1,
+    "status": 1,
+    "session_id": "member-session",
+}
 RAW_KEY = "A" * 48
 KEY = "sk-" + RAW_KEY
 CHOICE = {
@@ -27,6 +34,7 @@ CHOICE = {
 def token(**changes):
     return dict(
         id=11,
+        user_id=1,
         name=intel.KEY_NAME,
         status=1,
         expired_time=-1,
@@ -43,6 +51,234 @@ def token(**changes):
 
 
 class IntelligenceTest(unittest.TestCase):
+    def test_member_page_models_test_and_preview_keep_the_owner_and_hide_admin_links(
+        self,
+    ):
+        client = app.test_client()
+        headers = {"X-Intelligence-Request": "1"}
+        for path in ("test", "preview"):
+            self.assertEqual(
+                client.post("/cockpit/api/intelligence/" + path, json={}).status_code,
+                401,
+            )
+        with (
+            patch("new_api_cockpit.app.request_identity", return_value=MEMBER),
+            patch("new_api_cockpit.app.load_site_name", return_value="Fixture"),
+            patch.object(
+                intel, "model_options", return_value={"rows": [CHOICE]}
+            ) as models,
+            patch.object(intel, "run", return_value={"html": HTML}) as run,
+        ):
+            for path in ("/cockpit/intelligence", "/cockpit/intelligence/"):
+                page = client.get(path)
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(
+                    'href="/cockpit/intelligence/" aria-current="page"', page.text
+                )
+                self.assertIn('href="/cockpit/manual"', page.text)
+                self.assertIn("当前用户", page.text)
+                for admin in (
+                    "statistics",
+                    "quality",
+                    "users",
+                    "keys",
+                    "operations",
+                    "docs",
+                ):
+                    self.assertNotIn(f'href="/cockpit/{admin}/"', page.text)
+                    self.assertEqual(client.get(f"/cockpit/{admin}/").status_code, 403)
+            self.assertEqual(
+                client.get("/cockpit/api/intelligence/models").status_code, 200
+            )
+            models.assert_called_once_with(MEMBER, None)
+            for bad_headers in ({}, {**headers, "Origin": "https://elsewhere.invalid"}):
+                self.assertEqual(
+                    client.post(
+                        "/cockpit/api/intelligence/test",
+                        json={"model": "model-a"},
+                        headers=bad_headers,
+                    ).status_code,
+                    403,
+                )
+            run.assert_not_called()
+            self.assertEqual(
+                client.post(
+                    "/cockpit/api/intelligence/test",
+                    json={"model": "model-a"},
+                    headers=headers,
+                ).status_code,
+                200,
+            )
+            run.assert_called_once_with(MEMBER, None, {"model": "model-a"})
+            for request_args in (
+                {"json": {"html": HTML}, "headers": headers},
+                {
+                    "data": {"html": HTML, "session_id": MEMBER["session_id"]},
+                    "headers": {"Origin": "http://localhost"},
+                },
+            ):
+                preview = client.post(
+                    "/cockpit/api/intelligence/preview", **request_args
+                )
+                self.assertEqual(preview.status_code, 200)
+                self.assertIn(
+                    "sandbox allow-scripts", preview.headers["Content-Security-Policy"]
+                )
+                self.assertNotIn(
+                    "allow-same-origin", preview.headers["Content-Security-Policy"]
+                )
+            self.assertEqual(
+                client.post(
+                    "/cockpit/api/intelligence/preview",
+                    data={"html": HTML, "session_id": "another-session"},
+                    headers={"Origin": "http://localhost"},
+                ).status_code,
+                403,
+            )
+
+    def test_member_catalog_uses_their_session_and_groups_without_admin_catalog_or_pat(
+        self,
+    ):
+        conn = MagicMock()
+        conn.__enter__.return_value = conn
+        conn.execute.return_value = [
+            {"id": 25, "type": 14, "models": "model-a,foreign", "group": "g"},
+            {"id": 26, "type": 1, "models": "model-a,model-b", "group": "own"},
+            {"id": 27, "type": 1, "models": "not-permitted", "group": "other"},
+        ]
+        with (
+            patch.object(intel.management, "self_actor", return_value=MEMBER),
+            patch.object(intel.management, "actor") as admin,
+            patch.object(
+                intel.management, "target", return_value={**MEMBER, "group": "own"}
+            ),
+            patch.object(
+                intel.management, "selectable_groups", return_value=["own", "g"]
+            ),
+            patch.object(intel.quota, "connect", return_value=conn),
+            patch.object(
+                intel,
+                "upstream",
+                return_value={
+                    "success": True,
+                    "data": ["model-a", "model-b", "not-permitted"],
+                },
+            ) as api,
+            patch.object(intel, "model_catalog") as catalog,
+            patch.object(intel.management, "owner_pat") as pat,
+        ):
+            rows = intel.model_options(MEMBER, "member-jwt")["rows"]
+        self.assertEqual([row["model"] for row in rows], ["model-a", "model-b"])
+        self.assertEqual(rows[0]["group"], "own")
+        api.assert_called_once_with("/api/user/models", "member-jwt", 12)
+        admin.assert_not_called()
+        catalog.assert_not_called()
+        pat.assert_not_called()
+        for data in ({}, [None], "models"):
+            with (
+                patch.object(
+                    intel, "upstream", return_value={"success": True, "data": data}
+                ),
+                self.assertRaises(intel.Unavailable),
+            ):
+                intel.user_model_catalog("member-jwt", 12)
+
+    def test_member_test_key_creation_and_reconfiguration_use_only_own_session(self):
+        configured = {**token(), "user_id": MEMBER["id"]}
+        for missing in (True, False):
+            with (
+                self.subTest(missing=missing),
+                patch.object(
+                    intel, "_find_token", side_effect=[None, 11] if missing else [11]
+                ) as lookup,
+                patch.object(
+                    intel.management,
+                    "call_api",
+                    side_effect=[
+                        configured if missing else {**configured, "group": "old"},
+                        configured,
+                        {"key": RAW_KEY},
+                    ],
+                ) as api,
+                patch.object(intel.management, "self_token_action") as write,
+                patch.object(intel.management, "single_action") as admin,
+            ):
+                self.assertEqual(
+                    intel.test_key(MEMBER, CHOICE, credential="member-jwt"), KEY
+                )
+            self.assertTrue(all(call.args == (12,) for call in lookup.call_args_list))
+            self.assertTrue(
+                all(
+                    call.args[1] == 12 and call.kwargs["credential"] == "member-jwt"
+                    for call in api.call_args_list
+                )
+            )
+            self.assertEqual(write.call_count, 1)
+            self.assertEqual(write.call_args.args[0], MEMBER)
+            self.assertEqual(write.call_args.args[1], 12 if missing else 11)
+            self.assertEqual(
+                write.call_args.args[2]["action"], "create" if missing else "edit"
+            )
+            self.assertEqual(write.call_args.args[3], "member-jwt")
+            admin.assert_not_called()
+
+    def test_test_key_foreign_owner_or_wrong_id_stops_before_mutation_and_reveal(self):
+        for mismatch in ({"user_id": 99}, {"id": 99}):
+            for changed_after_read in (False, True):
+                configured = {**token(), "user_id": 12}
+                bad = {**configured, **mismatch}
+                with (
+                    self.subTest(mismatch=mismatch, second_read=changed_after_read),
+                    patch.object(intel, "_find_token", return_value=11),
+                    patch.object(
+                        intel.management,
+                        "call_api",
+                        side_effect=[configured, bad] if changed_after_read else [bad],
+                    ) as api,
+                    patch.object(intel.management, "self_token_action") as write,
+                    self.assertRaises(intel.management.Forbidden),
+                ):
+                    intel.test_key(MEMBER, CHOICE, credential="member-jwt")
+                write.assert_not_called()
+                self.assertFalse(
+                    any("/key" in call.args[2] for call in api.call_args_list)
+                )
+
+    def test_member_generation_uses_own_key_without_admin_channel_suffix(self):
+        for endpoint, response in (
+            ("openai", {"choices": [{"message": {"content": HTML}}]}),
+            ("anthropic", {"content": [{"type": "text", "text": HTML}]}),
+        ):
+            choice = {**CHOICE, "endpoint": endpoint}
+            with (
+                self.subTest(endpoint=endpoint),
+                patch.object(
+                    intel, "exclusive_test", return_value=nullcontext()
+                ) as lock,
+                patch.object(intel, "model_options", return_value={"rows": [choice]}),
+                patch.object(intel.management, "self_actor", return_value=MEMBER),
+                patch.object(intel.management, "actor") as admin,
+                patch.object(intel, "test_key", return_value=KEY) as key,
+                patch.object(
+                    intel,
+                    "upstream",
+                    side_effect=[{"data": [{"id": "model-a"}]}, response],
+                ) as api,
+            ):
+                result = intel.run(MEMBER, "member-jwt", {"model": "model-a"})
+            lock.assert_called_once_with(12)
+            key.assert_called_once_with(MEMBER, choice, credential="member-jwt")
+            self.assertEqual(api.call_args.args[1:], (KEY, 12))
+            self.assertEqual(
+                api.call_args.kwargs["headers"].get("x-api-key"),
+                KEY if endpoint == "anthropic" else None,
+            )
+            self.assertIsNone(result["channel_id"])
+            self.assertIsNone(result["channel_type"])
+            self.assertEqual(result["html"], HTML)
+            self.assertNotIn(RAW_KEY, json.dumps(result))
+            admin.assert_not_called()
+
     def test_catalog_uses_enabled_channels_owner_groups_and_text_endpoints_without_writes(
         self,
     ):

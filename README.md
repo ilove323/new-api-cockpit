@@ -15,7 +15,8 @@
 
 给 [New API](https://github.com/QuantumNous/new-api) 补一套统计和管理页面：查用量、对账、设余额告警，
 批量管理用户、令牌和额度，比较渠道质量，也可以现场测试模型生成动画的效果。
-页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 管理员账号；
+页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 账号；管理功能仅对管理员开放，
+普通用户也能使用智力测试和模型使用教程：测试自己的可用模型，选择自己的令牌生成客户端配置。
 在同站点登录过 New API，可以直接进入。
 
 本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，单独运行一个容器，
@@ -34,6 +35,7 @@
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
 | API 文档 | `/cockpit/docs/` | 按流程试调用接口，填写参数、查看响应、复制程序示例，查阅和下载 OpenAPI 描述 |
+| 模型使用 | `/cockpit/manual` | 普通用户登录后选择自己的令牌和模型，查看客户端接入教程；页面隐藏完整 KEY，显式复制时才填入 |
 
 统计页按渠道标签区分上游账本，也有“全部”和“未分组”。每个账本单独设置预算、报警阈值和监控开关，
 共用飞书、钉钉和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
@@ -45,7 +47,8 @@
 表格金额显示两位小数，悬浮详情、API 和 Excel 保留原精度。具体见[统计口径](docs/calculation.md)。
 
 用户和 KEY 的修改通过 New API 官方接口执行，每组最多 5 个并发请求。
-所有写操作需要监控库保存操作记录；只记录已发起的操作。KEY 管理使用所属用户的 PAT，缺失时通过受限函数补建。
+用户、KEY 和额度的修改需要监控库保存操作记录，只记录已发起的操作。
+管理员管理 KEY 时使用所属用户的 PAT，缺失才通过受限函数补建；普通用户的智力测试使用本人登录会话，不创建 PAT。
 
 页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
 各模块的地址、参数及调用示例见 [API 参考](docs/api.md)。
@@ -56,10 +59,15 @@
 渠道质量默认查看近 24 小时，当前启用渠道的上游在同一列表比较，不跟随余额账本或计费分组筛选；识别重试、流式异常与客户端取消，缺失数据不填成零。
 它只读取已有日志，不改变渠道或计费，口径与限制见[渠道质量](docs/quality.md)。
 
-智力测试使用当前管理员名下的专用 KEY，没有才创建，按所选模型自动换组。
+智力测试向所有已登录且启用的用户开放，使用当前用户名下的专用 KEY，没有才创建，按所选模型自动换组。
 Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 直接等待并显示结果，不保存测试历史；Cockpit 不设置输出 Token 上限，预览会按窗口缩放，也支持调整高度和全屏。
 调用正常计费，实际输出仍受 New API 和上游限制，详见[智力测试](docs/intelligence.md)。
+
+模型使用教程覆盖 Claude Code、Codex、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw 和 curl。
+地址取当前站点，按工具分别生成 Chat Completions、Responses 或 Anthropic Messages 配置；
+模型在客户端会话中选择，配置不固定默认模型；需要转换协议的 CC Switch 接入会列出本地路由设置。
+只查询本人令牌和模型，不改分组或额度，也不发起收费生成，详见[模型使用](docs/manual.md)。
 
 ## 部署
 
@@ -122,7 +130,7 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 ![用量统计](docs/assets/statistics.png)
 
 <details>
-<summary>用户管理、令牌管理、操作记录、通知设置与登录页</summary>
+<summary>用户管理、令牌管理、操作记录与通知设置</summary>
 
 ### 用户管理
 
@@ -140,17 +148,13 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 
 ![邮件通知设置](docs/assets/notifications.jpg)
 
-### 管理员登录
-
-![管理员登录页](docs/assets/login.jpg)
-
 </details>
 
 ## 文档
 
 - 安装与维护：[部署](docs/deployment.md) · [兼容范围](docs/compatibility.md) · [升级与备份](docs/upgrading.md) · [发版与镜像](docs/releasing.md)
 - 统计与告警：[统计口径](docs/calculation.md) · [渠道质量](docs/quality.md) · [余额监控](docs/monitoring.md) · [通知渠道](docs/notifications.md)
-- 模型测试：[鹈鹕骑车测试](docs/intelligence.md)
+- 模型接入与测试：[模型使用教程](docs/manual.md) · [鹈鹕骑车测试](docs/intelligence.md)
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)

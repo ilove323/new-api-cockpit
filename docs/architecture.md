@@ -21,9 +21,9 @@ statistics：一个应用容器
 
 两个数据库可以位于同一 PostgreSQL 实例，但必须分库配置。
 余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。所有时间边界使用北京时间。
-`/cockpit/` 下包含用量统计、渠道质量、智力测试、用户管理、令牌管理、操作记录和 API 文档，
+`/cockpit/` 下包含用量统计、渠道质量、智力测试、用户管理、令牌管理、操作记录、API 文档和模型使用，
 共用顶栏与侧边栏；完整页面地址见 [README](../README.md#功能)。
-业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`users`、`keys`、`operations` 模块，
+业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`users`、`keys`、`operations`、`manual` 模块，
 页面与外部程序调用同一套接口和权限，不另建一份外部管理逻辑。
 部署参数见[部署](deployment.md)，视觉规范见[界面](ui.md)。
 
@@ -41,17 +41,18 @@ statistics：一个应用容器
 
 | 模块 | 职责 |
 |---|---|
-| `app.py`、`auth.py` | 页面及 API、输入边界、管理员身份校验 |
+| `app.py`、`auth.py` | 页面及 API、输入边界、官方会话校验和默认管理员权限；普通用户入口显式列举 |
 | `openapi.py`、`static/api-docs*.js` | 显式接口契约、请求示例、单次调试与操作确认；不替代后端授权 |
 | `runtime.py`、`gunicorn_conf.py`、`timers.py`、`quota_timer.py` | 启动迁移、进程生命周期、两种内置调度与健康检查 |
 | `quality.py`、`quality.sql`、`static/quality.js` | 只读渠道尝试去重、当前标签对比、结果分类、性能健康、耗时分位数和历史价格查询 |
-| `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、管理员专用 KEY 复用与自适应沙箱预览，不保存结果 |
+| `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、本人专用 KEY 复用与自适应沙箱预览，不保存结果 |
+| `manual.py`、`static/manual*.js` | 本人令牌和模型查询、九类工具的接入教程、脱敏预览及显式含 KEY 复制，不生成内容或保存凭据 |
 | `report.py`、`usage.sql`、`metadata_fallback.py` | 只读用量聚合、异常日志兼容、排名与 Excel |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
 | `report_snapshots.py` | 按管理员与账本隔离、限时保留的不可变展示详情 |
 | `balance.py`、`scopes.py`、`catalog_sync.py` | 账本、渠道库存、月度逐渠道费用、余额与报警 |
 | `quota.py`、`quota_schedule.py`、`quota_schedule_executor.py` | 手工额度增减、定时规则与逐用户执行 |
-| `user_management.py` | 用户/KEY 查询、受限 PAT 补建、官方管理接口与批量改组 |
+| `user_management.py` | 管理员用户/KEY 管理、受限 PAT 补建、批量改组；普通用户测试 KEY 的本人会话调用与审计 |
 | `operation_records.py` | 请求发送前审计、规则审计、统一操作记录及游标分页 |
 | `notifications.py`、`notification_channels/` | 全局分渠道开关、凭据加密、飞书/钉钉/邮件发送与独立结果 |
 | `static/`、`templates/` | 共享界面与各页面交互 |
@@ -80,7 +81,7 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 | `notification_settings`、`notification_feishu_settings`、`notification_dingtalk_webhook_settings`、`notification_email_settings` | 每个通知渠道的开关、版本、发送状态与独立加密凭据 |
 | `quota_schedule_rules`、`quota_schedule_rule_groups` | 定时规则与用户组 |
 | `quota_schedule_runs`、`quota_schedule_run_items`、`quota_schedule_run_targets` | 周期快照、已发起结果与内部待执行名单 |
-| `user_management_operations`、`user_management_operation_items`、`user_management_operation_targets` | 实际管理员、已发起请求审计、预览冻结名单 |
+| `user_management_operations`、`user_management_operation_items`、`user_management_operation_targets` | 实际操作者、已发起请求审计、预览冻结名单 |
 | `report_snapshots`、`report_snapshot_rows` | 展示公式快照，非账单或余额缓存 |
 
 迁移目录见[数据库初始化与迁移](deployment.md#数据库初始化与迁移)。迁移文件是升级链，不能删除或重编号。
@@ -88,13 +89,15 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 
 ## 认证与审计
 
-网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，业务页面与会话 API 请求每次经官方 `/api/user/self` 验证会话及管理员身份。
+网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，每次会话请求经官方 `/api/user/self` 验证身份和账号状态。管理路由默认要求管理员；普通用户允许模型使用、智力测试及其本人接口、会话桥接和入口重定向，后端使用显式端点白名单。
 浏览器在官方路径刷新 HttpOnly Cookie，再将短期访问凭据交给 Cockpit 保存为 `/cockpit` 范围的 HttpOnly Cookie；会话由 New API 管理。
 业务 API 同时接受管理员 PAT Bearer，每次从源库读取其 ID、用户名及角色并验证启禁状态；
 余额与报警接口仅接受 PAT。PAT 不能换取网页 Cookie，不能使用客户端指定的身份执行或记录操作。
 敏感写请求检查同源 JSON 与对应请求头；前端不自动重发写请求，账号切换时阻止旧页面继续提交。详见[登录与会话](authentication.md)。
-PAT 每次从源库读取，不放在浏览器、配置或监控库；缺失时才经受限函数补建。
+管理员管理 KEY 使用所属用户 PAT，每次从源库读取，缺失才经受限函数补建；普通用户测试使用自己的会话，不补建 PAT。后端取出的 PAT 不返回浏览器，不写入配置或监控库。
 文档调试可由管理员手动输入 PAT，仅留在页面内存；不会从数据库取出 PAT 展示给前端。
+
+模型使用通过当前身份调用官方 `/api/token/` 和 `/api/token/:id/key`，上游及 Cockpit 都核对归属，不补建 PAT。模型查询用所选 KEY 调用 `/v1/models`，受令牌分组、模型和 IP 限制；不请求公开价格页。KEY 只短暂用于服务器查询和用户明确复制，不进入教程预览、URL、日志或存储，无新表和调度任务。
 通知 Secret 用独立密钥加密，密钥与监控库均需备份。
 完整 KEY 仅在明确查看后显示，窗口关闭后清除，不进入 URL 或持久缓存。
 普通管理员仅查看自身操作，超级管理员可查看全部；统一记录和逐条详情采用同一权限边界。
@@ -108,14 +111,14 @@ PAT 每次从源库读取，不放在浏览器、配置或监控库；缺失时�
 不加载账本切换控件或解析 `scope_id`，不按计费分组、档位或余额渠道排除名单限制结果。
 默认查询只读取源库的当前启用渠道；接口选择全部历史渠道时，才读取监控库存补充已删除渠道的名称和标签。
 当前渠道信息优先于库存。分析只用已有日志，不启动采样或调度任务，也不新增表。
-默认只统计当前启用渠道。性能健康复用相同只读快照：平均延迟从有效耗时合计和样本数计算，高频模型从完整渠道结果合并计数后排序，不平均各行比例或延迟。
+性能健康复用相同只读快照：平均延迟从有效耗时合计和样本数计算，高频模型从完整渠道结果合并计数后排序，不平均各行比例或延迟。
 HTTP 接口为 `/cockpit/api/quality/summary` 和 `/cockpit/api/quality/trends`。规则和边界见[渠道质量](quality.md)。
 
 ## 智力测试
 
 `/cockpit/intelligence/` 发起同步生成，请求内完成模型目录核验、专用 KEY 准备和调用。
-当前管理员在不同 Web 进程间通过 session advisory lock 串行使用其测试 KEY；不创建后台任务、线程池或新表。
+当前用户在不同 Web 进程间通过 session advisory lock 串行使用其测试 KEY；不创建后台任务、线程池或新表。
 生成结果只返回浏览器。预览把当前 HTML 同源 POST 到独立沙箱响应，不放在 URL、文件或服务端缓存里。
 尺寸测量脚本是随包分发的固定资源，每个应用进程加载一次；生成内容不参与缓存。
-只有 KEY 创建/配置沿用现有操作审计，复用原 PAT 补建能力，不增加源库写权限。
+只有 KEY 创建/配置沿用现有操作审计。管理员复用原 PAT 补建能力；普通用户使用自己的已验证会话调用官方令牌接口，不补建 PAT，不增加源库函数、写权限或表。
 接口在 `/cockpit/api/intelligence/` 下，细节见[智力测试](intelligence.md)。

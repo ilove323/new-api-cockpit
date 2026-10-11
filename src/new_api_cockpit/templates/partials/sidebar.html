@@ -1,14 +1,21 @@
 {% from "partials/icons.html" import icon %}
 <aside class="app-sidebar" id="app-sidebar" aria-label="页面导航">
-  <p class="sidebar-heading">扩展管理</p>
+  <p class="sidebar-heading">{{ '扩展管理' if current_user and current_user.role >= 10 else '模型接入' }}</p>
   <nav>
+    {% if current_user and current_user.role >= 10 %}
     <a href="/cockpit/statistics/" {% if request.path.startswith('/cockpit/statistics') %}aria-current="page"{% endif %} title="用量统计">{{ icon('chart-no-axes-combined') }}<span class="nav-label">用量统计</span></a>
-    <a href="/cockpit/quality/" {% if request.path.startswith('/cockpit/quality') %}aria-current="page"{% endif %} title="渠道质量">{{ icon('chart-no-axes-combined') }}<span class="nav-label">渠道质量</span></a>
+    <a href="/cockpit/quality/" {% if request.path.startswith('/cockpit/quality') %}aria-current="page"{% endif %} title="渠道质量">{{ icon('heart-pulse') }}<span class="nav-label">渠道质量</span></a>
     <a href="/cockpit/intelligence/" {% if request.path.startswith('/cockpit/intelligence') %}aria-current="page"{% endif %} title="智力测试">{{ icon('flask-conical') }}<span class="nav-label">智力测试</span></a>
     <a href="/cockpit/users/" {% if request.path.startswith('/cockpit/users') %}aria-current="page"{% endif %} title="用户管理">{{ icon('users') }}<span class="nav-label">用户管理</span></a>
     <a href="/cockpit/keys/" {% if request.path.startswith('/cockpit/keys') %}aria-current="page"{% endif %} title="令牌管理">{{ icon('key-round') }}<span class="nav-label">令牌管理</span></a>
     <a href="/cockpit/operations/" {% if request.path.startswith('/cockpit/operations') %}aria-current="page"{% endif %} title="操作记录">{{ icon('scroll-text') }}<span class="nav-label">操作记录</span></a>
     <a href="/cockpit/docs/" {% if request.path.startswith('/cockpit/docs') %}aria-current="page"{% endif %} title="API 文档">{{ icon('book-open') }}<span class="nav-label">API 文档</span></a>
+    {% endif %}
+    <a href="/cockpit/manual" {% if request.path.rstrip('/') == '/cockpit/manual' %}aria-current="page"{% endif %} title="模型使用">{{ icon('graduation-cap') }}<span class="nav-label">模型使用</span></a>
+    {% if current_user and current_user.role < 10 %}
+    <a href="/cockpit/intelligence/" {% if request.path.startswith('/cockpit/intelligence') %}aria-current="page"{% endif %} title="智力测试">{{ icon('flask-conical') }}<span class="nav-label">智力测试</span></a>
+    <a href="/keys" title="我的令牌">{{ icon('key-round') }}<span class="nav-label">我的令牌</span></a>
+    {% endif %}
   </nav>
   <div class="sidebar-account"><span class="nav-label">{{ current_user.username if current_user else "" }}</span><button id="logout" class="button-ghost" type="button" title="退出当前浏览器的 New API 登录">{{ icon('power') }}<span class="nav-label">退出登录</span></button><p id="logout-status" role="status" class="nav-label"></p></div>
 </aside>

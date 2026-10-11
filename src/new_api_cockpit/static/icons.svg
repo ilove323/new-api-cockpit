@@ -124,5 +124,15 @@
       <path d="M6.453 15h11.094" />
       <path d="M8.5 2h7" />
     </symbol>
+    <!-- Locally drawn manual navigation and setup symbols. -->
+    <symbol id="graduation-cap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m2 8 10-5 10 5-10 5Z"/><path d="M6 10v7c4 3 8 3 12 0v-7M22 8v7"/>
+    </symbol>
+    <symbol id="copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+    </symbol>
+    <symbol id="shield-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3 3 7v5c0 5 5 8 9 10 4-2 9-5 9-10V7Z"/><path d="m8 12 3 3 5-5"/>
+    </symbol>
   </defs>
 </svg>

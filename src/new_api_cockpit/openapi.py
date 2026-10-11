@@ -1369,6 +1369,75 @@ def document():
         )
         entry[2]["security"] = [{"browserSession": []}]
         ops.append(entry)
+    manual_body = obj(
+        {"token_id": integer(1, maximum=2147483647)},
+        ("token_id",),
+        additionalProperties=False,
+    )
+    manual_token = obj(
+        {
+            "id": integer(1),
+            "name": text(),
+            "key_masked": text(),
+            "group": text(),
+            "status": integer(),
+            "expired_time": {"type": "integer"},
+            "remain_quota": {"type": "integer"},
+            "unlimited_quota": BOOL,
+            "usable": BOOL,
+            "unavailable_reason": text(),
+        }
+    )
+    for method, suffix, title, response, description in (
+        (
+            "GET",
+            "tokens",
+            "列出本人令牌选项",
+            obj({"tokens": array(manual_token), "token_manager_path": text()}),
+            "普通用户会话可用；仅本人令牌，最多 2000 个，只返回脱敏 KEY。不读取全站令牌或补建 PAT。",
+        ),
+        (
+            "POST",
+            "models",
+            "查询所选本人令牌的可用模型",
+            obj(
+                {
+                    "models": array(
+                        obj(
+                            {
+                                "id": text(),
+                                "protocols": array(
+                                    choice("chat", "responses", "anthropic")
+                                ),
+                            }
+                        )
+                    )
+                }
+            ),
+            "经官方接口核对归属后，在后台读取 KEY 调用 /v1/models。不生成内容、不返回 KEY，不绕过令牌 IP 限制。protocols 为空表示上游未声明协议，不能视为全部支持。官方可能记录 KEY 读取审计；请求不自动重发。",
+        ),
+        (
+            "POST",
+            "key",
+            "读取本人令牌用于显式复制",
+            obj({"key": text(format="password")}),
+            "只用于用户明确点击复制配置（含 KEY）。返回 sk- 前缀模型 KEY；响应敏感且禁止缓存，勿记录或分享。官方再次校验归属并可能记录读取审计。不可从交互式 API 文档执行。",
+        ),
+    ):
+        ops.append(
+            operation(
+                method,
+                "/cockpit/api/manual/" + suffix,
+                title,
+                "模型使用",
+                response,
+                body=manual_body if method == "POST" else None,
+                header=("X-Cockpit-Manual", "1") if method == "POST" else None,
+                example={"token_id": 23} if method == "POST" else None,
+                description=description,
+                testable=False,
+            )
+        )
     quality_params = [
         query(
             "start",
@@ -1588,7 +1657,7 @@ def document():
                 "查询可测试模型与自动分组",
                 "智力测试",
                 intelligence_models,
-                description="使用真实管理员身份查询官方 /api/models/ 管理目录（包含渠道模型），不依赖公开价格页开关。完整读取最多 2000 条目录记录，并与当前启用渠道、所属用户的分组权限取交集，只列支持文本生成的模型。优先用户组，否则按组名排序；组内按渠道优先级降序、ID 升序选取启用渠道。channel_id/channel_type 表示该渠道，类型 14 用 anthropic（Messages），其他用 openai（Chat Completions），不按模型名称或目录端点顺序判断。不创建 PAT/KEY，不保存测试结果。",
+                description="允许启用用户的登录会话或管理员 PAT。管理员查询官方 /api/models/ 管理目录（含渠道模型，最多 2000 条记录），并按文本能力过滤；普通用户通过自己的会话查询 /api/user/models（最多 10000 个模型名），不借用管理员凭据。两者均与当前启用渠道和本人可用分组取交集，不依赖公开价格页开关。优先用户组，否则按组名排序；组内按优先级降序、ID 升序选择测试协议的参考渠道。channel_id/channel_type 表示该参考渠道，类型 14 用 anthropic（Messages），其他用 openai（Chat Completions）；普通用户请求不会固定渠道。不创建 PAT/KEY，不保存测试结果。",
             ),
             operation(
                 "POST",
@@ -1600,8 +1669,14 @@ def document():
                         "model": text(),
                         "group": text(),
                         "endpoint": choice("openai", "anthropic"),
-                        "channel_id": integer(),
-                        "channel_type": integer(),
+                        "channel_id": {
+                            "type": ["integer", "null"],
+                            "description": "管理员固定渠道的 ID；普通用户为 null。",
+                        },
+                        "channel_type": {
+                            "type": ["integer", "null"],
+                            "description": "管理员固定渠道的类型；普通用户为 null。",
+                        },
                         "key_name": text(),
                         "elapsed_ms": integer(),
                         "html": {"type": ["string", "null"]},
@@ -1617,7 +1692,7 @@ def document():
                 example={"model": "gpt-6-astra"},
                 header=("X-Intelligence-Request", "1"),
                 effect="write",
-                description="同步等待模型返回，不创建后台任务或测试历史。开始时重新选择可用分组及渠道，Anthropic 渠道（类型 14）调用 /v1/messages，其他调用 /v1/chat/completions；通过官方管理员指定渠道机制固定本次路由，失败不换渠道或协议。当前管理员名下复用 cockpit-智力测试专用 KEY，没有才通过官方 API 创建；自动改组并限制为所选模型。首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 额度/到期/启禁配置不重置。只允许 model，不允许指定用户、渠道、分组、凭据或题目。同一管理员并发返回 409；生成最长 180 秒，Cockpit 不设置输出 Token 上限参数；Claude 必需的 max_tokens 由 New API 配置补齐，实际仍受上游限制。超时/失败不自动重试，可能已产生费用。测试结果只在响应中；KEY 创建/配置沿用现有审计。不支持接续或按 ID 取回结果。html 为 null 时看 source/warning，不自动补代码或再次调用模型。",
+                description="同步等待模型返回，不创建后台任务或测试历史。所有启用用户的登录会话均可使用。开始时重新选择本人可用分组及渠道，Anthropic 渠道（类型 14）调用 /v1/messages，其他调用 /v1/chat/completions；管理员通过指定渠道机制固定路由；普通用户使用不带渠道后缀的 KEY，交给 New API 在所选分组正常路由，响应 channel_id/channel_type 为 null。失败不自动换协议或重试。当前用户名下复用 cockpit-智力测试专用 KEY，没有才通过官方 API 创建；普通用户使用本人的已验证登录会话操作 KEY，不补建 PAT；自动改组并限制为所选模型。首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 额度/到期/启禁配置不重置。只允许 model，不允许指定用户、渠道、分组、凭据或题目。同一用户并发返回 409；生成最长 180 秒，Cockpit 不设置输出 Token 上限参数；Claude 必需的 max_tokens 由 New API 配置补齐，实际仍受上游限制。超时/失败不自动重试，可能已产生费用。测试结果只在响应中；KEY 创建/配置沿用现有审计。不支持接续或按 ID 取回结果。html 为 null 时看 source/warning，不自动补代码或再次调用模型。",
             ),
             operation(
                 "POST",
@@ -1683,7 +1758,7 @@ def document():
         "info": {
             "title": "New API Cockpit API",
             "version": app_version,
-            "description": "接口使用 New API 管理员 PAT 或同站浏览器会话。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。所有写入仍受后端权限与审计约束；确认头不是幂等键。结果不明确时查实际数据和操作记录，不自动重发。",
+            "description": "管理接口使用 New API 管理员 PAT 或管理员浏览器会话；manual 和 intelligence 接口也允许启用的普通用户会话，仅读取或操作本人令牌与测试 KEY。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。所有写入仍受后端权限与审计约束；确认头不是幂等键。结果不明确时查实际数据和操作记录，不自动重发。",
         },
         "servers": [{"url": "/", "description": "当前站点（保留协议、域名和端口）"}],
         "security": [{"adminPAT": []}, {"browserSession": []}],
@@ -1694,6 +1769,7 @@ def document():
                 "用量统计",
                 "渠道质量",
                 "智力测试",
+                "模型使用",
                 "通知渠道",
                 "用户管理",
                 "用户额度",

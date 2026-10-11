@@ -1,16 +1,16 @@
 # API 参考
 
 Cockpit 的业务接口统一放在 `/cockpit/api/`，与页面共用站点入口。
-报表、渠道质量、智力测试、用户、令牌、配额、规则和操作记录接口支持 **New API 管理员 PAT** 调用，
-网页通过 New API 登录会话调用同一套业务接口。
+报表、渠道质量、智力测试、模型使用、用户、令牌、配额、规则和操作记录接口支持 **New API 管理员 PAT** 调用。
+网页通过 New API 登录会话调用同一套接口；模型使用和智力测试向启用的普通用户开放，其余管理功能要求管理员。
 
 - 页面地址见 [README](../README.md#功能)。
-- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`users`、`keys`、`operations` 模块。
+- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`manual`、`users`、`keys`、`operations` 模块。
 - 独立余额和报警：`/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert`。
 - New API 自己的 `/api/...` 不属于本项目，仍由 New API 处理。
 
 登录后在 `/cockpit/docs/` 可查看交互式文档并试调用，使用方法见[交互式文档](interactive-api.md)。
-`GET /cockpit/api/openapi.json` 返回 OpenAPI 3.1 描述，接受管理员 PAT 或浏览器会话，不访问业务数据。
+`GET /cockpit/api/openapi.json` 返回 OpenAPI 3.1 描述，接受管理员 PAT 或管理员浏览器会话，不访问业务数据。
 
 Nginx 转发完整 `/cockpit/` 前缀，覆盖页面、API 和静态资源。
 
@@ -37,6 +37,7 @@ PAT 不放在 URL、请求体或 Cookie，也不需要写入 Cockpit 的 `.env`�
 显式 Bearer 优先于 Cookie，凭据无效时不会回退到另一个登录身份。
 统计模块的 `/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert` 仅接受管理员 PAT。
 会话桥接 `/cockpit/api/auth/session` 用于网页登录，不接受 PAT 换取网页登录 Cookie。
+模型使用的 `/cockpit/api/manual/` 和智力测试的 `/cockpit/api/intelligence/` 接口允许启用的普通用户会话，仅针对当前账号；使用管理员 PAT 时也不能指定其他用户。
 不开放跨域 CORS；服务器、脚本直接调用不需要 `Origin`。浏览器写请求的来源必须与站点一致。
 
 下文示例假定调用环境已安全注入 `ADMIN_PAT`，只需设置站点地址：
@@ -60,6 +61,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | 报表详情、余额设置、历史追溯、手工检查、通知设置与测试 | `X-Statistics-Request: 1` |
 | 浏览器会话承接、清除 | `X-Cockpit-Auth: 1` |
 | 智力测试发起、JSON HTML 预览 | `X-Intelligence-Request: 1` |
+| 模型使用：按令牌读取模型、读取 KEY | `X-Cockpit-Manual: 1` |
 
 确认头只是防误操作和跨站表单的校验，**不表示幂等**。
 用户/KEY/额度写操作必须配置监控库保存审计，未配置时不能执行。
@@ -82,7 +84,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 |---|---|
 | 400 | 参数、金额、字段或业务条件不合法；检查错误信息 |
 | 401 | 缺少或无效凭据；PAT 账号不符合管理员条件时也返回此状态。响应含 `WWW-Authenticate: Bearer` |
-| 403 | 当前身份无目标操作权限、会话不是可用管理员，或缺少确认头/来源不匹配 |
+| 403 | 当前功能要求管理员、账号不可用、无目标操作权限，或缺少确认头/来源不匹配 |
 | 404 / 405 | 路径不存在 / 方法不支持 |
 | 409 | 设置版本、预览、会话或执行状态冲突；重新读取并核对，不要盲目重试 |
 | 410 | 报表详情快照过期或不属于当前账号/账本；重新查询列表 |
@@ -764,23 +766,23 @@ curl --fail-with-body "$BASE_URL/cockpit/api/quality/summary?start=2026-10-09&en
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| `GET` | `/cockpit/api/intelligence/models` | 查询当前管理员可测试模型、自动分组、文本端点、固定题目及专用 KEY 名称；不补建 PAT/KEY |
+| `GET` | `/cockpit/api/intelligence/models` | 查询当前用户可测试模型、自动分组、文本端点、固定题目及专用 KEY 名称；不补建 PAT/KEY |
 | `POST` | `/cockpit/api/intelligence/test` | 同步生成鹈鹕骑车 HTML，正常计费 |
 | `POST` | `/cockpit/api/intelligence/preview` | 当前请求内沙箱预览 HTML，不调用模型、不保存 |
 
-均接受有效管理员会话或 PAT，不能指定另一用户的身份。
+均接受启用用户的有效登录会话或管理员 PAT，不能指定另一用户的身份。普通用户读取官方 `/api/user/models`，使用自己的会话操作测试 KEY，不创建 PAT；管理员继续使用本人 PAT 和受限补建能力。
 测试只接受 `{"model":"模型名"}`，必须携带 `X-Intelligence-Request: 1`；分组与题目由后端决定。
 模型目录的每行包含 `model`、`group`、`available_groups`、`channel_id`、`channel_type`、`endpoint`。
 优先当前用户组，否则按组名排序；组内按渠道优先级降序、ID 升序选择当前启用渠道。
 `endpoint` 只有 `anthropic` 和 `openai`：Anthropic 渠道（`channel_type: 14`）使用 `/v1/messages`，其他使用 `/v1/chat/completions`。
-开始时重新选择并固定该渠道，不按模型名猜协议，不自动切换渠道或协议重试。
-测试返回 `model`、`group`、`channel_id`、`channel_type`、`endpoint`、`key_name`、`elapsed_ms`、`html`、`source`、`warning`。
+开始时重新核对可用模型和分组。管理员固定选中的渠道；普通用户不使用指定渠道后缀，由 New API 在所选分组内正常路由，目录中的渠道字段仅用于选择测试协议。不按模型名猜协议，不自动切换协议或重试。
+测试返回 `model`、`group`、`channel_id`、`channel_type`、`endpoint`、`key_name`、`elapsed_ms`、`html`、`source`、`warning`。普通用户请求没有固定实际渠道，响应中的 `channel_id`、`channel_type` 为 null。
 Cockpit 不发送输出 Token 上限参数；Claude 必需的 `max_tokens` 由 New API 的模型配置补齐，实际仍受上游限制。
 `html` 为 null 表示结果不能预览，仍可查看 `source` 与 `warning`；不代表可以原样重试而不计费。
-同一管理员并发返回 409，不排队。模型生成最多 180 秒，超时返回 504、`uncertain: true`，不自动重试。
+同一用户并发返回 409，不排队。模型生成最多 180 秒，超时返回 504、`uncertain: true`，不自动重试。
 生成响应没有任务 ID，不提供历史或结果查询接口，刷新页面不能找回。
 
-测试 KEY 名为 `cockpit-智力测试专用`，只在当前管理员名下查找或创建，永久保留。
+测试 KEY 名为 `cockpit-智力测试专用`，只在当前用户名下查找或创建，永久保留。
 首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 的额度、到期、启禁与 IP 配置不重置。
 每次自动匹配分组并限定所选模型；KEY 创建/配置写入现有审计，不保存 HTML、PAT 或完整 KEY。
 
@@ -796,3 +798,20 @@ curl --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
 预览响应附加仅回传宽高的尺寸脚本，用于窗口缩放，不改变测试返回的 `html` / `source`。
 表单需要有效 Origin 与匹配的 `session_id`，不接受 PAT 表单替代。
 更完整的使用与限制见[智力测试](intelligence.md)。
+
+## 模型使用（本人令牌）
+
+| 方法 | 地址 | 用途 |
+| --- | --- | --- |
+| `GET` | `/cockpit/api/manual/tokens` | 列出本人令牌，返回 `tokens`、`token_manager_path`；KEY 始终脱敏 |
+| `POST` | `/cockpit/api/manual/models` | 按所选 KEY 查询 `/v1/models`，返回 `models: [{id, protocols}]`，不生成内容、不返回 KEY |
+| `POST` | `/cockpit/api/manual/key` | 明确复制时读取本人模型 KEY，返回 `key`（含 `sk-` 前缀）；响应敏感且禁止缓存 |
+
+启用的普通用户会话可用，管理页面仍要求管理员。管理员 PAT 也只读取该管理员自己的令牌。
+POST 使用 JSON、`X-Cockpit-Manual: 1`，请求体仅接受 `{"token_id": 123}`；最多 1024 字节。
+后台先读取官方本人令牌详情，验证归属、状态、有效期和额度，再调用官方 KEY 读取接口。
+模型目录调用受 KEY 的分组、模型限制和 IP 允许列表约束，不修改设置、不回退到全站目录。
+`protocols` 值为 `chat`、`responses`、`anthropic`；空数组表示上游未声明，不代表全部支持。
+令牌列表最多 2000 个，超过返回 413；令牌不可用返回 409，无归属权限或受 IP 限制返回 403，上游响应无效/不可用返回 502/503。
+KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY 复制，不进入交互式文档调试器，避免在响应面板泄露。
+官方可能记录 KEY 读取审计，但不新增 Cockpit 操作记录。教程与协议地址规则见[模型使用](manual.md)。

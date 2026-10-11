@@ -3,6 +3,9 @@
 支持 PostgreSQL 后端，Python 要求 3.12+。CI 覆盖 PostgreSQL 15/16；
 接入其他版本或自定义 fork 时，请核对下列字段、登录协议和计费单位。SQLite、MySQL 暂不支持。
 
+模型使用页还需要本人令牌接口 `GET /api/token/`、`GET /api/token/:id`、`POST /api/token/:id/key` 和模型调用目录 `GET /v1/models`。
+KEY 读取接口需按当前身份核对归属；本页不使用公开 `/api/pricing` 或管理员模型目录。协议选项按客户端配置方式启用，不用模型协议元数据隐藏选项，也不根据模型名称拒绝接入，详见[模型使用](manual.md)。
+
 依赖字段：
 
 | 表 | 字段 |
@@ -41,7 +44,7 @@ Token 单价可能留空，但消费金额仍取日志，不能用当前单价�
 精确渠道尝试依赖 `other.admin_info.request_policy` 的 attempt/channel_id/elapsed_ms/decision；
 首响应依赖 `other.frt`，异常流式状态依赖 `other.stream_status`。没有这些字段时不能还原相同质量口径，见[渠道质量](quality.md)。
 
-智力测试依赖管理员模型目录 `/api/models/`（含渠道模型）、所属用户的官方令牌管理接口及管理员指定渠道能力。
+智力测试向启用的登录用户开放。管理员模型目录使用 `/api/models/`（含渠道模型），普通用户使用 `/api/user/models` 读取本人可用模型；两者都与当前启用渠道及所属用户可用分组核对。管理员通过本人 PAT 操作专用 KEY 并可指定渠道；普通用户使用本人登录会话操作专用 KEY，模型调用交给 New API 正常路由，不附加管理员专用的渠道 ID 后缀。
 Anthropic 类型 14 使用 `/v1/messages`，其他渠道使用 `/v1/chat/completions`。
-目录仅列支持文本生成且当前管理员有可用渠道的模型；对应渠道不接受上述协议时会直接报错，不切换协议重试。
+管理员目录按文本能力筛选；普通用户接口仅返回本人可用模型名，不提供文本能力声明。测试前以本人专用 KEY 再核对模型权限；对应渠道不接受上述协议时直接报错，不切换协议重试。
 Claude 必需的 `max_tokens` 由 New API 常规转发按配置补齐，请求体透传模式需由上游提供默认值，见[智力测试](intelligence.md)。

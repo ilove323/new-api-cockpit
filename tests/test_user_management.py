@@ -30,6 +30,132 @@ class UserManagementTest(unittest.TestCase):
             "auto_groups": [],
         }
 
+    def test_self_actor_checks_fresh_id_username_role_and_enabled_status(self):
+        conn = MagicMock()
+        conn.__enter__.return_value = conn
+        for row in (
+            self.user,
+            None,
+            {**self.user, "status": 2},
+            {**self.user, "username": "renamed"},
+            {**self.user, "role": 10},
+        ):
+            conn.execute.return_value.fetchone.return_value = row
+            with patch.object(manage.quota, "connect", return_value=conn):
+                if row == self.user:
+                    self.assertEqual(manage.self_actor(self.user), self.user)
+                else:
+                    with self.assertRaises(manage.Forbidden):
+                        manage.self_actor(self.user)
+            self.assertEqual(conn.execute.call_args.args[1], (2,))
+
+    def test_self_token_action_cannot_target_another_owner_or_manage_users(self):
+        with (
+            patch.object(manage, "self_actor", return_value=self.user),
+            patch.object(
+                manage, "token_owner", return_value=({**self.user, "id": 3}, 7)
+            ),
+            patch.object(manage, "_single_action") as audit,
+        ):
+            for object_id, action, credential in (
+                (3, "create", "member-session"),
+                (7, "edit", "member-session"),
+                (2, "disable", "member-session"),
+                (2, "create", None),
+            ):
+                with self.subTest(action=action), self.assertRaises(manage.Forbidden):
+                    manage.self_token_action(
+                        self.user, object_id, {"action": action}, credential
+                    )
+            audit.assert_not_called()
+            manage.self_token_action(
+                self.user, 2, {"action": "create"}, "member-session"
+            )
+            audit.assert_called_once_with(
+                self.user, "token", 2, {"action": "create"}, credential="member-session"
+            )
+        with patch.object(
+            manage, "actor", side_effect=manage.Forbidden("admin required")
+        ):
+            with self.assertRaises(manage.Forbidden):
+                manage.single_action("alice", "user", 3, {"action": "edit"})
+
+    def test_session_token_api_stays_own_scoped_and_does_not_read_or_create_a_pat(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"success": true, "data": {"id": 3}}'
+        opener = MagicMock()
+        opener.open.return_value = response
+        with (
+            patch.object(manage, "target", return_value=self.user) as target,
+            patch.object(manage, "owner_pat") as pat,
+            patch.object(manage.urllib.request, "build_opener", return_value=opener),
+        ):
+            self.assertEqual(
+                manage.call_api(
+                    self.user, 2, "/api/token/3", credential="member-session"
+                ),
+                {"id": 3},
+            )
+            req = opener.open.call_args.args[0]
+            self.assertEqual(req.get_header("Authorization"), "Bearer member-session")
+            self.assertEqual(req.get_header("New-api-user"), "2")
+            target.assert_called_once_with(self.user, 2, enabled=True)
+            pat.assert_not_called()
+            for owner, path in ((3, "/api/token/3"), (2, "/api/user/2")):
+                with self.assertRaises(manage.Forbidden):
+                    manage.call_api(self.user, owner, path, credential="member-session")
+            self.assertEqual(opener.open.call_count, 1)
+
+    def test_member_token_edit_retains_audit_and_preserves_quota_with_own_session(self):
+        conn = MagicMock()
+        conn.__enter__.return_value = conn
+        conn.execute.return_value.fetchone.return_value = {"name": "demo"}
+        changes = {
+            "group": "b",
+            "model_limits_enabled": True,
+            "model_limits": "model-a",
+        }
+        with (
+            patch.object(manage, "self_actor", return_value=self.user),
+            patch.object(manage, "token_owner", return_value=(self.user, 3)),
+            patch.object(manage, "target", return_value=self.user),
+            patch.object(manage, "selectable_groups", return_value=["a", "b"]),
+            patch.object(manage, "_audit_ready"),
+            patch.object(manage.balance, "connect", return_value=conn),
+            patch.object(manage.quota, "connect", return_value=conn),
+            patch.object(manage, "_finish") as finish,
+            patch.object(manage, "call_api", side_effect=[self.token, None]) as api,
+        ):
+            self.assertTrue(
+                manage.self_token_action(
+                    self.user,
+                    3,
+                    {"action": "edit", "changes": changes},
+                    "member-session",
+                )["ok"]
+            )
+        self.assertEqual(api.call_count, 2)
+        self.assertTrue(
+            all(
+                call.args[1] == 2 and call.kwargs["credential"] == "member-session"
+                for call in api.call_args_list
+            )
+        )
+        payload = api.call_args.kwargs["body"]
+        self.assertEqual(payload["group"], "b")
+        for field in ("remain_quota", "unlimited_quota", "allow_ips", "expired_time"):
+            self.assertEqual(payload[field], self.token[field])
+        records = [
+            call.args
+            for call in conn.execute.call_args_list
+            if "INSERT INTO user_management_" in call.args[0]
+        ]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0][1][1:4], (2, "alice", "token.edit"))
+        self.assertEqual(records[1][1][2:4], (3, 2))
+        self.assertEqual(finish.call_args.args[1:], (3, "success", ""))
+
     def test_pat_matches_base64_crypto_generator_not_inference_key(self):
         for _ in range(100):
             pat = manage.generate_pat()

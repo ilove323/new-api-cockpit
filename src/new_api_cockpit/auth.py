@@ -74,7 +74,7 @@ def session_claims(token):
         raise LoginRequired("登录已失效，请重新登录。") from None
 
 
-def verify_session(token):
+def verify_session(token, *, allow_user=False):
     claims = session_claims(token)
     base = os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000").rstrip("/")
     parsed = urlsplit(base)
@@ -121,7 +121,9 @@ def verify_session(token):
         or type(user.get("status")) is not int
     ):
         raise AuthUnavailable("New API 登录服务返回异常，请稍后重试。")
-    if user["role"] < 10 or user["status"] != 1:
+    if user["status"] != 1 or user["role"] < 1:
+        raise LoginForbidden("当前 New API 账号不可用。")
+    if not allow_user and user["role"] < 10:
         raise LoginForbidden("仅启用的 New API 管理员可以访问。")
     return {
         "id": user["id"],

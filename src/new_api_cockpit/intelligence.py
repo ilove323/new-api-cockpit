@@ -1,4 +1,4 @@
-"""Synchronous, stateless HTML challenge using the administrator's test KEY.
+"""Synchronous, stateless HTML challenge using the current user's test KEY.
 
 Only KEY creation/configuration uses the existing management audit. Results and
 HTML are never written to a database, file, cache, queue, or background executor.
@@ -170,11 +170,37 @@ def model_catalog(credential, user_id):
     raise Unavailable("New API 模型目录过大或分页不完整，没有返回部分模型。")
 
 
+def _operator(identity):
+    operator = (
+        management.actor(identity["username"])
+        if identity["role"] >= 10
+        else management.self_actor(identity)
+    )
+    if operator["id"] != identity["id"]:
+        raise management.Forbidden("当前用户身份已变化，请重新登录。")
+    return operator
+
+
+def user_model_catalog(credential, user_id):
+    """UserAuth endpoint includes models from the owner's usable groups."""
+    result = upstream("/api/user/models", credential, user_id)
+    names = result.get("data")
+    if (
+        result.get("success") is not True
+        or not isinstance(names, list)
+        or len(names) > 10000
+        or any(not isinstance(name, str) for name in names)
+    ):
+        raise Unavailable("New API 本人模型列表响应无效。")
+    # This endpoint supplies names, not endpoint metadata. Do not fabricate
+    # declared protocols or borrow an administrator's catalog credential.
+    return [{"model_name": name} for name in sorted(set(names))]
+
+
 def model_options(identity, credential):
     """Read-only discovery: opening this page must never provision a PAT/KEY."""
-    operator = management.actor(identity["username"])
-    if operator["id"] != identity["id"]:
-        raise management.Forbidden("管理员身份已变化，请重新登录。")
+    operator = _operator(identity)
+    is_admin = operator["role"] >= 10
     user = management.target(operator, operator["id"], enabled=True)
     allowed = set(management.selectable_groups(operator, user))
     with quota.connect() as conn:
@@ -189,10 +215,11 @@ def model_options(identity, credential):
                 if model and len(model) <= 256 and not any(ord(c) < 32 for c in model):
                     routes = live.setdefault(model, {})
                     for group in groups:
-                        # Stable priority selection; pin this same channel at inference.
+                        # Stable protocol reference; only admins pin it at inference.
                         routes.setdefault(group, channel)
     rows = {}
-    for entry in model_catalog(credential, operator["id"]):
+    catalog = model_catalog if is_admin else user_model_catalog
+    for entry in catalog(credential, operator["id"]):
         if not isinstance(entry, dict):
             continue
         names = (
@@ -201,9 +228,12 @@ def model_options(identity, credential):
             else [entry.get("model_name")]
         )
         types = entry.get("supported_endpoints")
-        if not isinstance(names, list) or not isinstance(types, list):
+        if not isinstance(names, list):
             continue
-        if not any(isinstance(v, str) and v in TEXT_ENDPOINTS for v in types):
+        if is_admin and (
+            not isinstance(types, list)
+            or not any(isinstance(v, str) and v in TEXT_ENDPOINTS for v in types)
+        ):
             continue
         for name in names:
             routes = live.get(name, {}) if isinstance(name, str) else {}
@@ -239,9 +269,7 @@ def exclusive_test(user_id):
         if not conn.execute(
             "SELECT pg_try_advisory_lock(%s,hashtext(%s)) AS acquired", lock
         ).fetchone()["acquired"]:
-            raise management.Conflict(
-                "当前管理员已有测试正在执行，请等它结束后再测试。"
-            )
+            raise management.Conflict("当前用户已有测试正在执行，请等它结束后再测试。")
         try:
             yield
         finally:
@@ -256,22 +284,28 @@ def _find_token(user_id):
         ).fetchall()
     if len(rows) > 1:
         raise management.Conflict(
-            "存在多个同名测试 KEY，请在令牌管理中保留一个后再测试。"
+            "存在多个同名测试 KEY，请在 New API 令牌页面保留一个后再测试。"
         )
     return rows[0]["id"] if rows else None
 
 
 def _usable_token(token):
     if not isinstance(token, dict) or token.get("status") != 1:
-        raise management.Conflict("测试 KEY 已禁用，请在令牌管理中启用后再测试。")
+        raise management.Conflict(
+            "测试 KEY 已禁用，请在 New API 令牌页面启用后再测试。"
+        )
     expiry = token.get("expired_time")
     if type(expiry) is not int or (expiry != -1 and expiry <= time.time()):
-        raise management.Conflict("测试 KEY 已过期，请在令牌管理中调整后再测试。")
+        raise management.Conflict(
+            "测试 KEY 已过期，请在 New API 令牌页面调整后再测试。"
+        )
     if not token.get("unlimited_quota") and not (token.get("remain_quota", 0) > 0):
-        raise management.Conflict("测试 KEY 额度不足，请在令牌管理中调整后再测试。")
+        raise management.Conflict(
+            "测试 KEY 额度不足，请在 New API 令牌页面调整后再测试。"
+        )
 
 
-def test_key(operator, choice):
+def test_key(operator, choice, *, credential=None):
     """Keep the dedicated KEY; preserve existing quota/expiry/status/IP settings."""
     token_id = _find_token(operator["id"])
     changes = dict(
@@ -281,10 +315,33 @@ def test_key(operator, choice):
         cross_group_retry=False,
         auto_groups=[],
     )
+
+    def write(object_id, body):
+        if operator["role"] >= 10:
+            return management.single_action(
+                operator["username"], "token", object_id, body
+            )
+        return management.self_token_action(operator, object_id, body, credential)
+
+    def read(path, **kwargs):
+        if operator["role"] < 10:
+            if not credential:
+                raise management.Forbidden("缺少当前用户登录会话。")
+            kwargs["credential"] = credential
+        return management.call_api(operator, operator["id"], path, **kwargs)
+
+    def owned(token):
+        if (
+            not isinstance(token, dict)
+            or token.get("id") != token_id
+            or token.get("user_id") != operator["id"]
+        ):
+            raise management.Forbidden("测试 KEY 不属于当前用户。")
+        _usable_token(token)
+        return token
+
     if token_id is None:
-        management.single_action(
-            operator["username"],
-            "token",
+        write(
             operator["id"],
             {
                 "action": "create",
@@ -299,10 +356,9 @@ def test_key(operator, choice):
         token_id = _find_token(operator["id"])
         if token_id is None:
             raise management.Uncertain(
-                "测试 KEY 创建结果无法确认，请在令牌管理中核对；未自动重试。"
+                "测试 KEY 创建结果无法确认，请在 New API 令牌页面核对；未自动重试。"
             )
-    token = management.call_api(operator, operator["id"], f"/api/token/{token_id}")
-    _usable_token(token)
+    token = owned(read(f"/api/token/{token_id}"))
     if token.get("name") != KEY_NAME:
         raise management.Conflict("测试 KEY 已被重命名，请重新核对；尚未发起模型请求。")
     if any(
@@ -310,14 +366,8 @@ def test_key(operator, choice):
         for key, value in changes.items()
         if key != "auto_groups"
     ) or token.get("auto_groups"):
-        management.single_action(
-            operator["username"],
-            "token",
-            token_id,
-            {"action": "edit", "changes": changes},
-        )
-    token = management.call_api(operator, operator["id"], f"/api/token/{token_id}")
-    _usable_token(token)
+        write(token_id, {"action": "edit", "changes": changes})
+    token = owned(read(f"/api/token/{token_id}"))
     if (
         token.get("name") != KEY_NAME
         or any(
@@ -328,9 +378,7 @@ def test_key(operator, choice):
         or token.get("auto_groups")
     ):
         raise management.Conflict("测试 KEY 配置已变化，请重新核对；尚未发起模型请求。")
-    data = management.call_api(
-        operator, operator["id"], f"/api/token/{token_id}/key", method="POST", body={}
-    )
+    data = read(f"/api/token/{token_id}/key", method="POST", body={})
     key = data.get("key") if isinstance(data, dict) else None
     # Official /key returns the stored key without sk-. Accept either form,
     # but never a masked key or a caller-supplied channel suffix.
@@ -474,13 +522,12 @@ def run(identity, credential, body):
         choices = model_options(identity, credential)["rows"]
         choice = next((row for row in choices if row["model"] == model), None)
         if choice is None:
-            raise IntelligenceError(
-                "该模型没有当前管理员可用的启用渠道或文本生成接口。"
-            )
-        operator = management.actor(identity["username"])
-        if operator["id"] != identity["id"]:
-            raise management.Forbidden("管理员身份已变化，请重新登录。")
-        key = test_key(operator, choice)
+            raise IntelligenceError("该模型没有当前用户可用的启用渠道或文本生成接口。")
+        operator = _operator(identity)
+        is_admin = operator["role"] >= 10
+        key = test_key(
+            operator, choice, **({"credential": credential} if not is_admin else {})
+        )
         available = upstream("/v1/models", key, operator["id"])
         if not isinstance(available.get("data"), list) or not any(
             isinstance(row, dict) and row.get("id") == model
@@ -492,7 +539,9 @@ def run(identity, credential, body):
         path, payload, headers = generation_request(choice)
         # New API administrators can pin a channel using sk-<key>-<channel_id>.
         # Keep protocol and routing together, without changing the stored KEY.
-        channel_key = f"{key}-{choice['channel_id']}"
+        # Ordinary owners cannot use the administrator channel suffix. Their
+        # requests retain New API's normal routing, still within the chosen group.
+        channel_key = f"{key}-{choice['channel_id']}" if is_admin else key
         if choice["endpoint"] == "anthropic":
             headers["x-api-key"] = channel_key
         start = time.monotonic()
@@ -530,8 +579,8 @@ def run(identity, credential, body):
             model=model,
             group=choice["group"],
             endpoint=choice["endpoint"],
-            channel_id=choice["channel_id"],
-            channel_type=choice["channel_type"],
+            channel_id=choice["channel_id"] if is_admin else None,
+            channel_type=choice["channel_type"] if is_admin else None,
             key_name=KEY_NAME,
             elapsed_ms=elapsed,
             html=html,

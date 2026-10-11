@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="same-origin">
-  <title>{{ site_name }} · 管理员登录</title>
+  <title>{{ site_name }} · 登录</title>
   <link rel="stylesheet" href="/cockpit/static/ui.css">
   <link rel="stylesheet" href="/cockpit/static/login.css">
   {% include "partials/auth.html" %}
@@ -14,7 +14,7 @@
   {% from "partials/icons.html" import icon %}
   <main class="login-card" data-next="{{ next_path }}">
     <div class="login-brand">{{ icon('chart-no-axes-combined') }}<span>{{ site_name }}</span></div>
-    <h1>管理员登录</h1>
+    <h1>登录</h1>
     <p class="login-description">使用 New API 账号登录。已在本站登录 New API 时，将自动进入。</p>
     <p id="login-status" role="status" aria-live="polite">正在检查已有登录…</p>
     <form id="login-form" method="post" action="/cockpit/login" hidden>
@@ -34,7 +34,7 @@
     <button id="login-retry" class="button-ghost" type="button" hidden>重新检查登录</button>
     <button id="login-switch" class="button-ghost" type="button" hidden>退出当前 New API 登录并换账号</button>
     <a id="official-login" class="login-official" href="/sign-in">使用 New API 登录页（SSO / 通行密钥 / 验证码）</a>
-    <p class="login-footnote">仅管理员可访问 · 不建立独立账号或密码</p>
+    <p class="login-footnote">普通用户可使用模型使用和智力测试，管理功能仅对管理员开放。</p>
   </main>
 </body>
 </html>

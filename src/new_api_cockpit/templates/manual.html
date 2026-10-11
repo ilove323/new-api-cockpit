@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 模型使用</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <link rel="stylesheet" href="/cockpit/static/manual.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/manual-guides.js"></script>
+  <script defer src="/cockpit/static/manual.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main id="manual-page" class="manual-page">
+    <section class="page-panel manual-intro" aria-labelledby="manual-title">
+      <div class="page-heading"><div><h1 id="manual-title">模型使用</h1><p class="hint">选好自己的令牌和模型，再跟着教程接入常用工具。</p></div><a id="manual-token-manager" href="/keys">{{ icon('key-round') }}管理我的令牌</a></div>
+      <ol class="manual-progress" aria-label="使用流程"><li><span>1</span>选令牌与模型</li><li><span>2</span>选工具与系统</li><li><span>3</span>复制配置并设置</li></ol>
+      <div class="manual-selection">
+        <label for="manual-token">本人令牌<select id="manual-token" disabled><option value="">正在读取本人令牌…</option></select></label>
+        <label for="manual-model">可用模型<select id="manual-model" disabled><option value="">请先选择可用令牌</option></select></label>
+        <div class="manual-refresh"><button id="manual-refresh-tokens" type="button">刷新令牌</button><button id="manual-refresh-models" type="button" disabled>读取模型</button></div>
+      </div>
+      <dl id="manual-token-details" class="manual-token-details" hidden></dl>
+      <p id="manual-load-status" role="status" aria-live="polite">正在读取本人令牌…</p>
+      <p id="manual-empty" class="manual-notice" hidden>没有可用令牌？请先到 <a href="/keys">New API 的令牌管理</a> 创建或启用自己的令牌，再回来刷新。</p>
+    </section>
+
+    <section class="page-panel" aria-labelledby="manual-tools-title">
+      <div class="page-heading"><h2 id="manual-tools-title">选择你要使用的工具</h2></div>
+      <div id="manual-tools" class="manual-tools" role="group" aria-label="工具教程"></div>
+      <p id="manual-guides-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="page-panel manual-guide" aria-labelledby="manual-guide-title">
+      <div class="page-heading"><div><h2 id="manual-guide-title">配置教程</h2><p id="manual-guide-description" class="hint"></p></div></div>
+      <div class="manual-guide-controls">
+        <label for="manual-platform">我的系统<select id="manual-platform"><option value="posix">macOS / Linux（POSIX）</option><option value="powershell">Windows（PowerShell）</option></select></label>
+        <label id="manual-target-control" for="manual-target" hidden>CC Switch 目标客户端<select id="manual-target"><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select></label>
+        <label for="manual-protocol"><span id="manual-protocol-label">客户端协议</span><select id="manual-protocol" disabled><option value="chat">OpenAI Chat Completions（/v1/chat/completions）</option><option value="responses">OpenAI Responses（/v1/responses）</option><option value="anthropic">Anthropic Messages（/v1/messages）</option></select></label>
+      </div>
+      <p id="manual-protocol-help" class="warning" hidden></p>
+
+      <ol id="manual-steps" class="manual-steps" aria-label="配置步骤"></ol>
+      <section class="manual-examples" aria-labelledby="manual-example-title">
+        <div class="page-heading"><h3 id="manual-example-title">配置示例</h3><label for="manual-snippet"><span class="sr-only">选择配置片段</span><select id="manual-snippet" disabled><option value="">暂无示例</option></select></label></div>
+        <p id="manual-preview-help" class="hint">请选择令牌和模型。</p>
+        <div id="manual-preview" class="manual-preview" hidden><div class="manual-code-heading"><span id="manual-code-title"></span><span id="manual-code-language" class="hint"></span></div><pre tabindex="0" aria-label="仅含占位符的配置示例"><code id="manual-code"></code></pre></div>
+        <div class="manual-copy-actions"><button id="manual-copy-key" class="button-primary" type="button" disabled>{{ icon('key-round') }}<span id="manual-copy-key-label">复制配置（含 KEY）</span></button></div>
+        <p id="manual-copy-status" role="status" aria-live="polite"></p>
+      </section>
+      <section class="manual-extra" aria-labelledby="manual-notes-title"><h3 id="manual-notes-title">使用前留意</h3><ul id="manual-notes"></ul></section>
+      <section class="manual-extra" aria-labelledby="manual-sources-title"><h3 id="manual-sources-title">官方资料</h3><ul id="manual-sources"></ul></section>
+    </section>
+
+    <section class="page-panel manual-faq" aria-labelledby="manual-faq-title">
+      <h2 id="manual-faq-title">遇到问题怎么办？</h2>
+      <details><summary>没有令牌，或令牌不可用</summary><p>前往 <a href="/keys">New API 的令牌管理</a> 检查启用状态、有效期和额度。只会列出本人的令牌；管理员也不会在这里调用其他人的 KEY。</p></details>
+      <details><summary>读取模型失败 / IP 不在允许列表</summary><p>查看上方的后台错误。令牌的模型权限、分组、IP 允许列表等限制不会绕过，也不会改用全站模型列表。按后台说明调整本人令牌的设置，确认后手动重新读取。</p></details>
+      <details><summary>401 / 403：登录或权限问题</summary><p>401 时重新登录；403 时检查所选令牌是否有该模型的权限及 IP 限制。切换账号后请重新加载本页，不要继续使用旧配置。</p></details>
+      <details><summary>404 / model not found：地址、模型或协议不匹配</summary><p>模型名称要与列表一致，包含大小写。检查工具要求的是根地址、/v1 地址还是完整接口路径；按教程选择协议。</p></details>
+      <details><summary>429 / 额度不足 / 连接超时</summary><p>检查令牌额度、账户余额及服务限制，稍后再手动操作。超时不代表请求未到达；请先核对工具记录和用量，不要反复发送。</p></details>
+      <details><summary>剪贴板不可用</summary><p>使用 HTTPS 或本机的安全页面，并允许浏览器访问剪贴板。若复制被阻止，可手动选中预览中的配置复制，再在工具内填写 KEY。</p></details>
+    </section>
+    <noscript><p class="manual-notice">此页面需要启用 JavaScript 才能读取本人令牌和生成配置。可先前往 <a href="/keys">New API 的令牌管理</a>。</p></noscript>
+  </main>
+</body>
+</html>

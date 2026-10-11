@@ -115,6 +115,10 @@ class QualityContractTest(unittest.TestCase):
             response = client.get("/cockpit/quality/", auth=session_auth("admin"))
             self.assertEqual(response.status_code, 200)
             self.assertIn('href="/cockpit/quality/" aria-current="page"', response.text)
+            self.assertRegex(
+                response.text,
+                r'<a href="/cockpit/quality/"[^>]*>.*?icons\.svg#heart-pulse',
+            )
             self.assertNotIn("<th>排除 / 未知</th>", response.text)
             self.assertNotIn("<th>状态</th>", response.text)
             self.assertNotIn("<th>上游</th>", response.text)

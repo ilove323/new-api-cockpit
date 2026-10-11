@@ -14,7 +14,7 @@
   const channelName = 'new-api:auth-session';
   const storageKey = 'new-api:auth-session:event';
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(channelName) : null;
-  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/docs', '/cockpit/docs/', '/cockpit/quality', '/cockpit/quality/', '/cockpit/intelligence', '/cockpit/intelligence/', '/cockpit/api/statistics/export']);
+  const pagePaths = new Set(['/cockpit', '/cockpit/', '/cockpit/statistics', '/cockpit/statistics/', '/cockpit/users', '/cockpit/users/', '/cockpit/keys', '/cockpit/keys/', '/cockpit/operations', '/cockpit/operations/', '/cockpit/docs', '/cockpit/docs/', '/cockpit/quality', '/cockpit/quality/', '/cockpit/intelligence', '/cockpit/intelligence/', '/cockpit/manual', '/cockpit/manual/', '/cockpit/api/statistics/export']);
 
   function safeNext(value) {
     if (typeof value !== 'string' || /[\\\x00-\x1f\x7f]/.test(value) || !value.startsWith('/cockpit')) return '/cockpit/statistics/';
@@ -26,6 +26,7 @@
   }
   function toLogin() {
     blocked = true;
+    window.dispatchEvent?.(new Event('cockpit-auth-changed'));
     if (!navigating) { navigating = true; location.replace(loginURL()); }
   }
   async function json(url, init = {}) {
@@ -155,7 +156,7 @@
       button.disabled = false; blocked = false;
     }
   });
-  async function clear() { await bridge('DELETE'); sid = ''; expires = 0; }
+  async function clear() { await bridge('DELETE'); sid = ''; expires = 0; window.dispatchEvent?.(new Event('cockpit-auth-changed')); }
   // Documentation calls must never replay: even some GETs can create a PAT.
   async function fetchOnce(input, init = {}) {
     const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined));

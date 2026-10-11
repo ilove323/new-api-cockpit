@@ -36,6 +36,7 @@ from new_api_cockpit import (
     openapi,
     quality,
     intelligence,
+    manual,
 )
 
 from new_api_cockpit.report import (
@@ -61,6 +62,19 @@ from new_api_cockpit.auth import (
 
 app = Flask(__name__, static_url_path="/cockpit/static")
 PAT_ONLY_ENDPOINTS = {"balance_api", "balance_alert_api"}
+# Every other route keeps its administrator requirement, including new routes.
+USER_ENDPOINTS = {
+    "cockpit_home",
+    "browser_session",
+    "manual_page",
+    "manual_tokens",
+    "manual_models",
+    "manual_key",
+    "intelligence_page",
+    "intelligence_models",
+    "intelligence_test",
+    "intelligence_preview",
+}
 
 
 class JSONProvider(DefaultJSONProvider):
@@ -104,6 +118,8 @@ def safe_next(value):
         "/cockpit/quality/",
         "/cockpit/intelligence",
         "/cockpit/intelligence/",
+        "/cockpit/manual",
+        "/cockpit/manual/",
         "/cockpit/api/statistics/export",
     }
     return value if not parsed.netloc and parsed.path in paths else default
@@ -136,7 +152,7 @@ def request_identity():
             # JWTs are validated upstream; opaque PATs are looked up verbatim.
             if allow_pat and (pat_only or "." not in value):
                 return verify_pat(value)
-            return verify_session(value)
+            return verify_session(value, allow_user=True)
         if pat_only or not token:
             raise LoginRequired("请使用 Bearer 凭据。")
     if pat_only:
@@ -144,7 +160,7 @@ def request_identity():
     # Other authorization schemes grant no access; a browser cookie still works.
     if not token:
         return None
-    return verify_session(token)
+    return verify_session(token, allow_user=True)
 
 
 def same_origin_request():
@@ -168,7 +184,13 @@ def same_origin_request():
         return False
 
 
-def auth_failure(message="登录已失效，请重新登录。", status=401, code="AUTH_REQUIRED"):
+def auth_failure(
+    message="登录已失效，请重新登录。",
+    status=401,
+    code="AUTH_REQUIRED",
+    *,
+    clear_cookie=True,
+):
     is_page = request.endpoint in {
         "cockpit_home",
         "index",
@@ -178,6 +200,7 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
         "api_docs_page",
         "quality_page",
         "intelligence_page",
+        "manual_page",
     }
     if is_page and status == 401:
         response = redirect(login_url(), 302)
@@ -193,6 +216,7 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
     # An unrelated PAT/JWT failure must not erase the browser's valid session.
     if (
         status in {401, 403}
+        and clear_cookie
         and not explicit_bearer
         and request.endpoint not in PAT_ONLY_ENDPOINTS
     ):
@@ -224,6 +248,13 @@ def authenticate():
         return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
     if not user:
         return auth_failure()
+    if user["role"] < 10 and request.endpoint not in USER_ENDPOINTS:
+        return auth_failure(
+            "此功能仅管理员可访问；普通用户可使用模型使用和智力测试。",
+            403,
+            "AUTH_FORBIDDEN",
+            clear_cookie=False,
+        )
     expected = request.headers.get("X-Cockpit-Session")
     if expected and expected != user.get("session_id"):
         return auth_failure(
@@ -267,7 +298,7 @@ def browser_session():
     if not isinstance(body, dict) or set(body) != {"access_token"}:
         return jsonify(error="登录请求无效。"), 400
     try:
-        user = verify_session(body["access_token"])
+        user = verify_session(body["access_token"], allow_user=True)
     except LoginRequired as exc:
         return auth_failure(str(exc))
     except LoginForbidden as exc:
@@ -320,6 +351,18 @@ def headers(response):
             "frame-src 'self'; connect-src 'self'; img-src 'self' data:; "
             "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         )
+    if request.endpoint in {
+        "manual_page",
+        "manual_tokens",
+        "manual_models",
+        "manual_key",
+    }:
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "connect-src 'self'; img-src 'self' data:; object-src 'none'; "
+            "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
     if request.endpoint == "intelligence_preview":
         # The HTTP sandbox also applies when the generated document is opened
         # directly. Never relax the parent's script policy to render model HTML.
@@ -342,7 +385,45 @@ def health():
 @app.get("/cockpit")
 @app.get("/cockpit/")
 def cockpit_home():
-    return redirect("/cockpit/statistics/", 302)
+    return redirect(
+        "/cockpit/statistics/" if g.current_user["role"] >= 10 else "/cockpit/manual",
+        302,
+    )
+
+
+@app.get("/cockpit/manual")
+@app.get("/cockpit/manual/")
+def manual_page():
+    return render_template("manual.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/api/manual/tokens")
+def manual_tokens():
+    return jsonify(manual.list_tokens(g.current_user, new_api_credential()))
+
+
+def manual_body():
+    if request.headers.get("X-Cockpit-Manual") != "1" or not request.is_json:
+        raise manual.ManualError("请求需要 JSON 和 X-Cockpit-Manual: 1。", 403)
+    request.max_content_length = 1024
+    return request.get_json(silent=True)
+
+
+@app.post("/cockpit/api/manual/models")
+def manual_models():
+    return jsonify(manual.models(g.current_user, new_api_credential(), manual_body()))
+
+
+@app.post("/cockpit/api/manual/key")
+def manual_key():
+    return jsonify(
+        key=manual.reveal_key(g.current_user, new_api_credential(), manual_body())
+    )
+
+
+@app.errorhandler(manual.ManualError)
+def manual_error(exc):
+    return jsonify(error=str(exc), code=exc.code), exc.status
 
 
 @app.get("/cockpit/docs")
@@ -449,7 +530,7 @@ def quality_unavailable(exc):
     return jsonify(error=str(exc)), 503
 
 
-def intelligence_credential():
+def new_api_credential():
     authorization = request.headers.get("Authorization", "")
     scheme, _, value = authorization.partition(" ")
     return value if scheme.lower() == "bearer" else request.cookies.get(COOKIE_NAME)
@@ -465,9 +546,7 @@ def intelligence_page():
 
 @app.get("/cockpit/api/intelligence/models")
 def intelligence_models():
-    return jsonify(
-        intelligence.model_options(g.current_user, intelligence_credential())
-    )
+    return jsonify(intelligence.model_options(g.current_user, new_api_credential()))
 
 
 @app.post("/cockpit/api/intelligence/test")
@@ -477,7 +556,7 @@ def intelligence_test():
         return jsonify(error="请使用 JSON 和 X-Intelligence-Request: 1 发起测试。"), 403
     return jsonify(
         intelligence.run(
-            g.current_user, intelligence_credential(), request.get_json(silent=True)
+            g.current_user, new_api_credential(), request.get_json(silent=True)
         )
     )
 

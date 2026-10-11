@@ -6,17 +6,19 @@
 - 登录页先尝试复用同一浏览器、同一协议/域名/端口的 New API 登录；成功后返回原页面。
 - 没有有效会话时显示用户名和密码表单。密码、动态验证码及恢复码直接发送给同源 New API 官方接口，不经过 Cockpit 密码验证或存储。
 - 支持官方密码加密公钥协议及二次验证。站点启用人机验证、协议确认，或账号要求通行密钥、SSO 等流程时，使用页面上的官方登录入口；完成后返回 Cockpit。
-- 侧栏显示当前管理员及“退出登录”。退出会撤销当前浏览器对应的 New API 会话，不影响其他设备的会话。
+- 侧栏显示当前用户及“退出登录”。普通用户显示模型使用、智力测试和本人令牌入口，管理导航仅对管理员显示。退出会撤销当前浏览器对应的 New API 会话，不影响其他设备的会话。
 - 页面间切换账号或退出通过官方跨标签页事件同步；事件不携带凭据，也不能授予权限。不同会话的旧页面必须重新加载后才能继续操作。
-- 当前 New API 账号不是可用管理员时，提供明确的退出换账号入口，不通过官方登录页反复跳转。
+- 启用的普通用户默认进入 `/cockpit/manual`；从智力测试或模型使用页面发起登录时返回原页面。其他管理页面和 API 仍要求管理员。访问管理功能被拒绝不会清除普通用户的有效会话。账号不可用时提供退出换账号入口。
 
 ## 会话链路
 
 1. 浏览器向 `POST /api/user/auth/refresh` 发送 New API 自己的 HttpOnly 刷新 Cookie。该 Cookie 限定在 `/api/user/auth`，不能直接当作 `/cockpit` 的 Cookie 使用。
 2. New API 校验其会话、刷新令牌及账号状态，返回短期访问 JWT。
-3. 浏览器把访问 JWT 交给 `POST /cockpit/api/auth/session`。Cockpit 通过内部地址调用 `GET /api/user/self`，只接受有效的管理员浏览器会话；前端传来的用户、角色不参与授权。
+3. 浏览器把访问 JWT 交给 `POST /cockpit/api/auth/session`。Cockpit 通过内部地址调用 `GET /api/user/self`，确认真实用户、会话和启用状态；前端传来的用户、角色不参与授权。
 4. 验证成功后，将同一会话的访问凭据保存在 `cockpit_access` HttpOnly Cookie 中；路径为 `/cockpit`、SameSite=Strict，默认 Secure，最长保留 15 分钟且不超过上游 JWT 到期时间。
 5. 每个会话请求再次交给 New API 校验会话和权限，不跨请求缓存认证结果。页面请求和下载使用该 Cookie，业务 API 也可携带官方浏览器 JWT Bearer。
+
+普通用户允许访问模型使用、智力测试页面及其 `/cockpit/api/manual/`、`/cockpit/api/intelligence/` 接口，以及会话接口和自动选择落地页的 `/cockpit`。模型使用仅查询本人令牌，智力测试仅创建或配置本人专用测试 KEY。其余路由默认要求 `role >= 10`，不是只隐藏菜单。所有访问都要求启用账号；新增管理接口不会自动继承普通用户权限。
 
 New API 的 `user_sessions` 属于上游自身结构，Redis 仅作缓存。Cockpit 不新增会话表、不直接读写 Redis、不共享 SESSION_SECRET，不读取密码哈希。
 访问 JWT 只短暂出现在内存和 HttpOnly Cookie；密码、验证码、JWT、PAT 不进入 URL、localStorage、sessionStorage、日志或监控库。
@@ -28,13 +30,14 @@ New API 的 `user_sessions` 属于上游自身结构，Redis 仅作缓存。Cock
 - 普通查询的 GET/HEAD 可以在认证失效后续期重试一次。可能补建 PAT 的用户/KEY 详情、写请求及文档调试都只发送一次，避免重复执行。
 - 浏览器的业务 API 请求携带 `X-Cockpit-Session`；会话与当前 Cookie 不一致时返回 409，旧页面操作不执行。
 - 写接口验证同源及各功能 JSON/自定义请求头。会话承接、清除也要求 JSON 和 `X-Cockpit-Auth: 1`；第三方表单不能注入登录或触发修改。
-- 登录失效返回 401，普通用户/禁用账号返回 403，上游故障或限流返回 503。503 不清除已有 Cookie、不降级为本地密码或 PAT 认证。
+- 登录失效返回 401，账号不可用或当前功能权限不足返回 403，上游故障或限流返回 503。503 和普通用户误入管理功能不清除已有 Cookie，不降级为本地密码或 PAT 认证。
 - 退出先调用官方 `POST /api/user/auth/logout`，成功后清除 Cockpit Cookie；调用失败时显示错误，供用户重试。
 - `/cockpit/api/statistics/balance` 和 `/cockpit/api/statistics/alert` 保持独立的管理员 PAT Bearer 认证，不接受浏览器 Cookie 或 JWT。
 
 ## 脚本与管理员 PAT
 
 所有业务接口统一在 `/cockpit/api/` 下，也接受已有 New API 管理员 PAT Bearer。
+模型使用接口只能读取认证账号本人的令牌；智力测试只使用认证账号自己的测试 KEY。管理员 PAT 也不能在这些接口里指定另一用户。
 PAT 每次按原值查询 `users.access_token`，要求管理员账号启用且未删除；不使用模型调用 KEY，不缓存认证结果。
 权限、执行身份及审计来自对应管理员，不接受客户端指定操作者。参数、确认头与错误处理见 [API 参考](api.md)。
 
