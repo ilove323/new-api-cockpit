@@ -724,6 +724,8 @@ class IntelligenceTest(unittest.TestCase):
             response = MagicMock()
             response.__enter__.return_value = response
             response.status = status
+            response.length = len(content)
+            response.isclosed.return_value = False
             response.read1.side_effect = [content, b""]
             conn.getresponse.return_value = response
             if timeout:

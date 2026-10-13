@@ -107,18 +107,26 @@ def upstream(path, credential, user_id, *, body=None, generation=False, headers=
             if response.status != 200:
                 raise error(f"New API 请求失败（HTTP {response.status}），未自动重试。")
             chunks, size = [], 0
-            while True:
+            expected_size = response.length
+            # read1 closes the response at its final declared byte. With
+            # Connection: close this also releases the socket, so do not touch
+            # it again after a complete read. Still reject premature EOF below.
+            while not response.isclosed():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError()
                 sock.settimeout(remaining)
                 chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - size))
+                if time.monotonic() >= deadline:
+                    raise TimeoutError()
                 if not chunk:
                     break
                 size += len(chunk)
                 if size > MAX_RESPONSE_BYTES:
                     raise error("New API 响应过大，未自动重试。")
                 chunks.append(chunk)
+            if expected_size is not None and size != expected_size:
+                raise error("New API 响应不完整，未自动重试。")
             result = json.loads(b"".join(chunks), parse_constant=_invalid_constant)
         if (
             not isinstance(result, dict)
