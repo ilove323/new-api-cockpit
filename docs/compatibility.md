@@ -31,10 +31,10 @@ KEY 编辑依赖官方令牌接口，自动分组选项依赖其 `auto_groups` �
 
 请求发生时的 Token 单价从消费日志 `other`
 中的 `model_ratio`、`completion_ratio`、`cache_ratio`、`cache_creation_ratio_5m`
-（或 `cache_creation_ratio`）还原；表达式计费依赖 `expr_b64` 和 `matched_tier`。
-当前档位与分组倍率分别读取 options 的 `billing_setting.billing_mode`、
+（或 `cache_creation_ratio`）还原；表达式计费依赖 `expr_b64` 和 `matched_tier`，分组倍率读取日志的 `group_ratio`。
+当前价格及档位匹配读取 options 的 `billing_setting.billing_mode`、
 `billing_setting.billing_expr`、`ModelRatio`、`CompletionRatio`、`CacheRatio`、
-`CreateCacheRatio` 和 `GroupRatio`。这些日志字段缺失、表达式不受支持或按次计费时，
+`CreateCacheRatio`。这些日志字段缺失、表达式不受支持或按次计费时，
 Token 单价可能留空，但消费金额仍取日志，不能用当前单价冒充历史价格。
 金额单位和 quota 换算必须与实际站点一致。
 

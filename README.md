@@ -31,7 +31,7 @@
 | 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
 | 渠道质量 | `/cockpit/quality/` | 查看性能健康和高频模型，比较渠道成功率、失败码、首字与总耗时分位数、平均输出 token/s 和费用，跳到对应日志 |
 | 智力测试 | `/cockpit/intelligence/` | 选择模型做鹈鹕骑车测试，直接查看生成的 SVG 动画和 HTML 源码；结果仅留在当前页面 |
-| 生图工作站 | `/cockpit/image-studio` | 使用本人 GPT KEY 创作图片，选区与标注指导修改，比较候选后应用或下载 |
+| 生图工作站 | `/cockpit/image-studio` | 使用本人 GPT KEY 创作图片，选区、文字和箭头指导修改，编辑标注并放大比较候选 |
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
@@ -43,8 +43,8 @@
 可使用账号认证或匿名发信，配置方法见[通知渠道](docs/notifications.md)。费用按月、按渠道归档，查看时按渠道当前分组汇总。
 每天北京时间 10:00 检查余额，也可以手动检查。
 
-**金额以消费日志为准。** 同一模型按请求发生时的价格分行，匹配当前价格的行显示对应档位。
-倍率变化时的缓存 Token 配平属于数学换算，原始日志和实际金额不变。
+**金额以消费日志为准。** 同一模型按请求发生时的价格和分组倍率分行，匹配当前价格的行显示对应档位。
+Token 按消费日志统计，倍率显示请求当时的值。
 表格金额显示两位小数，悬浮详情、API 和 Excel 保留原精度。具体见[统计口径](docs/calculation.md)。
 
 用户和 KEY 的修改通过 New API 官方接口执行，每组最多 5 个并发请求。
@@ -73,6 +73,7 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 生图工作站向所有启用用户开放，只用本人已有且分组精确为 `GPT` 的 KEY，管理员也不例外，原始 KEY 不进入浏览器。
 每次生成一张，同步等待、不排队，不保存图库或提示词；选区和标注分开，候选需明确采用，局部合成保留选区外原图。
 改图有指导标注时，提示词可留空；有选区就做局部修改，只有标注时直接按标注编辑整图。
+文字可在画布里直接编辑，标注支持移动、缩放和擦除；候选大图支持缩放、拖动和原图对比。
 生成/编辑正常计费，超时或断网不自动重发；认证刷新不重放付费请求，详见[生图工作站](docs/image-studio.md)。
 
 ## 部署
@@ -131,32 +132,15 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 
 ## 界面预览
 
-以下截图使用演示数据。
+以下截图取自当前界面，使用离线演示数据，不含真实账号、KEY 或业务记录。
 
 ### 用量统计
 
 ![用量统计](docs/assets/statistics.png)
 
-<details>
-<summary>用户管理、令牌管理、操作记录与通知设置</summary>
+### 生图工作站
 
-### 用户管理
-
-![用户管理](docs/assets/users.png)
-
-### 令牌管理
-
-![令牌管理](docs/assets/keys.png)
-
-### 操作记录
-
-![操作记录](docs/assets/operations.png)
-
-### 通知设置
-
-![邮件通知设置](docs/assets/notifications.jpg)
-
-</details>
+![生图工作站](docs/assets/image-studio.png)
 
 ## 文档
 
@@ -165,7 +149,7 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 - 模型接入与创作：[模型使用教程](docs/manual.md) · [鹈鹕骑车测试](docs/intelligence.md) · [生图工作站](docs/image-studio.md)
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
-- 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [贡献指南](CONTRIBUTING.md)
+- 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [工作站源码维护](docs/image-studio-sources.md) · [贡献指南](CONTRIBUTING.md)
 
 问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。
 安全问题见 [SECURITY.md](SECURITY.md)，请勿公开密码、令牌或客户数据。
@@ -176,3 +160,4 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 本项目为第三方扩展，采用 [Apache-2.0](LICENSE) 许可证，允许商业使用。
 New API 和其他依赖各自遵循其许可证；字体与图标归属见 [NOTICE](NOTICE)、
 [Lucide 许可](src/new_api_cockpit/static/LUCIDE-LICENSE)、[Public Sans 许可](src/new_api_cockpit/static/fonts/OFL-LICENSE.txt) 和 [Scalar 许可](src/new_api_cockpit/static/SCALAR-LICENSE)。
+工作站使用的 GPT Image Playground、InvokeAI 源码版本、许可证与改动见[源码说明](docs/image-studio-sources.md)。

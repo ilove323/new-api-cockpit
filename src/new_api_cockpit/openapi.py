@@ -184,19 +184,20 @@ SCHEMAS = {
                     "output_tokens",
                     "cache_read_tokens",
                     "cache_write_tokens",
-                    "original_cache_read_tokens",
-                    "original_total_tokens",
                 )
             },
             **{
                 key: NULL_MONEY
                 for key in (
-                    "group_ratio",
                     "input_price",
                     "output_price",
                     "cache_price",
                     "write_price",
                 )
+            },
+            "group_ratio": {
+                **NULL_MONEY,
+                "description": "请求日志记录的分组倍率；不同倍率分别成行。",
             },
             "amount": {
                 **MONEY,
@@ -205,7 +206,7 @@ SCHEMAS = {
             "failure_count": integer(),
             "failure_codes": {"type": "object", "additionalProperties": integer()},
             "cost_formula": obj(
-                description="完整价格/配平公式；lazy 模式通过详情接口取得。"
+                description="请求价格、倍率及用量的试算公式；lazy 模式通过详情接口取得。"
             ),
             "report_id": text(format="uuid"),
             "row_id": integer(),

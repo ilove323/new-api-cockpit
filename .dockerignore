@@ -39,3 +39,4 @@ docker-compose.override.yaml
 build
 dist
 *.egg-info
+frontend/

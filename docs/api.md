@@ -270,15 +270,14 @@ curl --fail-with-body --get "$BASE_URL/cockpit/api/statistics/usage" \
 | token_id / token_name | 分令牌时为实际 ID/名称，汇总时为 0/空字符串 |
 | request_count | 消费请求数，不含失败请求 |
 | total_tokens / input_tokens / output_tokens / cache_read_tokens / cache_write_tokens | 展示口径用量；无法确认时可为 null，不以零替代损坏的元数据 |
-| original_cache_read_tokens / original_total_tokens | 配平前原始值；无法还原时可为 null |
-| group_ratio | 展示/试算使用的当前分组倍率，十进制字符串；配置无法确定时可为 null |
+| group_ratio | 请求日志记录的分组倍率，十进制字符串；无法确认时可为 null |
 | input_price / output_price / cache_price / write_price | 请求价格，元/百万 Token，字符串或 null；缓存写按 5 分钟档 |
 | amount | 日志实际消费，十进制字符串，不用当前价格覆盖历史账单 |
 | failure_count / failure_codes | 勾选失败查询时提供；例如 `3` / `{"429":2,"502":1}`，无法解析错误码为 `未知` |
 | cost_formula | 完整公式对象，含 `calculated`、`actual`、`difference` 等详情；lazy 模式通过详情接口取 |
 
-相同用户、模型、价格（以及分令牌模式的令牌）合并，倍率本身不分行。
-倍率与当前分组倍率不一致时按当前价格配平缓存，这是数学换算，不是原始流量重写。
+相同用户、模型、价格、日志分组倍率（以及分令牌模式的令牌）合并，不同价格或倍率分别成行。
+所有日期的 Token 用量取日志统计值，倍率不随当前分组配置改变。
 缺少可靠历史价格时单价可能为空，金额仍保留；完整口径见[统计口径](calculation.md)。
 同一模型分成多条价格行时，不要把同组失败次数在每行重复累加。
 

@@ -60,7 +60,9 @@ image-studio：独立同步请求池
 | `image_transport.py`、`image_results.py`、`image_receipts.py` | 单次有界请求、安全图片结果解析和 Redis 去重回执 |
 | `static/studio-domain.js`、`studio-request.js`、`studio-results.js` | 编辑规则、冻结提交、候选/版本及 Blob 生命周期 |
 | `static/studio.js`、`studio-canvas.js` | DOM 状态投影、Konva 工具、图层导出与局部像素合成 |
-| `report.py`、`usage.sql`、`metadata_fallback.py` | 只读用量聚合、异常日志兼容、排名与 Excel |
+| `frontend/studio/`、`static/studio-upstream.js` | 固定版本的画板与视图源码、标注擦除和图层合成适配，构建为本地静态资源 |
+| `static/studio-lightbox.js` | 候选大图缩放、拖动、双指操作与独立对比，不修改主图 |
+| `report.py`、`usage.sql`、`metadata_fallback.py` | 按请求价格和日志倍率拆行，原始用量聚合、异常日志兼容、排名与 Excel |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
 | `report_snapshots.py` | 按管理员与账本隔离、限时保留的不可变展示详情 |
 | `balance.py`、`scopes.py`、`catalog_sync.py` | 账本、渠道库存、月度逐渠道费用、余额与报警 |
@@ -70,10 +72,14 @@ image-studio：独立同步请求池
 | `notifications.py`、`notification_channels/` | 全局分渠道开关、凭据加密、飞书/钉钉/邮件发送与独立结果 |
 | `static/`、`templates/` | 共享界面与各页面交互 |
 
-用量报表保留日志金额，不按当前模型价格重计费；公式详情读取查询时的快照，Excel 独立实时查询。
+用量报表的 Token 和金额均来自日志，分组倍率使用请求当时的记录；不同价格或倍率分别成行。
+当前价格只用于档位匹配，不改变历史用量。公式详情读取查询时的快照，Excel 独立实时查询。
 月度费用按“月份 + 渠道 ID”保存，查询时按渠道当前归属汇总；改标签不重拉历史日志，不重建分组费用副本。
 已归档月份取监控库，本月每次实时计算。每日多账本检查只在本次调用中共享一份本月汇总，不跨调用缓存。
 实际操作最多 5 个并发一组，当前组结果全部保存后才发下一组；预览与未发起名单不进入操作记录。
+
+工作站的 GPT Image Playground 画板与视图工具直接编译，编辑器交互和 InvokeAI 图层合成通过本地适配层接入。
+运行镜像不需要 Node 或 React；登录、本人 KEY 和请求派发不使用上游服务。固定版本和维护方式见[工作站源码](image-studio-sources.md)。
 具体业务规则见[统计口径](calculation.md)、[余额监控](monitoring.md)、[用户与令牌](users.md)、[配额](quota.md)。
 
 ## 数据库职责

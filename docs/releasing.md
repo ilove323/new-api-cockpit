@@ -1,7 +1,8 @@
 # 发版与镜像
 
 维护者：ilove323。版本唯一来源为 `pyproject.toml`。
-依赖范围使用 `requirements.txt`，不生成依赖锁文件。
+Python 依赖范围使用 `requirements.txt`；工作站构建工具由 `frontend/studio/package-lock.json` 锁定。
+提交时包含生成的 `static/studio-upstream.js`，CI 校验它与源码一致；发布镜像不在启动时构建前端。
 历史发布说明统一放在 [GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)，
 仓库文档只描述当前代码与操作方法。
 
@@ -36,16 +37,21 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
 需要补建用户 PAT 时，由源库表所有者安装同一 Release 的 `source_pat_function.sql` 并授权，
 不要将其作为监控库迁移执行；详见[用户与令牌管理](users.md#安装补建函数与最小权限)。
+图片池需要协议文件与源库读权限；模板从同一发布标签的源码取得，按[图片池配置](deployment.md#生图工作站请求池)填写后再启动。
 
 ```ini
 IMAGE_TAG=<与配置模板对应的正式版本>
 ```
 
 ```bash
-docker compose -f compose.release.yml up -d statistics
+docker compose -f compose.release.yml up -d
+docker compose -f compose.release.yml ps
+curl --fail-with-body http://127.0.0.1:8091/healthz
+curl --fail-with-body http://127.0.0.1:8092/healthz
 ```
 
-当前架构是一个 `statistics` 容器，余额和配额定时器随应用启动。
+当前 Compose 包含 `statistics` 页面/调度池、`image-studio` 图片请求池和独立的 `image-studio-receipts` Redis。
+两个应用服务使用同一版本镜像，只有页面池执行余额和配额定时器。
 镜像、配置和操作文档必须来自同一个 Release；测试开发分支时按[部署文档](deployment.md)从源码构建，
 不要混用开发分支的配置与正式镜像。
 升级与回退遵循[升级说明](upgrading.md)，不会通过发版自动清空监控库。

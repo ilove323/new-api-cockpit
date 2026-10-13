@@ -12,6 +12,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const directory = path.join(__dirname, '../src/new_api_cockpit/static');
+const upstreamSource = fs.readFileSync(path.join(directory, 'studio-upstream.js'), 'utf8');
 const engineSource = fs.readFileSync(path.join(directory, 'studio-canvas.js'), 'utf8');
 const vendorSource = fs.readFileSync(path.join(directory, 'konva-10.7.1.min.js'), 'utf8');
 const engine = require(path.join(directory, 'studio-canvas.js'));
@@ -32,7 +33,7 @@ test('vendor is the verified official 10.7.1 UMD package with MIT license', () =
 });
 test('browser globals and vendor initialize with string/wasm code generation disabled', () => {
   const context = vm.createContext({}, {codeGeneration: {strings: false, wasm: false}});
-  vm.runInContext(vendorSource, context); vm.runInContext(engineSource, context);
+  vm.runInContext(vendorSource, context); vm.runInContext(upstreamSource, context); vm.runInContext(engineSource, context);
   assert.equal(context.Konva.version, '10.7.1'); assert.equal(typeof context.CockpitImageCanvas.create, 'function');
   assert.throws(() => vm.runInContext('eval("1")', context), /Code generation/);
   assert.doesNotMatch(engineSource, /\beval\s*\(|new\s+Function\s*\(|\bfetch\s*\(|localStorage|sessionStorage|innerHTML|https?:\/\//);
@@ -215,7 +216,7 @@ class FixtureCanvas {
 }
 class FixtureContext {
   constructor(canvas) {this.canvas = canvas; this.matrix = [1, 0, 0, 1, 0, 0]; this.globalCompositeOperation = 'source-over'; this.fillStyle = '#000000'; this.strokeStyle = '#000000'; this.stack = []; this.lineWidth = 1;}
-  save() {this.stack.push({matrix: [...this.matrix], globalCompositeOperation: this.globalCompositeOperation, fillStyle: this.fillStyle, strokeStyle: this.strokeStyle, lineWidth: this.lineWidth});}
+  save() {this.stack.push({matrix: [...this.matrix], globalCompositeOperation: this.globalCompositeOperation, fillStyle: this.fillStyle, strokeStyle: this.strokeStyle, lineWidth: this.lineWidth, font: this.font});}
   restore() {Object.assign(this, this.stack.pop());}
   setTransform(a, b, c, d, e, f) {this.matrix = [a, b, c, d, e, f];}
   transform(a, b, c, d, e, f) {const t = new K.Transform(this.matrix); t.multiply(new K.Transform([a, b, c, d, e, f])); this.matrix = t.getMatrix();}
@@ -225,7 +226,7 @@ class FixtureContext {
   setLineDash(_) {} getLineDash() {return [];}
   rect(x, y, w, h) {this.points.push([x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]);}
   clip() {} // Clip fidelity is a browser acceptance item, not this fixture.
-  measureText(text) {return {width: text.length * 8, actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 4};}
+  measureText(text) {return {width: text.length * 8, actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 4, fontBoundingBoxAscent: 12, fontBoundingBoxDescent: 4};}
   fillText(text, x, y) {this.fillRect(x, y, text.length * 8, 16);} strokeText(text, x, y) {this.fillText(text, x, y);}
   createImageData(w, h) {return {data: new Uint8ClampedArray(w * h * 4), width: w, height: h};}
   getImageData() {return {data: this.canvas.data.slice()};}
@@ -248,6 +249,10 @@ class FixtureContext {
   fillRect(x, y, width, height) {this.eachPixel((px, py) => px >= x && px < x + width && py >= y && py < y + height, this.color(this.fillStyle));}
   beginPath() {this.points = []; this.circle = null;}
   moveTo(x, y) {this.points.push([x, y]);} lineTo(x, y) {this.points.push([x, y]);}
+  quadraticCurveTo(cx, cy, x, y) {
+    const [ax, ay] = this.points.at(-1);
+    for (let i = 1; i <= 12; i++) {const t = i / 12; this.points.push([(1-t)**2*ax+2*(1-t)*t*cx+t*t*x, (1-t)**2*ay+2*(1-t)*t*cy+t*t*y]);}
+  }
   closePath() {} arc(x, y, radius) {this.circle = {x, y, radius};}
   fill() {
     if (this.circle) {const {x, y, radius} = this.circle; this.eachPixel((px, py) => Math.hypot(px - x, py - y) <= radius, this.color(this.fillStyle)); return;}
@@ -349,7 +354,10 @@ function harness({fallback = false} = {}) {
     URL: {createObjectURL(blob) {const url = 'blob:fixture-' + h.urls.size; h.urls.set(url, blob); return url;}, revokeObjectURL(url) {h.revoked.push(url); h.urls.delete(url);}},
     Image: class {set src(url) {h.decode(h.urls.get(url)).then(frame => {this.naturalWidth = frame.width; this.naturalHeight = frame.height; this.data = frame.data; this.width = frame.width; this.height = frame.height; this.onload();}, error => this.onerror(error));}}};
   if (fallback) delete context.createImageBitmap;
-  vm.createContext(context, {codeGeneration: {strings: false, wasm: false}}); vm.runInContext(engineSource, context);
+  vm.createContext(context, {codeGeneration: {strings: false, wasm: false}}); vm.runInContext(upstreamSource, context);
+  const upstream = context.CockpitStudioUpstream;
+  context.CockpitStudioUpstream = {...upstream, drawElements(ctx, items, ...args) {h.records = items; return upstream.drawElements(ctx, items, ...args);}};
+  vm.runInContext(engineSource, context);
   h.editor = context.CockpitImageCanvas.create(h.host, {onChange: info => h.changes.push(info)}); h.document = document; h.events = events;
   h.point = (x, y) => {const p = h.stage.children[0].children[0].getAbsoluteTransform().point({x, y}), rect = h.host.rect;
     return {clientX: rect.left + p.x * rect.width / h.stage.width(), clientY: rect.top + p.y * rect.height / h.stage.height()};};
@@ -359,7 +367,11 @@ function harness({fallback = false} = {}) {
   };
   h.drag = (tool, points) => {h.editor.setTool(tool); h.fire('pointerdown', h.point(...points[0]));
     for (const p of points.slice(1)) h.fire('pointermove', h.point(...p)); h.fire('pointerup', h.point(...points.at(-1)));};
-  h.nodes = () => h.stage.children[2].children[0].children;
+  h.nodes = () => Array.from(h.records || [], record => ({
+    kind: record.type === 'path' ? 'Line' : record.type === 'text' ? 'Text' : ({arrow:'Arrow',rect:'Rect',ellipse:'Ellipse'})[record.shape],
+    attrs: {...record, stroke: record.color}, x: () => record.x ?? record.start?.x ?? record.points[0].x,
+    y: () => record.y ?? record.start?.y ?? record.points[0].y
+  }));
   h.pixels = blob => h.images.get(blob);
   return h;
 }
@@ -413,7 +425,7 @@ test('all vector tools stay selectable/editable objects; a guide is base plus ve
   h.editor.setTool('select'); h.fire('pointerdown', h.point(3, 3)); h.fire('pointerup', h.point(3, 3)); assert.ok(h.editor.state().selectedId);
   const submitted = await h.editor.snapshot({local: false}); assert.equal(submitted.mask, null); assert.ok(submitted.guide);
   assert.deepEqual(h.pixels(submitted.image).data, h.pixels(base).data);
-  assert.notDeepEqual(h.pixels(submitted.guide).data, h.pixels(base).data); assert.equal(h.stage.children[3].children[0].children.length, 1);
+  assert.notDeepEqual(h.pixels(submitted.guide).data, h.pixels(base).data); assert.equal(h.stage.children[3].children[0].children.length, 9);
   h.editor.clearAnnotations(); assert.equal(h.editor.state().hasAnnotations, false); h.editor.undo(); assert.equal(h.editor.state().annotationCount, 5);
 });
 test('annotation move, style/text edit and delete are single undoable transactions', async () => {
@@ -428,6 +440,41 @@ test('annotation move, style/text edit and delete are single undoable transactio
   h.editor.setTool('text'); h.editor.setText('old'); h.fire('pointerdown', h.point(1, 1)); h.fire('pointerup', h.point(1, 1));
   h.editor.setTool('select'); h.fire('pointerdown', h.point(1, 1)); h.fire('pointerup', h.point(1, 1)); h.editor.setText('new');
   assert.equal(h.nodes().at(-1).attrs.text, 'new'); h.editor.undo(); assert.equal(h.nodes().at(-1).attrs.text, 'old');
+});
+test('upstream resize handles transform committed annotation geometry once and undo restores it', async () => {
+  const h = harness(); await h.editor.load(h.image(24, 24)); h.editor.setStrokeWidth(2);
+  h.drag('box', [[4, 4], [12, 12]]); h.editor.setTool('select');
+  h.fire('pointerdown', h.point(8, 8)); h.fire('pointerup', h.point(8, 8));
+  const before = h.editor.state().revision;
+  // Visual bounds include a half-stroke; the resize adapter removes that offset.
+  h.fire('pointerdown', h.point(13, 13)); h.fire('pointermove', h.point(19, 21)); h.fire('pointerup', h.point(19, 21));
+  assert.equal(h.editor.state().revision, before + 1);
+  assert.ok(Math.abs(h.editor.state().selected.end.x - 18) < 1e-9);
+  assert.ok(Math.abs(h.editor.state().selected.end.y - 20) < 1e-9);
+  assert.ok(Math.abs(h.editor.state().selected.start.x - 4) < 1e-9);
+  assert.ok(Math.abs(h.editor.state().selected.start.y - 4) < 1e-9);
+  h.editor.undo(); assert.ok(Math.abs(h.records[0].end.x - 12) < 1e-9);
+  assert.ok(Math.abs(h.records[0].end.y - 12) < 1e-9);
+  h.editor.redo(); assert.ok(Math.abs(h.records[0].end.x - 18) < 1e-9);
+  assert.ok(Math.abs(h.records[0].end.y - 20) < 1e-9);
+});
+test('guide eraser removes crossed ink, never base or selection, and keeps nested history immutable', async () => {
+  const h = harness(); await h.editor.load(h.image(24, 24)); h.editor.setStrokeWidth(2);
+  h.drag('rectangle', [[1, 1], [20, 20]]); h.drag('box', [[4, 4], [12, 12]]);
+  h.drag('pen', [[18, 18], [20, 18]]);
+  const before = await h.editor.snapshot({local:true}); h.editor.setBrushSize(2);
+  h.drag('guide-eraser', [[1, 4], [15, 4]]);
+  assert.equal(h.editor.state().annotationCount,2);
+  const erased = h.records[0]; assert.ok(erased.erase?.length);
+  assert.ok(Object.isFrozen(erased.erase)); assert.ok(Object.isFrozen(erased.erase[0].points[0]));
+  const after = await h.editor.snapshot({local:true});
+  assert.deepEqual(h.pixels(before.image).data,h.pixels(after.image).data);
+  assert.deepEqual(h.pixels(before.mask).data,h.pixels(after.mask).data);
+  assert.notDeepEqual(h.pixels(before.guide).data,h.pixels(after.guide).data);
+  h.editor.setBrushSize(512); h.drag('guide-eraser', [[12, 12]]);
+  assert.equal(h.editor.state().hasAnnotations,false); assert.equal(h.editor.state().hasMask,true);
+  h.editor.undo(); assert.equal(h.editor.state().annotationCount,2);
+  h.editor.undo(); assert.equal(h.records[0].erase,undefined);
 });
 test('wheel pointer zoom, hand pan, keyboard focus and arrow nudges do not alter document pixels', async () => {
   const h = harness(); await h.editor.load(h.image(8, 6)); const initial = h.editor.state().revision;

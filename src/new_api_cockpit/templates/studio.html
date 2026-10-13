@@ -9,10 +9,12 @@
   {% include "partials/auth.html" %}
   <script defer src="/cockpit/static/navigation.js"></script>
   <script defer src="/cockpit/static/konva-10.7.1.min.js"></script>
+  <script defer src="/cockpit/static/studio-upstream.js"></script>
   <script defer src="/cockpit/static/studio-canvas.js"></script>
   <script defer src="/cockpit/static/studio-domain.js"></script>
   <script defer src="/cockpit/static/studio-request.js"></script>
   <script defer src="/cockpit/static/studio-results.js"></script>
+  <script defer src="/cockpit/static/studio-lightbox.js"></script>
   <script defer src="/cockpit/static/studio.js"></script>
 </head>
 <body class="app-layout">
@@ -38,7 +40,7 @@
       <aside class="studio-tools" aria-label="画布工具">
         <div class="studio-tool-group" role="group" aria-label="浏览与选择">{{ tool('pan', '移动', 'view') }}{{ tool('select', '选择', 'view') }}</div>
         <div class="studio-tool-group" role="group" aria-label="修改选区"><span class="studio-group-label">修改选区</span>{{ tool('brush', '选区笔刷', 'mask') }}{{ tool('eraser', '擦除选区', 'mask') }}{{ tool('rectangle', '矩形选区', 'mask') }}{{ tool('lasso', '圈选', 'mask') }}</div>
-        <div class="studio-tool-group" role="group" aria-label="指导标注"><span class="studio-group-label">指导标注</span>{{ tool('pen', '标注画笔', 'guide') }}{{ tool('arrow', '箭头', 'guide') }}{{ tool('box', '方框', 'guide') }}{{ tool('ellipse', '椭圆', 'guide') }}{{ tool('text', '文字', 'guide') }}</div>
+        <div class="studio-tool-group" role="group" aria-label="指导标注"><span class="studio-group-label">指导标注</span>{{ tool('pen', '标注画笔', 'guide') }}{{ tool('guide-eraser', '擦除标注', 'guide') }}{{ tool('arrow', '箭头', 'guide') }}{{ tool('box', '方框', 'guide') }}{{ tool('ellipse', '椭圆', 'guide') }}{{ tool('text', '文字', 'guide') }}</div>
       </aside>
 
       <section class="studio-board" aria-label="主图画布">
@@ -59,7 +61,7 @@
           <section id="studio-drawing-controls" class="studio-control-section" aria-labelledby="studio-drawing-title" hidden>
             <div class="studio-section-heading"><h3 id="studio-drawing-title">画布工具</h3><span id="studio-active-tool" class="hint">移动</span></div>
             <div id="studio-mask-controls" hidden><label for="studio-brush-size">选区笔刷大小 <output id="studio-brush-value" for="studio-brush-size">40 px</output><input id="studio-brush-size" type="range" min="1" max="512" value="40"></label><div id="studio-feather-control" hidden><label for="studio-feather">向内羽化 <output id="studio-feather-value" for="studio-feather">0 px</output><input id="studio-feather" type="range" min="0" max="32" value="0"></label></div><button id="studio-clear-mask" class="button-small" type="button">清空选区</button></div>
-            <div id="studio-guide-controls"><div class="studio-fields"><label for="studio-color">标注颜色<input id="studio-color" type="color" value="#e5484d"></label><label for="studio-stroke-width">线宽（px）<input id="studio-stroke-width" type="number" min="1" max="64" value="4"></label></div><label id="studio-text-control" for="studio-annotation-text" hidden>标注文字<input id="studio-annotation-text" type="text" maxlength="500" placeholder="在画布上点一下添加文字"></label><button id="studio-clear-guides" class="button-small" type="button">清空标注</button></div>
+            <div id="studio-guide-controls"><div class="studio-fields"><label for="studio-color">标注颜色<input id="studio-color" type="color" value="#e5484d"></label><label for="studio-stroke-width">线宽（px）<input id="studio-stroke-width" type="number" min="1" max="64" value="4"></label></div><label id="studio-text-control" for="studio-annotation-text" hidden>标注文字<input id="studio-annotation-text" type="text" maxlength="500" placeholder="在画布上点一下添加文字"></label><button id="studio-delete-guide" class="button-small" type="button" disabled>删除所选标注</button><button id="studio-clear-guides" class="button-small" type="button">清空标注</button></div>
           </section>
 
           <section id="studio-references-section" class="studio-control-section" aria-labelledby="studio-references-title" hidden><div class="studio-section-heading"><h3 id="studio-references-title">参考图 <span id="studio-reference-count" class="hint">0</span></h3><button id="studio-add-reference" class="button-small" type="button">{{ icon('plus') }}添加</button></div><input id="studio-reference-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" multiple tabindex="-1" aria-label="选择参考图片"><div id="studio-references" class="studio-references"></div><p id="studio-reference-help" class="hint">主图优先，参考图辅助人物、物体或风格</p></section>
@@ -96,12 +98,12 @@
     </div>
     <div class="studio-preview-toolbar">
       <div id="studio-result-switch" class="studio-result-switch" role="group" aria-label="结果类型"><button id="studio-show-original" type="button" aria-pressed="true">模型原始结果</button><button id="studio-show-composite" type="button" aria-pressed="false" disabled>局部合成结果</button></div>
-      <label for="studio-compare"><input id="studio-compare" type="checkbox">与提交主图对比</label>
+      <div class="studio-preview-zoom" role="group" aria-label="图片预览缩放"><button id="studio-preview-previous" type="button" aria-label="上一个候选">←</button><button id="studio-preview-next" type="button" aria-label="下一个候选">→</button><button id="studio-preview-zoom-out" type="button" aria-label="缩小预览">−</button><output id="studio-preview-zoom">100%</output><button id="studio-preview-zoom-in" type="button" aria-label="放大预览">+</button><button id="studio-preview-fit" type="button">适应</button></div><label for="studio-compare"><input id="studio-compare" type="checkbox">与提交主图对比</label>
     </div>
     <p id="studio-composite-reason" class="hint" hidden></p>
     <div id="studio-preview-images" class="studio-preview-images">
-      <figure id="studio-preview-source-panel" hidden><figcaption>提交时的主图</figcaption><img id="studio-preview-source" alt="提交时的主图"></figure>
-      <figure><figcaption id="studio-preview-result-label">模型原始结果</figcaption><img id="studio-preview-result" alt="候选结果"></figure>
+      <figure id="studio-preview-source-panel" hidden><figcaption>提交时的主图</figcaption><div id="studio-preview-source-viewport" class="studio-preview-viewport"><img id="studio-preview-source" alt="提交时的主图" draggable="false"></div></figure>
+      <figure><figcaption id="studio-preview-result-label">模型原始结果</figcaption><div id="studio-preview-result-viewport" class="studio-preview-viewport" tabindex="0" aria-label="图片预览，滚轮缩放，放大后拖动，左右键切换候选"><img id="studio-preview-result" alt="候选结果" draggable="false"></div></figure>
     </div>
     <div class="dialog-actions"><button id="studio-preview-download" type="button">{{ icon('download') }}下载</button><button id="studio-preview-adopt" type="button">应用为新版本</button><button id="studio-preview-continue" class="button-primary" type="button">应用并继续编辑</button></div>
   </dialog>

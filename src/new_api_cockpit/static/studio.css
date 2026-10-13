@@ -138,7 +138,8 @@
 .studio-preview-images.is-comparing { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .studio-preview-images figure { display: flex; flex-direction: column; margin: 0; min-width: 0; min-height: 0; }
 .studio-preview-images figcaption { flex: none; font-size: 11px; color: var(--ui-muted-text); margin-bottom: 4px; }
-.studio-preview-images img { display: block; flex: 1; width: 100%; height: 0; min-height: 0; object-fit: contain; background: repeating-conic-gradient(#eef1f4 0% 25%, #fff 0% 50%) 0 / 16px 16px; border: 1px solid var(--ui-border); border-radius: 8px; }
+.studio-preview-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; background: repeating-conic-gradient(#eef1f4 0% 25%, #fff 0% 50%) 0 / 16px 16px; border-radius: 8px; }
+.studio-preview-images img { display: block; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; user-select: none; background: repeating-conic-gradient(#eef1f4 0% 25%, #fff 0% 50%) 0 / 16px 16px; border: 1px solid var(--ui-border); border-radius: 8px; }
 .studio-preview .dialog-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 0; flex: none; }
 
 /* The last viewport grid row is persistent but remains in normal layout flow. */
@@ -221,3 +222,12 @@
   #studio-prompt { height: 48px; min-height: 48px; font-size: 16px; }
   .studio-inspector input:not([type=range]), .studio-inspector select { font-size: 16px; }
 }
+
+/* In-place text follows the upstream canvas font and line-box geometry. */
+.studio-canvas { position: relative; }
+.studio-inline-text { position: absolute; z-index: 2; margin: 0; padding: 0; border: 1px dashed #2563eb; background: #ffffffb8; resize: none; min-height: 0; min-width: 0; max-width: none; outline: none; overflow: hidden; border-radius: 0; white-space: pre; }
+.studio-mark-guide-eraser { transform: rotate(-35deg); border: 2px solid currentColor; border-radius: 3px; width: 15px; height: 12px; }
+
+.studio-preview-zoom { display: flex; align-items: center; gap: 4px; }
+.studio-preview-zoom button { min-width: 28px; height: 28px; min-height: 28px; padding: 0 8px; font-size: 12px; }
+#studio-preview-zoom { min-width: 40px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }

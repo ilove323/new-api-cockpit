@@ -1,0 +1,50 @@
+[
+  {
+    "repository": "CookSleep/gpt_image_playground",
+    "commit": "1e9d5af60aadd9117a835cc2da43908b8e3370dd",
+    "source": "src/lib/sketch.ts",
+    "file": "gpt-image-playground/lib/sketch.ts",
+    "sha256": "37b0b190b0c99dbf19db8ed4d814731b361dde46651ba8ca48deff41a6dadf62",
+    "license": "MIT"
+  },
+  {
+    "repository": "CookSleep/gpt_image_playground",
+    "commit": "1e9d5af60aadd9117a835cc2da43908b8e3370dd",
+    "source": "src/lib/viewportTransform.ts",
+    "file": "gpt-image-playground/lib/viewportTransform.ts",
+    "sha256": "dd3d53d712b4c6a65a0e1094db18b33c32e1f1706b9e23755308850bf8d85e5c",
+    "license": "MIT"
+  },
+  {
+    "repository": "invoke-ai/InvokeAI",
+    "commit": "aa46003581e2c482e03e62116f68ef3c3a6f0233",
+    "source": "invokeai/frontend/webv1/src/features/controlLayers/konva/CanvasCompositorModule.ts",
+    "file": "invokeai/CanvasCompositorModule.ts",
+    "sha256": "1211abf03f3a318a19d790ff6be4b26d4fdafdb26a29d40557b51448e0edaeaf",
+    "license": "Apache-2.0"
+  },
+  {
+    "commit": "1e9d5af60aadd9117a835cc2da43908b8e3370dd",
+    "source": "src/components/SketchBoardModal.tsx",
+    "file": "gpt-image-playground/SketchBoardModal.tsx",
+    "sha256": "8b16434369a1ab188c01e42ce762ad240c4418184be180cbedae6e9ed6700d65",
+    "license": "MIT",
+    "repository": "CookSleep/gpt_image_playground"
+  },
+  {
+    "commit": "1e9d5af60aadd9117a835cc2da43908b8e3370dd",
+    "source": "src/components/Lightbox.tsx",
+    "file": "gpt-image-playground/Lightbox.tsx",
+    "sha256": "827abf9e034b68b0794800b13e70302709d42509f0795027c42bae88f9b18395",
+    "license": "MIT",
+    "repository": "CookSleep/gpt_image_playground"
+  },
+  {
+    "repository": "invoke-ai/InvokeAI",
+    "commit": "aa46003581e2c482e03e62116f68ef3c3a6f0233",
+    "source": "NOTICE",
+    "file": "invokeai/NOTICE",
+    "sha256": "8fa3091672b5e9ca9590262bb73c7762d8ea07fe5e681dfa3e63f118e9b58e00",
+    "license": "Apache-2.0"
+  }
+]

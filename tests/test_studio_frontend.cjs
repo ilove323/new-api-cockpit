@@ -30,7 +30,7 @@ const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resol
 const image = (name = '主图.png', width = 1024, height = 1024, type = 'image/png') => Object.assign(new Blob(['image'], {type}), {name, width, height});
 class Element {
   constructor(tag = 'div') {
-    this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.events = {};
+    this.style = {}; this.tagName = tag.toUpperCase(); this.children = []; this.attrs = {}; this.events = {};
     this.value = ''; this.textContent = ''; this.hidden = false; this.disabled = false; this.dataset = {};
     this.checked = false; this.inert = false; this.open = false; this.tabIndex = 0; this.classes = new Set();
     this.classList = {contains: x => this.classes.has(x), toggle: (x, force) => {
@@ -45,10 +45,11 @@ class Element {
   append(...items) { this.children.push(...items); for (const child of items) child.setConnected(true); }
   replaceChildren(...items) { for (const child of this.children) child.setConnected(false); this.children = []; this.append(...items); this.textContent = ''; if (this.tagName === 'SELECT') this.value = items[0]?.value || ''; }
   addEventListener(name, fn) { (this.events[name] ??= []).push(fn); }
+  removeEventListener(name, fn) {this.events[name] = (this.events[name] || []).filter(f => f !== fn);}
   async fire(name, detail = {}) { for (const fn of this.events[name] || []) await fn({target: this, currentTarget: this, preventDefault() { this.defaultPrevented = true; }, ...detail}); }
   querySelectorAll() { return this.focusable || []; }
   getClientRects() { return this.hidden ? [] : [{}]; }
-  getBoundingClientRect() { return {left:100,top:100,right:900,bottom:700}; }
+  getBoundingClientRect() { return {left:100,top:100,right:900,bottom:700,width:800,height:600}; }
   focus() { if (this.doc) this.doc.activeElement = this; }
   click() { this.clicked = true; this.fire('click'); }
   remove() { this.removed = true; this.setConnected(false); }
@@ -133,7 +134,7 @@ async function harness({missingEngine = false, narrow = false, catalogModels = m
   };
   ctx.window = ctx; if (!missingEngine) ctx.CockpitImageCanvas = {create(host, options) { h.onChange = options.onChange; return editor; }};
   h.ctx = ctx; h.editor = editor;
-  for (const file of ['studio-domain','studio-request','studio-results']) vm.runInNewContext(fs.readFileSync(path.join(root,`static/${file}.js`),'utf8'),ctx,{filename:`${file}.js`});
+  for (const file of ['studio-upstream','studio-lightbox','studio-domain','studio-request','studio-results']) vm.runInNewContext(fs.readFileSync(path.join(root,`static/${file}.js`),'utf8'),ctx,{filename:`${file}.js`});
   vm.runInNewContext(source, ctx, {filename: 'studio.js'}); await settle(); return h;
 }
 
@@ -199,6 +200,18 @@ test('both preview entry points open a modal; closing returns focus without appl
     assert.equal(h.el('preview').open,false);assert.equal(h.el('preview-result').src,undefined);
   }
   assert.equal(h.loads.length,0);assert.equal(h.paid().length,1);
+});
+test('source-backed preview zoom and candidate switching do not apply images or dispatch again',async()=>{
+  const h=await harness();await h.choose();await h.fire('form','submit');await h.fire('form','submit');
+  const cards=h.el('candidates').children,urls=cards.map(card=>card.children[0].children[0].src);
+  await cards[0].children[0].fire('click');
+  assert.equal(h.el('preview-result').src,urls[0]);assert.equal(h.el('preview-previous').disabled,true);
+  await h.fire('preview-zoom-in');assert.equal(h.el('preview-zoom').textContent,'115%');
+  await h.fire('preview-next');assert.equal(h.el('preview-result').src,urls[1]);
+  assert.equal(h.el('preview-zoom').textContent,'100%');assert.equal(h.el('preview-next').disabled,true);
+  await h.fire('preview','keydown',undefined,{key:'ArrowLeft',target:h.el('preview-result-viewport')});
+  assert.equal(h.el('preview-result').src,urls[0]);
+  await h.fire('preview-close');assert.equal(h.loads.length,0);assert.equal(h.paid().length,2);
 });
 test('Escape, native close and backdrop synchronize preview state; an inside-to-outside drag does not dismiss',async()=>{
   const h=await harness();await h.choose();await h.fire('form','submit');

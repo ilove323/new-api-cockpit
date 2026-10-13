@@ -50,9 +50,18 @@ async function main() {
     ...(process.env.STUDIO_BROWSER_EXECUTABLE ? {executablePath:process.env.STUDIO_BROWSER_EXECUTABLE} : {})});
   try {
     const results = [];
+    const artifactsDir=process.env.STUDIO_ARTIFACT_DIR;
+    if(artifactsDir)fs.mkdirSync(artifactsDir,{recursive:true});
     for (const testCase of [{name:'portrait',width:837,height:1280,size:'1024x1536'},
       {name:'landscape',width:1280,height:837,size:'1536x1024'}]) {
       const page = await browser.newPage({viewport:{width:1440,height:960}});
+      await page.addInitScript(() => {
+        Object.defineProperty(window,'CockpitImageCanvas',{configurable:true,set(api) {
+          Object.defineProperty(window,'CockpitImageCanvas',{configurable:true,writable:true,value:{...api,create(host,options) {
+            const editor=api.create(host,options);window.__studioEditor=editor;return editor;
+          }}});
+        }});
+      });
       const errors = [];page.on('pageerror',error => errors.push(error.message));
       const artifacts = await page.evaluate(({width,height,size}) => {
         const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
@@ -106,6 +115,41 @@ async function main() {
       const board=await page.locator('#studio-canvas').boundingBox();
       const cx=board.x+board.width/2,cy=board.y+board.height/2;
       const scale=Math.min((board.width-32)/testCase.width,(board.height-32)/testCase.height);
+      if (testCase.name === 'portrait') {
+        // Actual upstream drawing and DOM text editing; no model calls.
+        await page.click('[data-tool="text"]');
+        await page.mouse.click(cx-35,cy-35);
+        const inline=page.locator('.studio-inline-text');await inline.waitFor();
+        await inline.fill('把这里改为绿色\n保留其他部分');
+        assert.equal(await page.locator('#studio-submit').isDisabled(),false,'Typing a guide should enable submission before blur');
+        await inline.press('Control+Enter');await inline.waitFor({state:'detached'});
+        assert.equal(await page.evaluate(()=>window.__studioEditor.state().annotationCount),1);
+        await page.click('[data-tool="select"]');await page.mouse.dblclick(cx-30,cy-30);
+        await inline.waitFor();await inline.fill('原位编辑');await inline.press('Control+Enter');
+        assert.equal(await page.evaluate(()=>window.__studioEditor.state().selected.text),'原位编辑');
+        await page.click('#studio-delete-guide');
+        assert.equal(await page.evaluate(()=>window.__studioEditor.state().hasAnnotations),false);
+        await page.click('[data-tool="box"]');
+        await page.mouse.move(cx-30,cy-30);await page.mouse.down();await page.mouse.move(cx+30,cy+30);await page.mouse.up();
+        await page.click('[data-tool="select"]');await page.mouse.click(cx,cy);
+        const resize=await page.evaluate(()=>{
+          const stage=Konva.stages[0],group=stage.children[0].children[0],record=window.__studioEditor.state().selected;
+          const ctx=document.createElement('canvas').getContext('2d'),bounds=CockpitStudioUpstream.sketch.getElementBounds(record,ctx);
+          const p=group.getAbsoluteTransform().point(CockpitStudioUpstream.sketch.getHandlePoint(bounds,'se'));
+          const rect=stage.content.getBoundingClientRect();return {x:rect.left+p.x,y:rect.top+p.y,end:record.end};
+        });
+        await page.mouse.move(resize.x,resize.y);await page.mouse.down();await page.mouse.move(resize.x+25,resize.y+20);await page.mouse.up();
+        const resized=await page.evaluate(()=>window.__studioEditor.state().selected.end);
+        assert(resized.x>resize.end.x && resized.y>resize.end.y);
+        await page.click('#studio-undo');await page.click('#studio-clear-guides');
+        assert.equal(await page.evaluate(()=>window.__studioEditor.state().annotationCount),0);
+        await page.click('[data-tool="pen"]');await page.mouse.move(cx-20,cy);await page.mouse.down();
+        await page.mouse.move(cx+20,cy,{steps:8});await page.mouse.up();
+        await page.click('[data-tool="guide-eraser"]');await page.fill('#studio-brush-size','512');
+        await page.locator('#studio-brush-size').dispatchEvent('input');await page.mouse.click(cx,cy);
+        assert.equal(await page.evaluate(()=>window.__studioEditor.state().hasAnnotations),false);
+        assert.equal(await page.evaluate(()=>window.__studioEditor.state().hasMask),false);
+      }
       const selection={left:testCase.width/2-45/scale,right:testCase.width/2+45/scale,
         top:testCase.height/2-45/scale,bottom:testCase.height/2+45/scale};
       await page.click('[data-tool="rectangle"]');
@@ -113,11 +157,15 @@ async function main() {
       await page.mouse.move(cx+45,cy+45,{steps:5});await page.mouse.up();
       assert.equal(await page.locator('#studio-submit').isDisabled(),true,'Selection alone needs an instruction');
       await page.click('[data-tool="text"]');
+      assert.equal(await page.locator('[data-tool="text"]').getAttribute('aria-pressed'),'true');
       await page.fill('#studio-annotation-text','Change this square to green');
       await page.mouse.click(cx-40,cy-30);
       await page.waitForFunction(() => !document.getElementById('studio-submit').disabled);
       assert.equal(await page.inputValue('#studio-prompt'),'');
       assert.match(await page.locator('#studio-submit-label').innerText(),/局部/);
+      assert.equal(await page.locator('[data-tool="text"]').getAttribute('aria-pressed'),'true');
+      assert.equal(await page.evaluate(()=>window.__studioEditor.state().tool),'text');
+      if(artifactsDir)await page.screenshot({path:path.join(artifactsDir,testCase.name+'-editor.png')});
       await page.click('#studio-submit');
       await page.locator('#studio-candidates .studio-candidate-preview img').waitFor({timeout:350000});
       const pixels=await page.locator('#studio-candidates .studio-candidate-preview img').evaluate(async (img,{source,selection}) => {
@@ -154,8 +202,14 @@ async function main() {
       assert.equal(await page.locator('#studio-preview-result').getAttribute('src'),candidateImage);
       assert.equal(await page.isChecked('#studio-compare'),false);
       assert.equal(await page.locator('#studio-preview-source-panel').isVisible(),false);
+      const resultViewport=page.locator('#studio-preview-result-viewport');
+      const target=await resultViewport.boundingBox();await page.mouse.move(target.x+target.width/2,target.y+target.height/2);
+      await page.mouse.wheel(0,-100);await page.waitForFunction(()=>document.getElementById('studio-preview-zoom').textContent==='115%');
+      assert.match(await page.locator('#studio-preview-result').evaluate(img=>img.style.transform),/scale\(1.15\)/);
+      await page.click('#studio-preview-fit');assert.equal(await page.locator('#studio-preview-zoom').innerText(),'100%');
       const enlarged=await page.locator('#studio-preview-result').boundingBox();assert(enlarged.width>300 && enlarged.height>300);
       assert.deepEqual(await page.locator('#studio-canvas').boundingBox(),previewBoard,'Modal must not resize the canvas');
+      if(artifactsDir)await page.screenshot({path:path.join(artifactsDir,testCase.name+'-preview.png')});
       await page.evaluate(()=>document.getElementById('studio-prompt').focus());
       assert.equal(await preview.evaluate(dialog=>dialog.contains(document.activeElement)),true,'Modal keeps background controls inert');
       for(let i=0;i<12;i++) {
@@ -188,13 +242,14 @@ async function main() {
         for(const id of ['studio-preview-close','studio-preview-download','studio-preview-adopt','studio-preview-continue']) {
           const rect=await page.locator('#'+id).boundingBox();assert(rect && rect.x>=0 && rect.y>=0 && rect.x+rect.width<=390 && rect.y+rect.height<=844,id);
         }
+        if(artifactsDir)await page.screenshot({path:path.join(artifactsDir,'mobile-preview.png')});
         const imageBox=await page.locator('#studio-preview-result').boundingBox();assert(imageBox.width>200 && imageBox.height>200);
         await page.check('#studio-compare');await page.locator('#studio-preview-source').waitFor();
         assert.equal(await preview.evaluate(dialog=>dialog.open),true);
         await page.keyboard.press('Escape');await preview.waitFor({state:'hidden'});
       }
       assert.deepEqual(errors,[]);assert(capture);
-      results.push({case:testCase.name,paid:!!relay,source:[testCase.width,testCase.height],...capture,composite:pixels,modal_preview:true});
+      results.push({case:testCase.name,paid:!!relay,source:[testCase.width,testCase.height],...capture,composite:pixels,modal_preview:true,source_editor:testCase.name==='portrait',zoom_preview:true});
       console.log(JSON.stringify(results.at(-1)));await page.close();
     }
     if(process.env.STUDIO_REGRESSION_OUTPUT) fs.writeFileSync(process.env.STUDIO_REGRESSION_OUTPUT,JSON.stringify(results,null,2));

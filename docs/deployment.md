@@ -60,7 +60,7 @@ docker compose logs --tail 100 statistics
 
 ## 运行状态检查
 
-同一个 `statistics` 容器包含网页、每天北京时间 10:00 的余额检查和按规则执行的零点配额任务。
+`statistics` 负责网页、每天北京时间 10:00 的余额检查和按规则执行的零点配额任务；`image-studio` 只处理图片请求。
 配置 `MONITOR_DATABASE_URL` 后，两个定时器随应用启动，浏览器关闭后仍会运行。
 没有启用的配额规则时，不会自行增减用户额度。暂停全部应用会同时暂停两个定时器。
 
@@ -200,13 +200,13 @@ ON TABLE public.abilities TO cockpit_reader;
 
 模型清单关联当前启用渠道，严格读取 GPT 启用 abilities，不以 `channels.models` 猜授权。
 新增查询只要求列级 SELECT，不授予源表写权限、不新增数据库函数或工作站迁移；保留其他管理功能已使用的 PAT 函数。
-旧部署已有 abilities 前四列授权时，本次需补 `priority`、`weight`，用于把路由优先级/权重变化纳入契约修订。
-源角色还需已有 `channels` 的 `id/status/type/model_mapping/base_url/setting/settings/param_override/header_override` 读取权限，以及 `options` 的 `key/value` 读取权限。程序先检查列是否存在和可读，只投影透传开关、覆盖是否为空与配置摘要，不读取渠道 KEY 或返回原始设置。旧版本缺失的可选列按已核对的默认处理，缺权限不冒充缺列。
+`priority`、`weight` 用于把路由优先级和权重变化纳入契约修订，需与其他路由列一起授权。
+源角色还需 `channels` 的 `id/status/type/model_mapping/base_url/setting/settings/param_override/header_override` 读取权限，以及 `options` 的 `key/value` 读取权限。程序先检查列是否存在和可读，只投影透传开关、覆盖是否为空与配置摘要，不读取渠道 KEY 或返回原始设置。可选列不存在时按已核对的默认处理；权限缺失不视为列不存在。
 本人 KEY 由官方已审计的 `/api/token/{id}/key` 读取，无 PAT 补建，管理员也不能代用他人的 KEY。
 
 ### 图片协议契约
 
-`IMAGE_STUDIO_CAPABILITIES_FILE` 必须指向容器内的 schema 2 JSON 文件，网页池和图片池读取同一文件，并以只读方式挂载。未配置的渠道没有默认图片能力，旧的四个布尔开关配置不再使用。
+`IMAGE_STUDIO_CAPABILITIES_FILE` 必须指向容器内的 schema 2 JSON 文件，网页池和图片池读取同一文件，并以只读方式挂载。未配置的渠道没有默认图片能力。
 
 从根目录的 [`image-studio-capabilities.example.json`](../image-studio-capabilities.example.json) 开始填写，文件中不放 KEY、密码或原始请求。示例渠道 ID 仅作格式演示，不能直接代表你的上游。
 

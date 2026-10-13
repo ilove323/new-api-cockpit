@@ -1,4 +1,8 @@
-/* Image Studio canvas engine. Load the locally licensed Konva 10.7.1 first.
+/* Image Studio canvas adapter. Load local Konva 10.7.1 and studio-upstream first.
+ * Annotation gestures/text ported from GPT Image Playground SketchBoardModal.tsx.
+ * Copyright (c) 2026 CookSleep, MIT. Geometry/drawing/resize use its bundled source;
+ * guide layering uses the adapted InvokeAI compositor, Apache-2.0.
+ * Revisions and local changes: docs/image-studio-sources.md.
  * Vanilla JS; no fetch, persistence, HTML injection, eval, fonts or model calls.
  * Document pixels are EXIF-normalized exactly once by the image decoder. The
  * immutable base, editable coverage, vector annotations and view UI stay apart.
@@ -27,7 +31,7 @@
     maskBytes: 4000000, axis: 16384, history: 100, operations: 1000,
     annotations: 500, points: 250000, strokePoints: 16000});
   const TOOLS = Object.freeze(['pan', 'select', 'brush', 'eraser', 'rectangle',
-    'lasso', 'pen', 'arrow', 'box', 'ellipse', 'text']);
+    'lasso', 'pen', 'arrow', 'box', 'ellipse', 'text', 'guide-eraser']);
   const SELECTION_COLOR = '#00d8ff';
   let documentSequence = 0;
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -222,8 +226,13 @@
     }
     return out;
   }
+  // Upstream SketchElement includes point objects and per-element erase paths.
+  // Freeze them recursively: submitted guidance must survive future edits.
   function freezeRecord(record) {
-    return Object.freeze({...record, ...(record.points ? {points: Object.freeze(Array.from(record.points))} : {})});
+    if (!record || typeof record !== 'object') return record;
+    if (Object.isFrozen(record)) return record;
+    if (Array.isArray(record)) return Object.freeze(record.map(freezeRecord));
+    return Object.freeze(Object.fromEntries(Object.entries(record).map(([key, value]) => [key, freezeRecord(value)])));
   }
   const model = (masks = [], annotations = [], feather = 0) => Object.freeze({
     masks: Object.freeze(masks), annotations: Object.freeze(annotations), feather});
@@ -247,7 +256,11 @@
       throw fail('Canvas command limit reached; clear unused selections or annotations', 'COMMAND_LIMIT');
     }
     let points = 0;
-    for (const object of [...next.masks, ...next.annotations]) points += (object.points || []).length / 2;
+    for (const object of next.masks) points += (object.points || []).length / 2;
+    for (const object of next.annotations) {
+      points += (object.points || []).length;
+      for (const stroke of object.erase || []) points += stroke.points.length;
+    }
     if (points > LIMITS.points) throw fail('Canvas point limit reached', 'COMMAND_LIMIT');
   }
   function editable(target) {
@@ -321,29 +334,15 @@
     }
     ctx.restore();
   }
-  function shape(K, record) {
-    const attrs = {id: record.id || '', x: record.x || 0, y: record.y || 0,
-      stroke: record.color, strokeWidth: record.strokeWidth, lineCap: 'round', lineJoin: 'round',
-      hitStrokeWidth: Math.max(12, record.strokeWidth || 1), listening: true};
-    if (record.type === 'pen') return new K.Line({...attrs,
-      points: record.points.length === 2 ? [...record.points, record.points[0] + 0.01, record.points[1]] : record.points});
-    if (record.type === 'arrow') return new K.Arrow({...attrs, points: record.points,
-      fill: record.color, pointerLength: Math.max(10, record.strokeWidth * 3), pointerWidth: Math.max(10, record.strokeWidth * 3)});
-    if (record.type === 'box') return new K.Rect({...attrs, width: record.width, height: record.height});
-    if (record.type === 'ellipse') return new K.Ellipse({...attrs,
-      x: record.x + record.width / 2, y: record.y + record.height / 2, radiusX: record.width / 2, radiusY: record.height / 2});
-    if (record.type === 'text') return new K.Text({...attrs, stroke: undefined, fill: record.color,
-      text: record.text, fontFamily: 'Arial, sans-serif', fontSize: record.fontSize, padding: 0});
-    throw fail('Unknown vector annotation', 'INVALID_ARGUMENT');
-  }
-
   function create(host, options = {}) {
-    const K = root.Konva, doc = host && host.ownerDocument;
+    const K = root.Konva, doc = host && host.ownerDocument, upstream = root.CockpitStudioUpstream;
+    if (!upstream?.sketch || !upstream.drawElements) throw fail('Pinned studio source bundle is required', 'CANVAS_UNAVAILABLE');
+    const S = upstream.sketch;
     if (!host || !doc || !K || K.version !== '10.7.1') throw fail('A host and local Konva 10.7.1 are required', 'CANVAS_UNAVAILABLE');
     const notify = typeof options.onChange === 'function' ? options.onChange : () => {};
     let disposed = false, loadSequence = 0, snapshotEpoch = 0, source = null, current = model(), revision = 0;
     let tool = 'pan', brushSize = 40, color = '#ef4444', strokeWidth = 4, text = '标注';
-    let selected = null, nextObject = 0, gesture = null, space = false, pinch = null, pinchBlocked = false;
+    let selected = null, nextObject = 0, editing = null, gesture = null, space = false, pinch = null, pinchBlocked = false;
     let hasMask = false, view = {x: 0, y: 0, scale: 1}, fitted = true;
     let selectionVisible = true, annotationsVisible = true;
     let snapshots = new WeakMap();
@@ -362,19 +361,27 @@
     stage.add(baseLayer, maskLayer, annotationLayer, uiLayer);
     const baseNode = new K.Image({listening: false}), maskNode = new K.Image({listening: false, opacity: 0.35});
     baseGroup.add(baseNode); maskGroup.add(maskNode);
-    let maskCanvas = null, maskContext = null, draftNode = null;
+    let maskCanvas = null, maskContext = null, annotationCanvas = null, annotationContext = null, draftNode = null;
+    const inkNode = new K.Image({listening: false}); annotations.add(inkNode);
     const selectionBox = new K.Rect({stroke: '#2563eb', strokeWidth: 1, dash: [5, 4], listening: false, visible: false});
     ui.add(selectionBox);
+    const handles = S.SKETCH_HANDLES.map(name => {
+      const node = new K.Rect({fill: '#fff', stroke: '#2563eb', listening: false, visible: false});
+      ui.add(node); return {name, node};
+    });
 
     function alive() { if (disposed) throw fail('Canvas editor was destroyed', 'DESTROYED'); }
     function loaded() { alive(); if (!source) throw fail('Load a primary image first', 'NO_DOCUMENT'); }
     function state() {
+      const noteCount = editing ? current.annotations.filter(a => a.id !== editing.record.id).length +
+        (editing.input.value.trim() ? 1 : 0) : current.annotations.length;
       return {width: source ? source.width : 0, height: source ? source.height : 0,
         documentId: source ? source.documentId : null, revision, hasMask,
-        hasAnnotations: current.annotations.length > 0, annotationCount: current.annotations.length,
+        hasAnnotations: noteCount > 0, annotationCount: noteCount,
         canUndo: history.past.length > 0, canRedo: history.future.length > 0,
         tool, zoom: view.scale, feather: current.feather, selectedId: selected,
-        selectionVisible, annotationsVisible};
+        selectionVisible, annotationsVisible,
+        selected: selected ? current.annotations.find(a => a.id === selected) || null : null, editingText: !!editing};
     }
     function changed(error) { notify({...state(), ...(error ? {error: error.message, errorCode: error.code || 'CANVAS_ERROR'} : {})}); }
     function listen(name, fn, opts) { host.addEventListener(name, fn, opts); listeners.push([name, fn, opts]); }
@@ -431,18 +438,74 @@
     function applyView() {
       for (const group of [baseGroup, maskGroup, annotations, ui]) group.setAttrs({x: view.x, y: view.y, scaleX: view.scale, scaleY: view.scale});
       selectionBox.strokeWidth(1 / view.scale); selectionBox.dash([5 / view.scale, 4 / view.scale]);
-      stage.batchDraw();
+      selection(); positionText(); stage.batchDraw();
     }
-    function selection() {
-      const node = annotations.getChildren().find(n => n.id() === selected);
-      selectionBox.visible(annotationsVisible && !!node);
-      if (node) selectionBox.setAttrs(node.getClientRect({relativeTo: annotations}));
+    function selection(items = current.annotations) {
+      const record = items.find(a => a.id === selected);
+      const visible = annotationsVisible && !!record && !editing;
+      selectionBox.visible(visible);
+      const bounds = record && annotationContext ? S.getElementBounds(record, annotationContext) : null;
+      if (bounds) selectionBox.setAttrs(bounds);
+      for (const {name, node} of handles) {
+        node.visible(visible);
+        if (bounds) {
+          const point = S.getHandlePoint(bounds, name), size = 8 / view.scale;
+          node.setAttrs({x: point.x - size / 2, y: point.y - size / 2, width: size, height: size, strokeWidth: 1 / view.scale});
+        }
+      }
       uiLayer.batchDraw();
     }
-    function renderAnnotations() {
-      annotations.destroyChildren();
-      for (const record of current.annotations) annotations.add(shape(K, record));
-      selection(); annotationLayer.batchDraw();
+    const allocate = (width, height) => canvas(width, height).canvas;
+    function renderAnnotations(items = current.annotations) {
+      if (annotationContext && source) {
+        annotationContext.clearRect(0, 0, source.width, source.height);
+        upstream.drawElements(annotationContext, editing ? items.filter(a => a.id !== editing.record.id) : items,
+          source, allocate, releaseCanvas);
+      }
+      selection(items); annotationLayer.batchDraw();
+    }
+    // Text editing ported from SketchBoardModal: a textarea uses exactly the same
+    // font/line box as the upstream renderer. Never inject generated HTML.
+    function positionText() {
+      if (!editing || !source) return;
+      const {record, input} = editing, size = S.measureTextElement(annotationContext, {...record, text: input.value || ' '});
+      Object.assign(input.style, {left: (view.x + record.x * view.scale) + 'px', top: (view.y + record.y * view.scale) + 'px',
+        width: Math.max(80, (size.width + record.fontSize) * view.scale) + 'px',
+        height: Math.max(30, size.height * view.scale) + 'px', fontSize: record.fontSize * view.scale + 'px',
+        fontFamily: S.SKETCH_FONT_FAMILY, lineHeight: String(S.SKETCH_LINE_HEIGHT), color: record.color});
+    }
+    function finishText(cancel = false) {
+      if (!editing) return;
+      const {record, input} = editing; editing = null;
+      const value = input.value.slice(0, 2000); input.remove();
+      if (!cancel) {
+        const existed = current.annotations.some(a => a.id === record.id);
+        const items = current.annotations.filter(a => a.id !== record.id);
+        if (value.trim()) {
+          const updated = freezeRecord({...record, text: value});
+          // Keep z-order when editing an existing text object.
+          const next = existed ? current.annotations.map(a => a.id === record.id ? updated : a) : [...items, updated];
+          selected = record.id; commit(model(current.masks, next, current.feather));
+        } else if (existed) {selected = null; commit(model(current.masks, items, current.feather));}
+      }
+      renderAnnotations(); changed();
+    }
+    function startText(record) {
+      finishText(); cancelGesture();
+      if (current.annotations.length >= LIMITS.annotations && !current.annotations.some(a => a.id === record.id))
+        throw fail('Canvas annotation limit reached', 'COMMAND_LIMIT');
+      const input = doc.createElement('textarea'); input.className = 'studio-inline-text';
+      input.maxLength = 2000; input.value = record.text; input.setAttribute('aria-label', '编辑指导标注文字');
+      input.addEventListener('input', () => {positionText(); changed();});
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); finishText(true); host.focus();}
+        else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault(); event.stopPropagation(); finishText(); host.focus();
+        }
+      });
+      input.addEventListener('blur', () => finishText());
+      editing = {record, input}; selected = record.id; host.append(input);
+      positionText(); renderAnnotations(); input.focus({preventScroll: true}); changed();
     }
     function coverage() {
       const rgba = maskContext.getImageData(0, 0, source.width, source.height).data;
@@ -490,22 +553,31 @@
     }
     function draftRecord(g) {
       const rect = normalizedRect(g.start, g.end);
-      if (['rectangle', 'box', 'ellipse'].includes(g.type)) return {...g.attrs, type: g.type, ...rect};
-      if (g.type === 'arrow') return {...g.attrs, type: g.type, points: [g.start.x, g.start.y, g.end.x, g.end.y]};
+      if (g.type === 'rectangle') return {...g.attrs, type: g.type, ...rect};
+      if (['box', 'ellipse', 'arrow'].includes(g.type)) return {id: g.id, type: 'shape',
+        shape: g.type === 'box' ? 'rect' : g.type, color: g.attrs.color, width: g.attrs.strokeWidth, start: g.start, end: g.end};
+      if (g.type === 'pen') return {id: g.id, type: 'path', color: g.attrs.color, width: g.attrs.strokeWidth,
+        points: g.points.reduce((items, x, i) => {if (i % 2 === 0) items.push({x, y: g.points[i + 1]}); return items;}, [])};
       return {...g.attrs, type: g.type, points: g.points};
     }
     function drawDraft() {
-      if (draftNode) draftNode.destroy();
+      if (draftNode) {draftNode.destroy(); draftNode = null;}
       const record = draftRecord(gesture);
       if (gesture.type === 'rectangle') draftNode = new K.Rect({...record, fill: SELECTION_COLOR, opacity: 0.35, listening: false});
       else if (gesture.type === 'lasso') draftNode = new K.Line({points: record.points, closed: true,
         fill: SELECTION_COLOR, opacity: 0.35, stroke: SELECTION_COLOR, strokeWidth: 1 / view.scale, listening: false});
-      else { draftNode = shape(K, record); draftNode.listening(false); }
-      draftNode.visible(['rectangle', 'lasso'].includes(gesture.type) ? selectionVisible : annotationsVisible);
-      ui.add(draftNode); uiLayer.batchDraw();
+      else if (gesture.type === 'guide-eraser') {
+        const stroke = upstream.sampleEraseStroke({width: gesture.attrs.size, points: draftRecord({...gesture, type: 'pen'}).points});
+        // Upstream drawScene applies live erase only to the ink canvas. Commit
+        // attaches it to touched objects, so moving/resizing keeps erased holes.
+        renderAnnotations(); S.drawEraseStroke(annotationContext, stroke);
+        annotationLayer.batchDraw(); return;
+      } else {renderAnnotations([...current.annotations, record]); return;}
+      draftNode.visible(selectionVisible); ui.add(draftNode); uiLayer.batchDraw();
     }
     function pointerDown(event) {
       if (disposed || !source || editable(event.target) || (event.button !== undefined && event.button !== 0 && event.button !== 1)) return;
+      if (editing) {finishText(); return;}
       event.preventDefault(); host.focus({preventScroll: true}); capture(event);
       const point = eventPoint(event); pointers.set(event.pointerId, point);
       if (pointers.size > 1) { if (pointers.size === 2) pinchStart(); return; }
@@ -515,21 +587,36 @@
         gesture = {type: 'pan', pointerId: event.pointerId, start: point, view: {...view}}; return;
       }
       if (tool === 'select') {
-        const node = annotationsVisible ? stage.getIntersection(point) : null;
-        const record = node && current.annotations.find(a => a.id === node.id());
-        selected = record ? record.id : null; selection(); changed();
-        if (record) gesture = {type: 'move', pointerId: event.pointerId, start: p, end: p, record};
+        const record = annotationsVisible ? current.annotations.find(a => a.id === selected) : null;
+        const bounds = record ? S.getElementBounds(record, annotationContext) : null;
+        const handle = bounds && S.SKETCH_HANDLES.find(name => {
+          const q = S.getHandlePoint(bounds, name); return Math.hypot(p.x - q.x, p.y - q.y) <= 8 / view.scale;
+        });
+        if (handle) {
+          const from = S.getTransformBounds(record, annotationContext);
+          const boxPoint = S.getHandlePoint(bounds, handle), fromPoint = S.getHandlePoint(from, handle);
+          gesture = {type: 'resize', pointerId: event.pointerId, start: p, end: p, record, handle, from,
+            offset: {x: boxPoint.x - fromPoint.x, y: boxPoint.y - fromPoint.y}}; return;
+        }
+        const hit = annotationsVisible ? S.findTopElementAt(current.annotations, p, 6 / view.scale, annotationContext) : null;
+        selected = hit ? hit.id : null; selection(); changed();
+        if (hit) gesture = {type: 'move', pointerId: event.pointerId, start: p, end: p, record: hit};
         return;
       }
       selected = null; selection();
       if (!inDocument(p)) return;
       if (tool === 'text') {
-        if (!text.trim()) return;
-        const record = freezeRecord({id: 'annotation-' + (++nextObject), type: 'text', x: p.x, y: p.y,
-          text, fontSize: Math.max(16, strokeWidth * 6), color, strokeWidth});
-        commit(model(current.masks, [...current.annotations, record], current.feather)); return;
+        const hit = annotationsVisible ? S.findTopElementAt(current.annotations.filter(a => a.type === 'text'), p, 6 / view.scale, annotationContext) : null;
+        // Existing sidebar text remains an optional insertion shortcut; blank
+        // inserts an in-place editor instead of silently doing nothing.
+        const record = hit || {id: 'annotation-' + (++nextObject), type: 'text', x: p.x, y: p.y,
+          text, fontSize: S.getSketchFontSize(strokeWidth), color, width: strokeWidth};
+        releaseAll();
+        if (!hit && text.trim()) commit(model(current.masks, [...current.annotations, freezeRecord(record)], current.feather));
+        else startText(record);
+        return;
       }
-      gesture = {type: tool, pointerId: event.pointerId, start: p, end: p, points: [p.x, p.y],
+      gesture = {type: tool, id: 'annotation-' + (++nextObject), pointerId: event.pointerId, start: p, end: p, points: [p.x, p.y],
         attrs: {x: 0, y: 0, size: brushSize, color, strokeWidth}};
       if (tool === 'brush' || tool === 'eraser') paintMask(maskContext, draftRecord(gesture));
       else drawDraft();
@@ -550,13 +637,18 @@
         fitted = false; applyView(); changed(); return;
       }
       const g = gesture, p = limitedPoint(documentPoint(point)); g.end = p;
-      if (g.type === 'move') {
-        const moved = {...g.record, x: g.record.x + p.x - g.start.x, y: g.record.y + p.y - g.start.y};
-        const node = annotations.getChildren().find(n => n.id() === selected);
-        if (node) { const preview = shape(K, moved); node.setAttrs({x: preview.x(), y: preview.y()}); preview.destroy(); }
-        selection(); annotationLayer.batchDraw(); return;
+      if (g.type === 'move' || g.type === 'resize') {
+        if (g.type === 'move') g.preview = S.moveElement(g.record, p.x - g.start.x, p.y - g.start.y);
+        else {
+          const aspect = event.shiftKey && g.record.type !== 'text' ?
+            (g.record.type === 'shape' ? 1 : g.from.width / Math.max(1, g.from.height)) : undefined;
+          const to = S.resizeBounds(g.from, g.handle, {x: p.x - g.offset.x, y: p.y - g.offset.y}, 8, aspect);
+          g.preview = S.transformElement(g.record, g.from, to, g.handle);
+        }
+        renderAnnotations(current.annotations.map(a => a.id === g.record.id ? g.preview : a)); return;
       }
-      if (['brush', 'eraser', 'pen', 'lasso'].includes(g.type)) {
+      if (g.type === 'arrow' && event.shiftKey) g.end = S.snapToAngle(g.start, p);
+      if (['brush', 'eraser', 'pen', 'lasso', 'guide-eraser'].includes(g.type)) {
         const samples = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
         for (const sample of samples.length ? [...samples, event] : [event]) {
           const q = limitedPoint(documentPoint(eventPoint(sample))), points = g.points;
@@ -586,13 +678,18 @@
       if (cancelled) { cancelGesture(); release(event); return; }
       gesture = null; if (draftNode) { draftNode.destroy(); draftNode = null; }
       try {
-        if (g.type === 'move') {
-          const dx = g.end.x - g.start.x, dy = g.end.y - g.start.y;
-          if (dx || dy) commit(model(current.masks, current.annotations.map(a => a.id === g.record.id ?
-            freezeRecord({...a, x: a.x + dx, y: a.y + dy}) : a), current.feather));
+        if (g.type === 'move' || g.type === 'resize') {
+          if (g.preview && (g.end.x !== g.start.x || g.end.y !== g.start.y)) commit(model(current.masks,
+            current.annotations.map(a => a.id === g.record.id ? freezeRecord(g.preview) : a), current.feather));
+          else renderAnnotations();
+        } else if (g.type === 'guide-eraser') {
+          const stroke = upstream.sampleEraseStroke({width: g.attrs.size, points: draftRecord({...g, type: 'pen'}).points});
+          const items = upstream.eraseElements(current.annotations, stroke, annotationContext, source, allocate, releaseCanvas);
+          if (items !== current.annotations) commit(model(current.masks, items.map(freezeRecord), current.feather));
+          else renderAnnotations();
         } else if (g.type !== 'pan') {
           const record = draftRecord(g);
-          if (['rectangle', 'box', 'ellipse'].includes(g.type) && (!record.width || !record.height)) return;
+          if (['rectangle', 'box', 'ellipse'].includes(g.type) && (g.start.x === g.end.x || g.start.y === g.end.y)) {renderAnnotations(); return;}
           if (g.type === 'arrow' && Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y) < 0.25) return;
           if (g.type === 'lasso') {
             let area = 0; const p = record.points;
@@ -602,10 +699,10 @@
           if (['brush', 'eraser', 'rectangle', 'lasso'].includes(g.type)) {
             commit(model([...current.masks, freezeRecord(record)], current.annotations, current.feather));
           } else commit(model(current.masks, [...current.annotations,
-            freezeRecord({...record, id: 'annotation-' + (++nextObject)})], current.feather));
+            freezeRecord(record)], current.feather));
         }
       } catch (error) { renderMask(); renderAnnotations(); changed(error); }
-      finally { release(event); uiLayer.batchDraw(); }
+      finally { release(event); renderAnnotations(); uiLayer.batchDraw(); }
     }
     function fit() {
       alive(); if (!source) return;
@@ -618,12 +715,12 @@
       fitted = false; applyView(); changed();
     }
     function undoRedo(redo) {
-      alive(); cancelGesture(); const next = redo ? history.redo() : history.undo();
+      alive(); finishText(); cancelGesture(); const next = redo ? history.redo() : history.undo();
       if (!next) return false;
       current = next; revision++; selected = null; renderMask(); renderAnnotations(); changed(); return true;
     }
     function deleteSelected() {
-      alive(); if (!annotationsVisible || !selected) return false; cancelGesture();
+      alive(); finishText(); if (!annotationsVisible || !selected) return false; cancelGesture();
       const records = current.annotations.filter(a => a.id !== selected); selected = null;
       commit(model(current.masks, records, current.feather)); return true;
     }
@@ -643,9 +740,14 @@
         const dx = key === 'arrowleft' ? -distance : key === 'arrowright' ? distance : 0;
         const dy = key === 'arrowup' ? -distance : key === 'arrowdown' ? distance : 0;
         commit(model(current.masks, current.annotations.map(a => a.id === selected ?
-          freezeRecord({...a, x: a.x + dx, y: a.y + dy}) : a), current.feather));
+          freezeRecord(S.moveElement(a, dx, dy)) : a), current.feather));
       }
     }
+    listen('dblclick', event => {
+      if (tool !== 'select' || !source || !annotationsVisible || editable(event.target)) return;
+      const hit = S.findTopElementAt(current.annotations, documentPoint(eventPoint(event)), 6 / view.scale, annotationContext);
+      if (hit && hit.type === 'text') {event.preventDefault(); startText(hit);}
+    });
     listen('pointerdown', event => { try { pointerDown(event); } catch (error) { cancelGesture(); changed(error); } });
     listen('pointermove', event => { try { pointerMove(event); } catch (error) { cancelGesture(); changed(error); } });
     listen('pointerup', event => pointerEnd(event));
@@ -673,17 +775,19 @@
     cursor();
 
     async function load(blob) {
-      alive(); const ticket = ++loadSequence, decoded = await decode(blob);
+      alive(); finishText(true); const ticket = ++loadSequence, decoded = await decode(blob);
       if (disposed || ticket !== loadSequence) { releaseCanvas(decoded.canvas); throw fail('Image load was superseded', 'LOAD_SUPERSEDED'); }
       // Allocate first: a failed replacement must leave the existing source/history intact.
-      let mask;
-      try { mask = canvas(decoded.width, decoded.height); }
-      catch (error) { releaseCanvas(decoded.canvas); throw error; }
+      let mask, ink;
+      try { mask = canvas(decoded.width, decoded.height); ink = canvas(decoded.width, decoded.height); }
+      catch (error) { releaseCanvas(decoded.canvas); if (mask) releaseCanvas(mask.canvas); throw error; }
       cancelGesture(); releaseAll(); pinch = null; pinchBlocked = false;
       const documentId = root.crypto && typeof root.crypto.randomUUID === 'function' ? root.crypto.randomUUID() :
         'studio-' + Date.now().toString(36) + '-' + (++documentSequence);
       if (source) releaseCanvas(source.canvas);
-      releaseCanvas(maskCanvas);
+      releaseCanvas(maskCanvas); releaseCanvas(annotationCanvas);
+      annotationCanvas = ink.canvas; annotationContext = ink.ctx;
+      inkNode.setAttrs({image: annotationCanvas, width: decoded.width, height: decoded.height});
       source = {...decoded, documentId}; current = model(); revision = 0; hasMask = false; selected = null; history.clear();
       maskCanvas = mask.canvas; maskContext = mask.ctx;
       baseNode.setAttrs({image: source.canvas, width: source.width, height: source.height});
@@ -700,7 +804,7 @@
      * @param {{size?:string, local?:boolean, guideSelection?:boolean}} [options]
      */
     async function snapshot({size = 'auto', local = false, guideSelection = false} = {}) {
-      loaded(); cancelGesture();
+      loaded(); finishText(); cancelGesture();
       if (typeof local !== 'boolean') throw fail('Local must be a boolean', 'INVALID_ARGUMENT');
       if (typeof guideSelection !== 'boolean') throw fail('Guide selection must be a boolean', 'INVALID_ARGUMENT');
       guideSelection = local && guideSelection;
@@ -714,7 +818,7 @@
       const weights = local ? (frozen.feather ? inwardFeather(rawCoverage, original.width, original.height, frozen.feather) : rawCoverage) : null;
       if (local && !weights.some(value => value > 0)) throw fail('Feathering removed the modification region; adjust it first', 'EMPTY_MASK');
       const main = canvas(working.width, working.height), temporary = [main.canvas];
-      let mask = null, guide = null, vector = null, vectorCanvas = null;
+      let mask = null, guide = null;
       try {
         main.ctx.drawImage(source.canvas, working.offsetX, working.offsetY, original.width * working.scale, original.height * working.scale);
         if (weights) {
@@ -725,27 +829,26 @@
           if (!effective) throw fail('The region disappears at this working size; enlarge it or choose a larger working size', 'EMPTY_WORKING_MASK');
           putRGBA(mask.ctx, rendered, working.width, working.height);
         }
-        if (frozen.annotations.length || guideSelection) {
-          guide = canvas(working.width, working.height); temporary.push(guide.canvas);
-          guide.ctx.drawImage(main.canvas, 0, 0);
-        }
+        const layers = [{state: {}, getCanvas: () => main.canvas}];
         if (guideSelection) {
           const overlay = canvas(working.width, working.height); temporary.push(overlay.canvas);
           putRGBA(overlay.ctx, selectionGuideRGBA(rawCoverage, original.width, original.height, working), working.width, working.height);
-          guide.ctx.drawImage(overlay.canvas, 0, 0);
-          releaseCanvas(overlay.canvas);
+          layers.push({state: {}, getCanvas: () => overlay.canvas});
         }
-        // Guidance annotations are always above the region indication, regardless
-        // of editor visibility, zoom, pan or which annotation is selected.
+        // Actual InvokeAI compositor source combines base, selection indication and
+        // annotations in a stable order. No InvokeAI job/store/login is imported.
         if (frozen.annotations.length) {
-          vector = new K.Group({x: working.offsetX, y: working.offsetY, scaleX: working.scale, scaleY: working.scale,
-            clipX: 0, clipY: 0, clipWidth: original.width, clipHeight: original.height, listening: false});
-          for (const record of frozen.annotations) vector.add(shape(K, record));
-          vectorCanvas = vector.toCanvas({x: 0, y: 0, width: working.width, height: working.height, pixelRatio: 1});
-          canvases.add(vectorCanvas);
-          guide.ctx.drawImage(vectorCanvas, 0, 0);
-          releaseCanvas(vectorCanvas); vectorCanvas = null;
-          vector.destroy(); vector = null;
+          const ink = canvas(original.width, original.height); temporary.push(ink.canvas);
+          upstream.drawElements(ink.ctx, frozen.annotations, original, allocate, releaseCanvas);
+          const vector = canvas(working.width, working.height); temporary.push(vector.canvas);
+          vector.ctx.drawImage(ink.canvas, working.offsetX, working.offsetY, original.width * working.scale, original.height * working.scale);
+          layers.push({state: {}, getCanvas: () => vector.canvas});
+        }
+        if (layers.length > 1) {
+          const composite = upstream.compositeCanvas(layers, working, (width, height) => {
+            const c = allocate(width, height); temporary.push(c); return c;
+          });
+          guide = {canvas: composite};
         }
         const [imageBlob, maskBlob, guideBlob] = await Promise.all([png(main.canvas), mask ? png(mask.canvas) : null, guide ? png(guide.canvas) : null]);
         if (disposed || epoch !== snapshotEpoch) throw fail('Snapshot was cleared', 'SNAPSHOT_SUPERSEDED');
@@ -759,8 +862,6 @@
         snapshots.set(result, {original, weights, masks: frozen.masks, annotations: frozen.annotations, working});
         return result;
       } finally {
-        if (vector) vector.destroy();
-        releaseCanvas(vectorCanvas);
         for (const c of temporary) releaseCanvas(c);
       }
     }
@@ -787,7 +888,7 @@
       finally { if (decoded) releaseCanvas(decoded.canvas); }
     }
     function selectedStyle(attrs) {
-      if (!annotationsVisible || tool !== 'select' || !selected) return;
+      if (!annotationsVisible || !['select', 'text'].includes(tool) || !selected) return;
       cancelGesture(); commit(model(current.masks, current.annotations.map(a => a.id === selected ? freezeRecord({...a, ...attrs}) : a), current.feather));
     }
     /** @param {boolean} value Observation only; no history/revision/snapshot changes. */
@@ -803,11 +904,12 @@
     function resetDocument(preserveSnapshots = false) {
       // A new document cancels source loads, not already submitted paid work.
       // Identity/session resets must also invalidate all private snapshots first.
-      loadSequence++;
+      finishText(true); loadSequence++;
       if (!preserveSnapshots) { snapshotEpoch++; snapshots = new WeakMap(); }
       cancelGesture(); releaseAll(); pinch = null; pinchBlocked = false; space = false;
       if (source) releaseCanvas(source.canvas);
-      releaseCanvas(maskCanvas);
+      releaseCanvas(maskCanvas); releaseCanvas(annotationCanvas);
+      annotationCanvas = null; annotationContext = null; inkNode.setAttrs({image: null, width: 0, height: 0});
       history.clear(); source = null; current = model(); revision = 0; hasMask = false; selected = null; nextObject = 0;
       baseNode.setAttrs({image: null, width: 0, height: 0}); maskNode.setAttrs({image: null, width: 0, height: 0});
       maskCanvas = null; maskContext = null;
@@ -847,14 +949,15 @@
       }
       host.style.touchAction = oldTouch; host.style.cursor = oldCursor;
     }
-    return Object.freeze({load, state, exportPNG, snapshot, compose, fit, zoomBy, clear, destroy,
+    return Object.freeze({load, state, finishText, exportPNG, snapshot, compose, fit, zoomBy, clear, destroy,
       setSelectionVisible, setAnnotationsVisible, setMaskVisible: setSelectionVisible,
       setTool(name) { alive(); if (!TOOLS.includes(name)) throw fail('Unknown canvas tool', 'INVALID_TOOL');
-        cancelGesture(); tool = name; if (name !== 'select') selected = null; selection(); cursor(); changed(); },
+        finishText(); cancelGesture(); tool = name; if (name !== 'select') selected = null; selection(); cursor(); changed(); },
       setBrushSize(value) { alive(); finite(value, 'brush size'); brushSize = clamp(value, 1, 512); },
       setColor(value) { alive(); if (typeof value !== 'string' || !/^#[\da-f]{6}$/i.test(value)) throw fail('Use a six-digit hex color', 'INVALID_COLOR');
         color = value; selectedStyle({color}); },
-      setStrokeWidth(value) { alive(); finite(value, 'stroke width'); strokeWidth = clamp(value, 1, 128); selectedStyle({strokeWidth}); },
+      setStrokeWidth(value) { alive(); finite(value, 'stroke width'); strokeWidth = clamp(value, 1, 128); const record = current.annotations.find(a => a.id === selected);
+        selectedStyle({width: strokeWidth, ...(record?.type === 'text' ? {fontSize: S.getSketchFontSize(strokeWidth)} : {})}); },
       setText(value) { alive(); if (typeof value !== 'string' || value.length > 2000) throw fail('Text must be at most 2000 characters', 'INVALID_TEXT');
         text = value; const record = current.annotations.find(a => a.id === selected);
         if (record && record.type === 'text') selectedStyle({text}); },
@@ -863,7 +966,7 @@
       deleteSelected,
       undo: () => undoRedo(false), redo: () => undoRedo(true),
       clearMask() { alive(); cancelGesture(); if (current.masks.length) commit(model([], current.annotations, current.feather)); },
-      clearAnnotations() { alive(); cancelGesture(); selected = null;
+      clearAnnotations() { alive(); finishText(true); cancelGesture(); selected = null;
         if (current.annotations.length) commit(model(current.masks, [], current.feather)); }});
   }
   return Object.freeze({create, helpers: Object.freeze({LIMITS, TOOLS, dimensions, letterbox, workingSize,

@@ -491,7 +491,7 @@ class PerformanceDatabaseTest(unittest.TestCase):
                 "token_id",
                 "token_name",
                 "request_count",
-                "ratio_count",
+                "group_ratio",
                 "amount",
                 "total_tokens",
                 *report.TOKEN_FIELDS,

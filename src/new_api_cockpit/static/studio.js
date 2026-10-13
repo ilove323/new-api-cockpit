@@ -13,7 +13,7 @@
   const MODES = ['create','edit'];
   const maskTools = ['brush', 'eraser', 'rectangle', 'lasso'];
   const toolNames = {pan: '移动', select: '选择', brush: '选区笔刷', eraser: '擦除选区', rectangle: '矩形选区',
-    lasso: '圈选', pen: '标注画笔', arrow: '箭头', box: '方框', ellipse: '椭圆', text: '文字'};
+    lasso: '圈选', pen: '标注画笔', arrow: '箭头', box: '方框', ellipse: '椭圆', text: '文字', 'guide-eraser': '擦除标注'};
   const labels = {auto: '自动', low: '低', medium: '标准', high: '高', opaque: '不透明',
     transparent: '透明', png: 'PNG', jpeg: 'JPEG', webp: 'WebP', xhigh: '超高', max: '最高'};
   const canvasErrors = {EMPTY_MASK: '请画出修改选区，或减小向内羽化。',
@@ -126,9 +126,10 @@
     for (const id of ['upload', 'empty-upload', 'image-input']) $(id).disabled = mutating || !state.editor;
     $('version').disabled = mutating || !state.versions.length;
     $('drawing-controls').hidden = !editable;
-    $('mask-controls').hidden = !maskTools.includes(state.tool);
+    $('mask-controls').hidden = !maskTools.includes(state.tool) && state.tool !== 'guide-eraser';
     $('guide-controls').hidden = !['pen','arrow','box','ellipse','text','select'].includes(state.tool);
-    $('text-control').hidden = state.tool !== 'text';
+    $('text-control').hidden = state.tool !== 'text' && state.info?.selected?.type !== 'text';
+    $('delete-guide').disabled = !state.info?.selectedId || mutating || !editable;
     $('fidelity-control').hidden = state.mode === 'create' || !operationProfile(model(),mode)?.parameters.allowed_fields.includes('input_fidelity');
     $('references-section').hidden = state.mode === 'create';
     const limit = refLimit();
@@ -315,6 +316,7 @@
   async function submit(event) {
     event.preventDefault();
     if (!state.active || state.pending || state.loadingImage) return;
+    state.editor?.finishText?.();
     const reason = readiness(); if (reason) { message('request-status', reason, true); return; }
     const request = {sent: false, capture: null, interval: null, op: null};
     state.pending = request; state.preparing = true; controls(); renderReferences();
@@ -405,10 +407,21 @@
     $('result-count').textContent = `${state.candidates.length} / ${MAX_CANDIDATES}`;
     $('results-empty').hidden = !!state.candidates.length;
   }
+  let lightbox = null;
+  function navigatePreview(direction) {
+    const index = state.candidates.findIndex(c => c.id === state.previewId), next = state.candidates[index + direction];
+    if (!next || !state.active) return;
+    state.previewId = next.id; state.comparing = false; $('compare').checked = false;
+    lightbox?.reset(); updatePreview(); controls();
+  }
   const previewCandidate = () => state.candidates.find(x => x.id === state.previewId);
   function updatePreview() {
     const c = previewCandidate(); if (!c) return;
-    $('preview-result').src = selectedURL(c); $('preview-result').alt = selectedLabel(c);
+    const url = selectedURL(c);
+    if ($('preview-result').src !== url) lightbox?.reset();
+    $('preview-previous').disabled = state.candidates[0]?.id === c.id;
+    $('preview-next').disabled = state.candidates.at(-1)?.id === c.id;
+    $('preview-result').src = url; $('preview-result').alt = selectedLabel(c);
     $('preview-result-label').textContent = selectedLabel(c);
     $('preview-adopt').textContent = applyingWhole(c) ? '整图应用为新版本' : '应用为新版本';
     $('preview-continue').textContent = applyingWhole(c) ? '整图应用并编辑' : '应用并继续编辑';
@@ -431,9 +444,10 @@
     $('preview').hidden = false; updatePreview(); controls();
     try { if (!$('preview').open) $('preview').showModal(); }
     catch (error) { closePreview(false); throw error; }
-    $('preview-close').focus();
+    lightbox?.setActive(true); $('preview-close').focus();
   }
   function closePreview(returnFocus = true) {
+    lightbox?.setActive(false);
     const id = state.previewId, trigger = previewTrigger;
     state.previewId = ''; state.comparing = false; previewTrigger = null; previewBackdropPressed = false;
     if ($('preview').open) $('preview').close();
@@ -471,7 +485,7 @@
     if (state.pending) { state.pending.capture = null; state.pending = null; }
     closePreview(false); closeSettings(false);
     results.clear();
-    state.editor?.destroy(); state.editor = null; $('canvas').replaceChildren();
+    lightbox?.destroy(); state.editor?.destroy(); state.editor = null; $('canvas').replaceChildren();
     state.source = null; state.info = null; state.references = [];
     state.tokens = []; state.models = []; state.tokenId = ''; state.modelId = ''; state.versionId = '';
     state.prompt=''; showErrorDetails(null);
@@ -532,7 +546,7 @@
   bind($('compression'), 'input', () => { $('compression-value').textContent = $('compression').value; });
   const engineControls = {undo: () => state.editor.undo(), redo: () => state.editor.redo(), fit: () => state.editor.fit(),
     'zoom-in': () => state.editor.zoomBy(1.25), 'zoom-out': () => state.editor.zoomBy(.8),
-    'clear-mask': () => state.editor.clearMask(), 'clear-guides': () => state.editor.clearAnnotations()};
+    'delete-guide': () => state.editor.deleteSelected(), 'clear-mask': () => state.editor.clearMask(), 'clear-guides': () => state.editor.clearAnnotations()};
   for (const [id, fn] of Object.entries(engineControls)) bind($(id), 'click', () => { if (!$(id).disabled && state.editor) fn(); });
   bind($('brush-size'), 'input', () => { if (state.active && !state.preparing) { state.editor?.setBrushSize(Number($('brush-size').value)); $('brush-value').textContent = `${$('brush-size').value} px`; } });
   bind($('feather'), 'input', () => { if (state.active && !state.preparing) { state.editor?.setFeather?.(Number($('feather').value)); $('feather-value').textContent = `${$('feather').value} px`; } });
@@ -567,6 +581,16 @@
   bind($('form'), 'submit', submit);
   bind($('stop-wait'), 'click', () => state.pending?.op?.controller.abort());
   bind($('acknowledge'), 'click', () => { if (!state.active || state.pending) return; state.uncertain = null; $('uncertain').hidden = true; $('uncertain-message').textContent = ''; $('uncertain-id').textContent = ''; controls(); });
+  if (window.CockpitStudioLightbox?.create) lightbox = window.CockpitStudioLightbox.create([
+    {host: $('preview-result-viewport'), image: $('preview-result')},
+    {host: $('preview-source-viewport'), image: $('preview-source')},
+  ], {onZoom(scale) { $('preview-zoom').textContent = Math.round(scale * 100) + '%'; }, onNavigate: navigatePreview});
+  bind($('preview-previous'), 'click', () => navigatePreview(-1));
+  bind($('preview-next'), 'click', () => navigatePreview(1));
+  bind($('preview-zoom-in'), 'click', () => lightbox?.zoomBy(1.15));
+  bind($('preview-zoom-out'), 'click', () => lightbox?.zoomBy(1 / 1.15));
+  bind($('preview-fit'), 'click', () => lightbox?.reset());
+  bind($('preview'), 'keydown', e => lightbox?.keyDown(e));
   bind($('preview-close'), 'click', () => closePreview());
   bind($('preview'), 'cancel', e => { e.preventDefault(); closePreview(); });
   bind($('preview'), 'close', () => { if (!$('preview').open && state.previewId) closePreview(); });
@@ -609,6 +633,10 @@
     if (!window.CockpitImageCanvas?.create) throw new Error('画布组件未加载，请刷新页面。');
     state.editor = window.CockpitImageCanvas.create($('canvas'), {onChange(info) {
       if (!state.active) return; state.info = info;
+      if (info.selected) {
+        $('color').value = info.selected.color; $('stroke-width').value = info.selected.width;
+        if (info.selected.type === 'text') $('annotation-text').value = info.selected.text;
+      }
       if (typeof info.selectionVisible === 'boolean') state.visibility.mask=info.selectionVisible;
       if (typeof info.annotationsVisible === 'boolean') state.visibility.annotations=info.annotationsVisible;
       if (info.error) message('request-status', canvasErrors[info.errorCode] || '画布操作失败，请调整选区或标注。', true);
