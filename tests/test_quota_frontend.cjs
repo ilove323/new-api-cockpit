@@ -22,7 +22,10 @@ test('statistics and quota links and entry redirects preserve the current origin
   for(const route of ['statistics','users','keys','operations'])assert.ok(sidebar.includes(`href="/cockpit/${route}/"`));
   assert.ok(nginx.includes('location ^~ /cockpit/ {'));
   assert.ok(nginx.includes('proxy_set_header Host $http_host;'));
-  assert.ok(nginx.includes('return 302 /cockpit/statistics/$is_args$args;'));
+  const entry=nginx.match(/location = \/cockpit \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(entry?.includes('proxy_pass http://127.0.0.1:8091;'));
+  assert.ok(entry.includes('proxy_set_header Host $http_host;'));
+  assert.ok(!entry.includes('return 302'));
   for(const old of ['statistics','quota','users'])assert.ok(!nginx.includes(`location = /${old} `));
 });
 class Element{

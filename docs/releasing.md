@@ -1,7 +1,8 @@
 # 发版与镜像
 
 维护者：ilove323。版本唯一来源为 `pyproject.toml`。
-依赖范围使用 `requirements.txt`，不生成依赖锁文件。
+Python 依赖范围使用 `requirements.txt`；工作站构建工具由 `frontend/studio/package-lock.json` 锁定。
+提交时包含生成的 `static/studio-upstream.js`，CI 校验它与源码一致；发布镜像不在启动时构建前端。
 历史发布说明统一放在 [GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)，
 仓库文档只描述当前代码与操作方法。
 
@@ -19,7 +20,7 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 2. 通过 PR 合并到 `main` 并通过 CI；准备发布说明，列明功能、升级要求和安全边界。
 3. 创建与版本完全匹配的 `vX.Y.Z` 标签并推送该标签。
 4. `release.yml` 复用 CI，校验版本与标签后构建 AMD64/ARM64 镜像，发布到 GHCR。
-5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、源库 PAT 补建 SQL 和校验和。
+5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、图片协议模板、源库 PAT 补建 SQL 和校验和。
    如维护者已提前创建 Release，工作流只补充或更新附件，不覆盖手写发布说明，也不重复创建 Release。
 6. GitHub Release 正文包含功能、升级、数据库与配置说明，不在当前文档目录积累按版本命名的历史文件。
 
@@ -32,20 +33,35 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 
 ## 使用预构建镜像
 
-从目标 Release 下载 `compose.release.yml`、`.env.example`、`nginx.conf.example` 和 `SHA256SUMS`，
-配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
+从目标 Release 下载全部部署附件：`compose.release.yml`、`default.env.example`、`nginx.conf.example`、
+`image-studio-capabilities.example.json`、`source_pat_function.sql` 和 `SHA256SUMS`。
+将附件放在同一目录，校验后再复制环境变量模板：
+
+```bash
+sha256sum -c SHA256SUMS
+test -e .env || cp default.env.example .env
+chmod 600 .env
+```
+
+已有安装保留原 `.env`、连接串和密钥，按新模板逐项补充配置，不直接覆盖。
+首次部署配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
 需要补建用户 PAT 时，由源库表所有者安装同一 Release 的 `source_pat_function.sql` 并授权，
 不要将其作为监控库迁移执行；详见[用户与令牌管理](users.md#安装补建函数与最小权限)。
+图片池需要协议文件与源库读权限；使用同一 Release 的协议模板，按[图片池配置](deployment.md#生图工作站请求池)填写并只读挂载后再启动。模板中的示例渠道并非可直接使用的上游配置。
 
 ```ini
 IMAGE_TAG=<与配置模板对应的正式版本>
 ```
 
 ```bash
-docker compose -f compose.release.yml up -d statistics
+docker compose -f compose.release.yml up -d
+docker compose -f compose.release.yml ps
+curl --fail-with-body http://127.0.0.1:8091/healthz
+curl --fail-with-body http://127.0.0.1:8092/healthz
 ```
 
-当前架构是一个 `statistics` 容器，余额和配额定时器随应用启动。
+当前 Compose 包含 `statistics` 页面/调度池、`image-studio` 图片请求池和独立的 `image-studio-receipts` Redis。
+两个应用服务使用同一版本镜像，只有页面池执行余额和配额定时器。
 镜像、配置和操作文档必须来自同一个 Release；测试开发分支时按[部署文档](deployment.md)从源码构建，
 不要混用开发分支的配置与正式镜像。
 升级与回退遵循[升级说明](upgrading.md)，不会通过发版自动清空监控库。

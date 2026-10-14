@@ -1,8 +1,55 @@
 # Include inside the existing HTTPS server used by New API.
 # Forward pages and /cockpit/api/ unchanged. Keep New API's / location as-is.
 location = /cockpit {
-    absolute_redirect off;
-    return 302 /cockpit/statistics/$is_args$args;
+    # Let the application choose the landing page from the authenticated role.
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 90s;
+}
+# Synchronous model generation; other APIs keep their normal timeout.
+location = /cockpit/api/intelligence/test {
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 300s;
+}
+# Form encoding may triple the 512 KiB preview document size.
+location = /cockpit/api/intelligence/preview {
+    client_max_body_size 2m;
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 90s;
+}
+# Isolated synchronous picture workers. /api and /v1 remain New API's routes.
+# Duplicate exact locations intentionally: do not widen the whole API timeout.
+location = /cockpit/api/image-studio/generations {
+    client_max_body_size 192k;
+    client_body_timeout 30s;
+    proxy_pass http://127.0.0.1:8092;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 30s;
+    proxy_read_timeout 330s;
+}
+location = /cockpit/api/image-studio/edits {
+    client_max_body_size 24m;
+    client_body_timeout 30s;
+    proxy_request_buffering on;
+    proxy_pass http://127.0.0.1:8092;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 30s;
+    proxy_read_timeout 330s;
 }
 location ^~ /cockpit/ {
     proxy_pass http://127.0.0.1:8091;

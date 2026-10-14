@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022", "DOM"],
+    "strictNullChecks": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "files": [
+    "studio-globals.d.ts",
+    "../src/new_api_cockpit/static/studio-domain.js",
+    "../src/new_api_cockpit/static/studio-request.js",
+    "../src/new_api_cockpit/static/studio-results.js"
+  ]
+}

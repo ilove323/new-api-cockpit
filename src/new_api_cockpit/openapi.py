@@ -184,19 +184,20 @@ SCHEMAS = {
                     "output_tokens",
                     "cache_read_tokens",
                     "cache_write_tokens",
-                    "original_cache_read_tokens",
-                    "original_total_tokens",
                 )
             },
             **{
                 key: NULL_MONEY
                 for key in (
-                    "group_ratio",
                     "input_price",
                     "output_price",
                     "cache_price",
                     "write_price",
                 )
+            },
+            "group_ratio": {
+                **NULL_MONEY,
+                "description": "请求日志记录的分组倍率；不同倍率分别成行。",
             },
             "amount": {
                 **MONEY,
@@ -205,7 +206,7 @@ SCHEMAS = {
             "failure_count": integer(),
             "failure_codes": {"type": "object", "additionalProperties": integer()},
             "cost_formula": obj(
-                description="完整价格/配平公式；lazy 模式通过详情接口取得。"
+                description="请求价格、倍率及用量的试算公式；lazy 模式通过详情接口取得。"
             ),
             "report_id": text(format="uuid"),
             "row_id": integer(),
@@ -440,6 +441,336 @@ SCHEMAS = {
             "expires_at": integer(),
         },
         description="浏览器会话身份；不包含 JWT 或 PAT。",
+    ),
+}
+
+
+IMAGE_STUDIO_SCHEMAS = {
+    "ImageStudioToken": obj(
+        {
+            "id": integer(1),
+            "name": text(),
+            "key_masked": text("脱敏摘要；不返回模型 KEY 原值。"),
+            "group": choice("GPT"),
+            "status": integer(),
+            "expired_time": {
+                "type": "integer",
+                "description": "Unix 秒；-1 永不过期。",
+            },
+            "remain_quota": {"type": "integer", "description": "原始 quota 单位。"},
+            "unlimited_quota": BOOL,
+            "usable": BOOL,
+            "unavailable_reason": text(),
+        },
+        (
+            "id",
+            "name",
+            "key_masked",
+            "group",
+            "status",
+            "expired_time",
+            "remain_quota",
+            "unlimited_quota",
+            "usable",
+            "unavailable_reason",
+        ),
+    ),
+    "ImageStudioTokens": obj(
+        {
+            "tokens": array(ref("ImageStudioToken")),
+            "token_manager_path": {"type": "string", "const": "/keys"},
+        },
+        ("tokens", "token_manager_path"),
+    ),
+    "ImageStudioModelRequest": obj(
+        {"token_id": integer(1, maximum=2147483647)},
+        ("token_id",),
+        additionalProperties=False,
+    ),
+    "ImageStudioContractRevision": text(
+        "models 返回的有效路由契约摘要；提交时复核，变化返回 409，未调用模型。",
+        pattern=r"^[0-9a-f]{64}$",
+    ),
+    "ImageStudioAllowedParameters": obj(
+        {
+            "sizes": array(text()),
+            "custom_size": BOOL,
+            "qualities": array(text()),
+            "formats": array(choice("png", "jpeg", "webp")),
+            "backgrounds": array(text()),
+            "input_fidelity": array(text()),
+            "max_images": integer(0, maximum=4),
+            "allowed_fields": array(
+                choice(
+                    "size",
+                    "quality",
+                    "output_format",
+                    "background",
+                    "output_compression",
+                    "input_fidelity",
+                )
+            ),
+        },
+        (
+            "sizes",
+            "custom_size",
+            "qualities",
+            "formats",
+            "backgrounds",
+            "input_fidelity",
+            "max_images",
+            "allowed_fields",
+        ),
+        description="生成/编辑分别声明；实际参数取所有可路由渠道的交集。",
+    ),
+    "ImageStudioInputLimits": obj(
+        {
+            "mime_types": array(
+                choice("image/png", "image/jpeg", "image/webp"), minItems=1
+            ),
+            "max_bytes": integer(1, maximum=8388608),
+            "max_pixels": integer(1, maximum=16000000),
+            "max_total_pixels": integer(1, maximum=32000000),
+            "max_dimension": integer(1, maximum=16000),
+            "max_aspect_ratio": integer(1, maximum=100),
+        },
+        (
+            "mime_types",
+            "max_bytes",
+            "max_pixels",
+            "max_total_pixels",
+            "max_dimension",
+            "max_aspect_ratio",
+        ),
+    ),
+    "ImageStudioModel": obj(
+        {
+            "id": text("精确模型 ID；日期快照不继承基础型号授权。"),
+            "revision": ref("ImageStudioContractRevision"),
+            "generation": {
+                "anyOf": [
+                    obj(
+                        {"parameters": ref("ImageStudioAllowedParameters")},
+                        ("parameters",),
+                    ),
+                    {"type": "null"},
+                ]
+            },
+            "edit": {
+                "anyOf": [
+                    obj(
+                        {
+                            "parameters": ref("ImageStudioAllowedParameters"),
+                            "inputs": ref("ImageStudioInputLimits"),
+                            "local_strategy": choice(
+                                "native-mask", "reference-only", "unavailable"
+                            ),
+                            "max_images": integer(1, maximum=4),
+                        },
+                        ("parameters", "local_strategy", "max_images", "inputs"),
+                    ),
+                    {"type": "null"},
+                ]
+            },
+            "unavailable_reason": text("未配置或共同契约冲突时的简短说明。"),
+        },
+        ("id", "revision", "generation", "edit"),
+    ),
+    "ImageStudioIntent": obj(
+        {
+            "operation": choice("generate", "whole", "local"),
+            "has_annotations": BOOL,
+            "reference_roles": array(
+                choice("reference", "subject", "style", "composition"), maxItems=3
+            ),
+        },
+        ("operation", "has_annotations", "reference_roles"),
+        additionalProperties=False,
+        description="选区决定 local；没有选区的标注编辑用 whole。generate 不可携带标注或参考图。",
+    ),
+    "ImageStudioModels": obj({"models": array(ref("ImageStudioModel"))}, ("models",)),
+    "ImageStudioParameters": obj(
+        {
+            "size": text(
+                "从 models 返回的 sizes 选择；自定义尺寸为 16 的倍数、最长边 3840、比例不超过 3:1、像素 655360～8294400。",
+                default="auto",
+            ),
+            "quality": text("从所选模型的 qualities 选择。", default="auto"),
+            "output_format": {**choice("png", "jpeg", "webp"), "default": "png"},
+            "background": text(
+                "从所选模型的 backgrounds 选择；JPEG 不允许 transparent。",
+                default="auto",
+            ),
+            "output_compression": integer(
+                0, maximum=100, description="仅 JPEG/WebP 可发送；PNG 必须省略。"
+            ),
+            "input_fidelity": text(
+                "仅编辑模式且模型能力允许时发送；从 input_fidelity 选择。"
+            ),
+        },
+        additionalProperties=False,
+        description="各字段可省略，空对象使用默认参数；n 由服务端固定为 1，客户端不能指定。",
+        allOf=[
+            {
+                "if": {"properties": {"output_format": {"const": "png"}}},
+                "then": {"not": {"required": ["output_compression"]}},
+            },
+            {
+                "not": {
+                    "properties": {
+                        "background": {"const": "transparent"},
+                        "output_format": {"const": "jpeg"},
+                    },
+                    "required": ["background", "output_format"],
+                }
+            },
+        ],
+    ),
+    "ImageStudioGenerationParameters": {
+        "allOf": [
+            ref("ImageStudioParameters"),
+            {"not": {"required": ["input_fidelity"]}},
+        ],
+        "description": "文生图不接受 input_fidelity；其他字段可省略。",
+    },
+    "ImageStudioRequestId": text(
+        "当前账号下的短期去重 ID；回执有效期内同 ID 不再派发，输入改变返回 409。到期后不保证幂等。",
+        pattern=r"^[A-Za-z0-9_-]{8,128}$",
+        minLength=8,
+        maxLength=128,
+    ),
+    "ImageStudioGenerationRequest": obj(
+        {
+            "token_id": integer(1, maximum=2147483647),
+            "model": text(
+                "所选本人 GPT KEY 授权的精确模型 ID。",
+                minLength=1,
+                maxLength=256,
+                pattern=r"^gpt-image-[^\x00-\x1f\x7f]*$",
+            ),
+            "prompt": text(
+                "非空提示词，不含 NUL。",
+                minLength=1,
+                maxLength=32000,
+                pattern=r"^[^\x00]*$",
+            ),
+            "parameters": ref("ImageStudioGenerationParameters"),
+            "request_id": ref("ImageStudioRequestId"),
+            "contract_revision": ref("ImageStudioContractRevision"),
+            "intent": ref("ImageStudioIntent"),
+        },
+        (
+            "token_id",
+            "model",
+            "prompt",
+            "parameters",
+            "request_id",
+            "contract_revision",
+            "intent",
+        ),
+        additionalProperties=False,
+    ),
+    "ImageStudioEditRequest": obj(
+        {
+            "token_id": text(
+                "1～2147483647 的令牌 ID；普通表单字段，仅一次。",
+                pattern=r"^[1-9][0-9]{0,9}$",
+            ),
+            "model": text(
+                "精确模型 ID；普通表单字段，仅一次。",
+                minLength=1,
+                maxLength=256,
+                pattern=r"^gpt-image-[^\x00-\x1f\x7f]*$",
+            ),
+            "prompt": text(
+                "用户原始提示词，有指导标注时可为空；不含 NUL，仅一次。",
+                minLength=0,
+                maxLength=32000,
+                pattern=r"^[^\x00]*$",
+            ),
+            "parameters": text(
+                "ImageStudioParameters 的 JSON 文本；普通表单字段，仅一次，不是文件。",
+                contentMediaType="application/json",
+                contentSchema=ref("ImageStudioParameters"),
+            ),
+            "request_id": {
+                **ref("ImageStudioRequestId"),
+                "description": "普通表单字段，仅一次；短期去重 ID。",
+            },
+            "contract_revision": ref("ImageStudioContractRevision"),
+            "intent": text(
+                "ImageStudioIntent 的 JSON 文本；operation 为 whole 或 local。",
+                contentMediaType="application/json",
+                contentSchema=ref("ImageStudioIntent"),
+            ),
+            "image[]": array(
+                text("实际 PNG/JPEG/WebP 文件；单图最多 8 MiB。", format="binary"),
+                minItems=1,
+                maxItems=4,
+                description="重复的同名文件 part，保持顺序：主图、可选指导图、其他参考图；指导图也占名额。",
+            ),
+            "mask": text(
+                "仅 native-mask 局部编辑必填；reference-only 或整图编辑禁止发送；小于 4 MB 的带 alpha PNG，尺寸须与方向归一后的第一张工作图一致。alpha=0 可修改，255 保护。",
+                format="binary",
+            ),
+        },
+        (
+            "token_id",
+            "model",
+            "prompt",
+            "parameters",
+            "request_id",
+            "contract_revision",
+            "intent",
+            "image[]",
+        ),
+        additionalProperties=False,
+        description="multipart 总上传最多 24 MiB；单张输入最多 16 MP，输入图合计最多 32 MP。整图编辑省略 mask。",
+    ),
+    "ImageStudioImage": obj(
+        {
+            "b64_json": text(
+                "验证并解码后的图片；最多 8.5 MP。", contentEncoding="base64"
+            ),
+            "mime": choice("image/png", "image/jpeg", "image/webp"),
+            "width": integer(1),
+            "height": integer(1),
+        },
+        ("b64_json", "mime", "width", "height"),
+    ),
+    "ImageStudioResult": obj(
+        {
+            "images": array(ref("ImageStudioImage"), minItems=1, maxItems=1),
+            "model": text(),
+            "request_id": text(),
+            "duration_seconds": {"type": "number", "minimum": 0},
+            "usage": obj(description="上游提供时返回；字段取决于模型。"),
+            "upstream_request_id": text("上游提供时返回。"),
+        },
+        ("images", "model", "request_id", "duration_seconds"),
+        description="同步响应；不创建任务或持久保存图片、提示词、结果。",
+    ),
+    "ImageStudioError": obj(
+        {
+            "error": text(),
+            "code": text(),
+            "uncertain": BOOL,
+            "login_url": text(),
+            "details": obj(
+                {
+                    "category": text(),
+                    "http_status": integer(100, maximum=599),
+                    "provider_code": text(),
+                    "param": text(),
+                    "upstream_request_id": text(),
+                    "receipt_state": choice(
+                        "dispatched", "succeeded", "failed", "unknown"
+                    ),
+                }
+            ),
+        },
+        ("error", "code"),
+        description="uncertain=true 表示可能已计费，不能自动重发；认证错误可附 login_url。",
     ),
 }
 
@@ -1369,6 +1700,465 @@ def document():
         )
         entry[2]["security"] = [{"browserSession": []}]
         ops.append(entry)
+    manual_body = obj(
+        {"token_id": integer(1, maximum=2147483647)},
+        ("token_id",),
+        additionalProperties=False,
+    )
+    manual_token = obj(
+        {
+            "id": integer(1),
+            "name": text(),
+            "key_masked": text(),
+            "group": text(),
+            "status": integer(),
+            "expired_time": {"type": "integer"},
+            "remain_quota": {"type": "integer"},
+            "unlimited_quota": BOOL,
+            "usable": BOOL,
+            "unavailable_reason": text(),
+        }
+    )
+    for method, suffix, title, response, description in (
+        (
+            "GET",
+            "tokens",
+            "列出本人令牌选项",
+            obj({"tokens": array(manual_token), "token_manager_path": text()}),
+            "普通用户会话可用；仅本人令牌，最多 2000 个，只返回脱敏 KEY。不读取全站令牌或补建 PAT。",
+        ),
+        (
+            "POST",
+            "models",
+            "查询所选本人令牌的可用模型",
+            obj(
+                {
+                    "models": array(
+                        obj(
+                            {
+                                "id": text(),
+                                "protocols": array(
+                                    choice("chat", "responses", "anthropic")
+                                ),
+                            }
+                        )
+                    )
+                }
+            ),
+            "经官方接口核对归属后，在后台读取 KEY 调用 /v1/models。不生成内容、不返回 KEY，不绕过令牌 IP 限制。protocols 为空表示上游未声明协议，不能视为全部支持。官方可能记录 KEY 读取审计；请求不自动重发。",
+        ),
+        (
+            "POST",
+            "key",
+            "读取本人令牌用于显式复制",
+            obj({"key": text(format="password")}),
+            "只用于用户明确点击复制配置（含 KEY）。返回 sk- 前缀模型 KEY；响应敏感且禁止缓存，勿记录或分享。官方再次校验归属并可能记录读取审计。不可从交互式 API 文档执行。",
+        ),
+    ):
+        ops.append(
+            operation(
+                method,
+                "/cockpit/api/manual/" + suffix,
+                title,
+                "模型使用",
+                response,
+                body=manual_body if method == "POST" else None,
+                header=("X-Cockpit-Manual", "1") if method == "POST" else None,
+                example={"token_id": 23} if method == "POST" else None,
+                description=description,
+                testable=False,
+            )
+        )
+    quality_params = [
+        query(
+            "start",
+            text(),
+            "北京时间起点；省略默认近 24 小时。",
+            example="2026-10-09T00:00:00",
+        ),
+        query(
+            "end",
+            text(),
+            "北京时间终点，包含该秒；单次最多 31 天。",
+            example="2026-10-09T23:59:59",
+        ),
+        query(
+            "mode",
+            choice("channel", "upstream"),
+            "渠道明细或按渠道当前标签汇总；默认 channel。",
+        ),
+        query("stream", choice("all", "stream", "nonstream"), "请求方式，默认 all。"),
+        query(
+            "channel_status",
+            choice("enabled", "all"),
+            "默认 enabled，只统计 New API 当前启用且未删除的渠道；all 可查询包含禁用、已删除和未知渠道的历史。",
+        ),
+        query(
+            "latency_scope",
+            choice("direct", "all"),
+            "总耗时和平均 token/s 的样本范围，默认只采用确认无重试的成功调用；旧日志重试不计算速度。不改变请求/费用总数。",
+        ),
+        query(
+            "tag",
+            text(maxLength=256),
+            "按渠道当前标签限定上游；tag= 表示未分组。省略时展示全部上游，与余额账本无关。",
+        ),
+        *[
+            query(name, array(text(maxLength=256), maxItems=100), meaning)
+            for name, meaning in (
+                ("model", "精确匹配模型，可重复。"),
+                ("user", "精确匹配用户名，可重复。"),
+            )
+        ],
+        *[
+            query(name, array(integer(), maxItems=100), "非负 ID，可重复。")
+            for name in ("channel_id", "token_id")
+        ],
+    ]
+    nullable_metric = {"type": ["number", "null"]}
+    quality_row = obj(
+        {
+            "model_name": {"type": ["string", "null"]},
+            "target": {"type": ["string", "null"]},
+            "channel_id": integer(),
+            "channel_name": text(),
+            "tag_value": text(),
+            "channel_status": NULL_COUNT,
+            "is_deleted": BOOL,
+            **{
+                key: integer()
+                for key in (
+                    "request_count",
+                    "success_count",
+                    "failure_count",
+                    "ignored_count",
+                    "unknown_count",
+                    "legacy_count",
+                    "retry_or_unknown_count",
+                    "unique_requests",
+                    "duration_samples",
+                    "frt_samples",
+                    "tps_samples",
+                    "tps_output_tokens",
+                    "billed_records",
+                    "price_bucket_count",
+                )
+            },
+            **{
+                key: nullable_metric
+                for key in (
+                    "success_rate",
+                    "outcome_coverage",
+                    "duration_coverage",
+                    "duration_total_ms",
+                    "frt_coverage",
+                    "tps_coverage",
+                    "tps_duration_ms",
+                    "duration_p50_ms",
+                    "duration_p95_ms",
+                    "frt_p50_ms",
+                    "frt_p95_ms",
+                )
+            },
+            "avg_tokens_per_second": {
+                **nullable_metric,
+                "description": "tps_output_tokens * 1000 / tps_duration_ms，包含首字等待，不是纯生成速度；无有效成功样本时为 null。汇总重新累计后计算，不平均各行速度。",
+            },
+            "avg_duration_ms": {
+                **nullable_metric,
+                "description": "成功调用的有效总耗时之和 / duration_samples；样本范围与总耗时 P50/P95 一致。无有效样本为 null，汇总不平均各行均值。",
+            },
+            "sample_insufficient": BOOL,
+            "sample_request_ids": array(text()),
+            "amount": MONEY,
+            "failure_codes": obj(additionalProperties=integer()),
+            "pricing_buckets": array(
+                obj(
+                    {
+                        "group": text(),
+                        "group_ratio": {"type": ["string", "null"]},
+                        "tier": text(),
+                        "request_count": integer(),
+                        "amount": MONEY,
+                        "prices": {
+                            "type": ["object", "null"],
+                            "properties": {
+                                key: NULL_MONEY
+                                for key in (
+                                    "input_price",
+                                    "output_price",
+                                    "cache_price",
+                                    "write_price",
+                                )
+                            },
+                        },
+                    }
+                )
+            ),
+        }
+    )
+    quality_schemas = {"QualityRow": quality_row}
+    quality_schemas["Quality"] = obj(
+        {
+            "start": text(),
+            "end": text(),
+            "start_ts": integer(),
+            "end_ts": integer(),
+            "mode": choice("channel", "upstream"),
+            "latency_scope": choice("direct", "all"),
+            "channel_status": choice("enabled", "all"),
+            "rows": array(ref("QualityRow")),
+            "totals": ref("QualityRow"),
+            "top_models": array(
+                obj(
+                    {
+                        "model_name": {"type": ["string", "null"]},
+                        "request_count": integer(),
+                        "success_count": integer(),
+                        "failure_count": integer(),
+                        "success_rate": nullable_metric,
+                    }
+                ),
+                maxItems=6,
+                description="按当前时间、筛选和渠道范围合并同模型的全部渠道调用，以请求次数降序列出前六个模型；成功率按成功/失败合计重新计算。",
+            ),
+            "trends": array(obj({"hour": TIME, **quality_row["properties"]})),
+            "source_records": integer(),
+            "unsupported_records": integer(),
+            "warnings": array(text()),
+            "updated_at": TIME,
+            "options": obj(
+                {
+                    "models": array(text()),
+                    "users": array(text()),
+                    "tokens": array(obj({"id": integer(), "name": text()})),
+                    "channels": array(
+                        obj(
+                            {
+                                "channel_id": integer(),
+                                "channel_name": text(),
+                                "channel_status": NULL_COUNT,
+                                "tag_value": text(),
+                                "is_deleted": BOOL,
+                            }
+                        )
+                    ),
+                }
+            ),
+        }
+    )
+    for suffix, title in (
+        ("summary", "查询渠道质量"),
+        ("trends", "查询质量与小时趋势"),
+    ):
+        ops.append(
+            operation(
+                "GET",
+                "/cockpit/api/quality/" + suffix,
+                title,
+                "渠道质量",
+                ref("Quality"),
+                params=quality_params,
+                description="只读文本生成日志，默认统计当前启用渠道的全部上游，不按余额账本、计费分组或档位筛选，不应用余额渠道屏蔽规则。不接受 scope_id/group/tier 参数。按 request_id/attempt 去重路由记录；明确错误（含 400 等业务拒绝）计入失败，客户端取消和未知结果不计入成功率分母。关联同请求、同渠道、同尝试的错误日志读取 HTTP 错误码；没有错误码的流式失败明确标注，不推测成 500。页面不展示排除/未知列，API 保留相应计数。缺失指标 null；非完整可用率。全局 P50/P95 从原始有效样本重算，费用取历史 quota。summary 不加载历史价格组合；trends 才加载。超过 1000 个模型/渠道组合或异常 JSON 回退上限时返回 503，不返回部分合计。",
+            )
+        )
+    intelligence_models = obj(
+        {
+            "rows": array(
+                obj(
+                    {
+                        "model": text(),
+                        "group": text(),
+                        "available_groups": array(text()),
+                        "channel_id": integer(),
+                        "channel_type": integer(),
+                        "endpoint": choice("openai", "anthropic"),
+                    }
+                )
+            ),
+            "key_name": text(),
+            "prompt": text(),
+        }
+    )
+    ops.extend(
+        [
+            operation(
+                "GET",
+                "/cockpit/api/intelligence/models",
+                "查询可测试模型与自动分组",
+                "智力测试",
+                intelligence_models,
+                description="允许启用用户的登录会话或管理员 PAT。管理员查询官方 /api/models/ 管理目录（含渠道模型，最多 2000 条记录），并按文本能力过滤；普通用户通过自己的会话查询 /api/user/models（最多 10000 个模型名），不借用管理员凭据。两者均与当前启用渠道和本人可用分组取交集，不依赖公开价格页开关。优先用户组，否则按组名排序；组内按优先级降序、ID 升序选择测试协议的参考渠道。channel_id/channel_type 表示该参考渠道，类型 14 用 anthropic（Messages），其他用 openai（Chat Completions）；普通用户请求不会固定渠道。不创建 PAT/KEY，不保存测试结果。",
+            ),
+            operation(
+                "POST",
+                "/cockpit/api/intelligence/test",
+                "鹈鹕骑车测试（真实计费）",
+                "智力测试",
+                obj(
+                    {
+                        "model": text(),
+                        "group": text(),
+                        "endpoint": choice("openai", "anthropic"),
+                        "channel_id": {
+                            "type": ["integer", "null"],
+                            "description": "管理员固定渠道的 ID；普通用户为 null。",
+                        },
+                        "channel_type": {
+                            "type": ["integer", "null"],
+                            "description": "管理员固定渠道的类型；普通用户为 null。",
+                        },
+                        "key_name": text(),
+                        "elapsed_ms": integer(),
+                        "html": {"type": ["string", "null"]},
+                        "source": text(),
+                        "warning": text(),
+                    }
+                ),
+                body=obj(
+                    {"model": text(maxLength=256)},
+                    ("model",),
+                    additionalProperties=False,
+                ),
+                example={"model": "gpt-6-astra"},
+                header=("X-Intelligence-Request", "1"),
+                effect="write",
+                description="同步等待模型返回，不创建后台任务或测试历史。所有启用用户的登录会话均可使用。开始时重新选择本人可用分组及渠道，Anthropic 渠道（类型 14）调用 /v1/messages，其他调用 /v1/chat/completions；管理员通过指定渠道机制固定路由；普通用户使用不带渠道后缀的 KEY，交给 New API 在所选分组正常路由，响应 channel_id/channel_type 为 null。失败不自动换协议或重试。当前用户名下复用 cockpit-智力测试专用 KEY，没有才通过官方 API 创建；普通用户使用本人的已验证登录会话操作 KEY，不补建 PAT；自动改组并限制为所选模型。首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 额度/到期/启禁配置不重置。只允许 model，不允许指定用户、渠道、分组、凭据或题目。同一用户并发返回 409；生成最长 180 秒，Cockpit 不设置输出 Token 上限参数；Claude 必需的 max_tokens 由 New API 配置补齐，实际仍受上游限制。超时/失败不自动重试，可能已产生费用。测试结果只在响应中；KEY 创建/配置沿用现有审计。不支持接续或按 ID 取回结果。html 为 null 时看 source/warning，不自动补代码或再次调用模型。",
+            ),
+            operation(
+                "POST",
+                "/cockpit/api/intelligence/preview",
+                "沙箱预览当前 HTML",
+                "智力测试",
+                text(),
+                body=obj(
+                    {"html": text(maxLength=524288)},
+                    ("html",),
+                    additionalProperties=False,
+                ),
+                example={
+                    "html": '<html><body><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="20"/></svg></body></html>'
+                },
+                header=("X-Intelligence-Request", "1"),
+                description="仅在当前请求中返回 HTML，最大 512 KiB，不保存、不调用模型。响应通过 HTTP CSP 强制 sandbox allow-scripts，禁止同源访问、外部资源/连接、表单和顶层跳转。只在预览响应附加回传宽高的尺寸脚本，让页面自适应缩放，不改变测试返回的源码。管理页面脚本策略不放宽。页面 iframe 使用同源会话表单传入 HTML；表单必须有 Origin 和匹配的 session_id，不能以 PAT 表单绕过。这里描述外部调用的 JSON 形式。",
+            ),
+        ]
+    )
+    studio_auth = (
+        "所有已启用用户可用，不要求管理员；接受本人浏览器会话/访问 JWT 或管理员 PAT。"
+        "仅限本人既有且自身 group 精确为 GPT 的 KEY，管理员无代用例外。"
+        "后端重新核对归属、状态、到期、额度和模型授权；原始模型 KEY 不返回浏览器。"
+    )
+    studio_paid = (
+        studio_auth + "真实计费写操作，须用户明确确认；交互式文档不提供试运行。"
+        "固定本站 Images 接口，n=1，同步等待，不排队、不保存结果。"
+        "不接受用户、分组、渠道、上游地址或凭据字段；不切换模型、不自动重试。"
+        "认证刷新不重放 POST；断连/超时或结束等待不表示取消上游。"
+        "request_id 在回执有效期内去重；到期后不保证幂等。同用户至多一笔，全站默认两笔，忙时 429。"
+        "总截止 300 秒，未知结果可能已计费，应核对 New API 日志后再人工决定。"
+    )
+    studio_ops = [
+        operation(
+            "GET",
+            "/cockpit/api/image-studio/tokens",
+            "列出本人 GPT KEY",
+            "生图工作站",
+            ref("ImageStudioTokens"),
+            description=studio_auth + "只返回脱敏摘要；不可用的令牌带原因。",
+        ),
+        operation(
+            "POST",
+            "/cockpit/api/image-studio/models",
+            "查询本人 KEY 的图像模型与能力",
+            "生图工作站",
+            ref("ImageStudioModels"),
+            body=ref("ImageStudioModelRequest"),
+            example={"token_id": 23},
+            header=("X-Cockpit-Studio", "1"),
+            description=studio_auth
+            + "JSON 最多 1024 字节，仅接受 token_id。经官方已审计的 /api/token/{id}/key 在后台读取本人 KEY，无 PAT 补建；查询 /v1/models 不生成内容、不计模型调用费用。精确求交 GPT 启用 abilities、启用渠道、本人模型限制、KEY 的 /v1/models 计费准入和文件能力档；所有可能路由取共同操作能力。",
+        ),
+        operation(
+            "POST",
+            "/cockpit/api/image-studio/generations",
+            "文生图（真实计费）",
+            "生图工作站",
+            ref("ImageStudioResult"),
+            body=ref("ImageStudioGenerationRequest"),
+            header=("X-Cockpit-Studio", "1"),
+            effect="write",
+            testable=False,
+            description=studio_paid
+            + "JSON 请求最多 192 KiB；parameters 对象内各字段可省略。",
+        ),
+        operation(
+            "POST",
+            "/cockpit/api/image-studio/edits",
+            "编辑图片（真实计费）",
+            "生图工作站",
+            ref("ImageStudioResult"),
+            body=ref("ImageStudioEditRequest"),
+            header=("X-Cockpit-Studio", "1"),
+            effect="write",
+            testable=False,
+            description=studio_paid
+            + "使用 multipart/form-data；标量仅一次，image[] 保序。native-mask 局部编辑发送 mask，reference-only 局部编辑发送选区指导图而不发送 mask。有标注时 prompt 可为空。禁止远程 URL 输入、动画、SVG/HTML；URL-only 结果仅允许管理员配置的安全解析器。",
+        ),
+    ]
+    for path, method, spec in studio_ops:
+        spec["security"] = [
+            {"browserSession": []},
+            {"browserJWT": []},
+            {"adminPAT": []},
+        ]
+        spec["x-cockpit-auth"] = "enabled-user"
+        spec["x-cockpit-paid"] = spec["x-cockpit-effect"] == "write"
+        spec["responses"]["200"]["description"] = (
+            "成功；返回当前请求的结果，不创建后台任务。"
+        )
+        spec["responses"]["409"]["description"] = (
+            "令牌/操作不可用、契约变化、请求 ID 已提交或登录会话变化。"
+        )
+        spec["responses"]["502"]["description"] = (
+            "上游响应无效或调用失败；生成/编辑可能已计费，不自动重发。"
+        )
+        for code, response in spec["responses"].items():
+            if code != "200":
+                response["content"]["application/json"]["schema"] = ref(
+                    "ImageStudioError"
+                )
+        errors = [
+            (413, "上传体积、文件数或解码像素超过限制"),
+        ]
+        if spec["x-cockpit-paid"]:
+            errors.extend(
+                [
+                    (429, "本人请求进行中、图片容量已满或上游限流；不排队"),
+                    (504, "图片请求超过总截止，可能已计费；不自动重发"),
+                ]
+            )
+        for code, meaning in errors:
+            spec["responses"][str(code)] = {
+                "description": meaning,
+                "content": {"application/json": {"schema": ref("ImageStudioError")}},
+            }
+        if path.endswith("/edits"):
+            spec["requestBody"]["content"] = {
+                "multipart/form-data": {
+                    "schema": ref("ImageStudioEditRequest"),
+                    "encoding": {
+                        "parameters": {"contentType": "text/plain"},
+                        "intent": {"contentType": "text/plain"},
+                        "image[]": {
+                            "contentType": "image/png, image/jpeg, image/webp",
+                            "style": "form",
+                            "explode": True,
+                        },
+                        "mask": {"contentType": "image/png"},
+                    },
+                }
+            }
+    ops.extend(studio_ops)
     paths = {}
     for path, method, spec in ops:
         paths.setdefault(path, {})[method] = spec
@@ -1377,6 +2167,13 @@ def document():
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
             "schema": text(format="binary")
         }
+    }
+    paths["/cockpit/api/intelligence/preview"]["post"]["responses"]["200"][
+        "content"
+    ] = {"text/html": {"schema": text()}}
+    paths["/cockpit/api/intelligence/test"]["post"]["responses"]["504"] = {
+        "description": "同步生成超时，可能已计费；不自动重试。",
+        "content": {"application/json": {"schema": ref("Error")}},
     }
     paths["/cockpit/api/statistics/balance"]["get"]["responses"]["503"] = {
         "description": "余额不可用时返回 code/message；认证或数据库故障也可能返回通用错误。",
@@ -1407,7 +2204,7 @@ def document():
         "info": {
             "title": "New API Cockpit API",
             "version": app_version,
-            "description": "接口使用 New API 管理员 PAT 或同站浏览器会话。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。所有写入仍受后端权限与审计约束；确认头不是幂等键。结果不明确时查实际数据和操作记录，不自动重发。",
+            "description": "管理接口使用 New API 管理员 PAT 或管理员浏览器会话；manual、intelligence 和 image-studio 接口也允许启用的普通用户会话。image-studio 仅使用本人既有 GPT KEY，管理员也不例外。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。写操作与真实计费操作须明确确认；确认头不是幂等键，认证失败不自动重放。结果不明确时查实际数据和 New API 日志，不自动重发。",
         },
         "servers": [{"url": "/", "description": "当前站点（保留协议、域名和端口）"}],
         "security": [{"adminPAT": []}, {"browserSession": []}],
@@ -1416,6 +2213,10 @@ def document():
             for name in (
                 "余额与报警",
                 "用量统计",
+                "渠道质量",
+                "智力测试",
+                "生图工作站",
+                "模型使用",
                 "通知渠道",
                 "用户管理",
                 "用户额度",
@@ -1441,8 +2242,14 @@ def document():
                     "name": "cockpit_access",
                     "description": "HttpOnly 登录会话，由浏览器发送，不能从页面读取。",
                 },
+                "browserJWT": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "New API access JWT",
+                    "description": "已启用用户的访问 JWT；不是模型调用 KEY，不要求管理员。显式 Bearer 优先于 Cookie，失败不回退身份。",
+                },
             },
-            "schemas": SCHEMAS,
+            "schemas": {**SCHEMAS, **IMAGE_STUDIO_SCHEMAS, **quality_schemas},
         },
     }
 

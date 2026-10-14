@@ -28,20 +28,19 @@ test('historical-price tooltip displays one tier and separate ratio calculations
     output_tokens: 3, cache_read_tokens: 267, cache_write_tokens: 0,
     amount: '0.00048',
     cost_formula: {
-      mode: 'historical', matched_tier: true, converted: true,
+      mode: 'historical', matched_tier: true,
       prices: {input_price: '2', output_price: '10', cache_price: '0.2', write_price: null},
       buckets: [
-        {ratio: '3.4', current_ratio: true, request_count: 2, actual: '0.00032',
+        {ratio: '3.4', request_count: 2, actual: '0.00032',
          calculated: '0.00032028', terms: [{tokens: 20, price: '2'}]},
-        {ratio: '3', current_ratio: false, request_count: 1, actual: '0.00016',
+        {ratio: '3', request_count: 1, actual: '0.00016',
          calculated: '0.00016', terms: [{tokens: 10, price: '2'}]},
       ],
       calculated: '0.00048028', difference: '-0.00000028',
     },
   });
   assert.equal(rows.filter(line => line.startsWith('档位：')).length, 1);
-  assert.equal(rows.filter(line => line.startsWith('当前倍率 ')).length, 1);
-  assert.equal(rows.filter(line => line.startsWith('历史倍率 ')).length, 1);
+  assert.equal(rows.filter(line => line.startsWith('请求倍率 ')).length, 2);
   assert(rows.some(line => line.includes('实际消费金额')));
   assert(rows.some(line => line.includes('实际消费金额：¥ 0.00048')));
   assert(rows.some(line => line.includes('试算合计：¥ 0.00048028')));

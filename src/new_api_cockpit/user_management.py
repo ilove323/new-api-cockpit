@@ -1,4 +1,4 @@
-"""Administrator user/token management through owner PATs and official APIs.
+"""Administrator management via owner PATs and own-token session operations.
 
 Source SQL is read-only except the narrowly granted ensure-PAT function. The
 upstream token PUT is an absolute update, not an atomic quota-delta endpoint.
@@ -80,6 +80,24 @@ def actor(username):
         ).fetchone()
     if not row or row["role"] < 10 or row["status"] != 1:
         raise Forbidden("管理员已失效，请重新登录。")
+    return row
+
+
+def self_actor(identity):
+    """Resolve an enabled session owner, without granting management authority."""
+    with quota.connect() as conn:
+        row = conn.execute(
+            "SELECT id,username,role,status FROM users WHERE id=%s AND deleted_at IS NULL",
+            (positive_id(identity["id"]),),
+        ).fetchone()
+    if (
+        not row
+        or row["username"] != identity["username"]
+        or row["role"] != identity["role"]
+        or row["role"] < 1
+        or row["status"] != 1
+    ):
+        raise Forbidden("当前用户身份已变化或账号不可用，请重新登录。")
     return row
 
 
@@ -187,8 +205,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def call_api(operator, user_id, path, *, method="GET", body=None):
-    pat = owner_pat(operator, user_id)
+def call_api(operator, user_id, path, *, method="GET", body=None, credential=None):
+    if credential is None:
+        pat = owner_pat(operator, user_id)
+    else:
+        # A dashboard session is only a transport for its owner's token API.
+        # Never substitute an administrator PAT or provision a normal-user PAT.
+        if user_id != operator["id"] or not path.startswith("/api/token/"):
+            raise Forbidden("登录会话只能操作本人的令牌。")
+        target(operator, user_id, enabled=True)
+        pat = credential
     base = os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000").rstrip("/")
     if not base.startswith(("http://", "https://")):
         raise ManagementError("New API 内部地址配置无效。")
@@ -586,21 +612,26 @@ def _validate_token_fields(changes):
         raise ManagementError("自动分组范围无效。")
 
 
-def _perform(operator, kind, object_id, action, changes, before=None):
+def _perform(
+    operator, kind, object_id, action, changes, before=None, *, credential=None
+):
+    def api(*args, **kwargs):
+        if credential is not None:
+            kwargs["credential"] = credential
+        return call_api(*args, **kwargs)
+
     if kind == "user":
         if action == "create":
             if operator["role"] != 100:
                 raise Forbidden("新增用户仅允许超级管理员操作。")
             body = dict(changes)
             body["role"] = 1
-            return call_api(
-                operator, operator["id"], "/api/user/", method="POST", body=body
-            )
+            return api(operator, operator["id"], "/api/user/", method="POST", body=body)
         user = target(operator, object_id)
         if action in ("enable", "disable", "delete"):
             if user["role"] == 100 and action in ("disable", "delete"):
                 raise Forbidden("不能禁用或删除超级管理员。")
-            return call_api(
+            return api(
                 operator,
                 operator["id"],
                 "/api/user/manage",
@@ -609,7 +640,7 @@ def _perform(operator, kind, object_id, action, changes, before=None):
             )
         if action == "group":
             group = validate_user_group(changes)
-        data = call_api(operator, operator["id"], f"/api/user/{user['id']}")
+        data = api(operator, operator["id"], f"/api/user/{user['id']}")
         payload = {k: data.get(k, "") for k in USER_FIELDS}
         payload.update(id=user["id"], role=user["role"])
         if action == "password":
@@ -651,9 +682,7 @@ def _perform(operator, kind, object_id, action, changes, before=None):
             payload.update(group=group, role=role)
         else:
             raise ManagementError("用户操作无效。")
-        return call_api(
-            operator, operator["id"], "/api/user/", method="PUT", body=payload
-        )
+        return api(operator, operator["id"], "/api/user/", method="PUT", body=payload)
     user = (
         target(operator, object_id, enabled=True)
         if action == "create"
@@ -679,22 +708,20 @@ def _perform(operator, kind, object_id, action, changes, before=None):
         payload = dict(changes)
         payload["remain_quota"] = amount_units(payload.pop("amount_yuan", "0"))
         payload.setdefault("expired_time", -1)
-        return call_api(
-            operator, user["id"], "/api/token/", method="POST", body=payload
-        )
+        return api(operator, user["id"], "/api/token/", method="POST", body=payload)
     token_id = positive_id(object_id)
     if action == "reveal":
-        data = call_api(
+        data = api(
             operator, user["id"], f"/api/token/{token_id}/key", method="POST", body={}
         )
         if not isinstance(data, dict) or not isinstance(data.get("key"), str):
             raise ManagementError("KEY 查看响应无效。")
         return {"key": data["key"]}
     if action == "delete":
-        return call_api(operator, user["id"], f"/api/token/{token_id}", method="DELETE")
-    data = call_api(operator, user["id"], f"/api/token/{token_id}")
+        return api(operator, user["id"], f"/api/token/{token_id}", method="DELETE")
+    data = api(operator, user["id"], f"/api/token/{token_id}")
     if action in ("enable", "disable"):
-        return call_api(
+        return api(
             operator,
             user["id"],
             "/api/token/?status_only=true",
@@ -758,7 +785,7 @@ def _perform(operator, kind, object_id, action, changes, before=None):
             raise ManagementError("到期时间无效。")
     else:
         raise ManagementError("KEY 操作无效。")
-    result = call_api(operator, user["id"], "/api/token/", method="PUT", body=payload)
+    result = api(operator, user["id"], "/api/token/", method="PUT", body=payload)
     # Never return upstream key/password/credential-bearing responses.
     return {"updated": True} if result is not None else None
 
@@ -802,7 +829,29 @@ def _safe_changes(changes):
 
 
 def single_action(username, kind, object_id, body):
-    operator = actor(username)
+    return _single_action(actor(username), kind, object_id, body)
+
+
+def self_token_action(identity, object_id, body, credential):
+    """Audited create/edit of an owner's token using their validated session."""
+    operator = self_actor(identity)
+    if (
+        not credential
+        or not isinstance(body, dict)
+        or body.get("action") not in {"create", "edit"}
+    ):
+        raise Forbidden("本人令牌操作无效。")
+    owner = (
+        positive_id(object_id)
+        if body["action"] == "create"
+        else token_owner(operator, object_id)[0]["id"]
+    )
+    if owner != operator["id"]:
+        raise Forbidden("只能操作本人的测试令牌。")
+    return _single_action(operator, "token", object_id, body, credential=credential)
+
+
+def _single_action(operator, kind, object_id, body, *, credential=None):
     action = body.get("action")
     changes = body.get("changes", {})
     if not isinstance(changes, dict):
@@ -883,7 +932,14 @@ def single_action(username, kind, object_id, body):
             ),
         )
     try:
-        result = _perform(operator, kind, object_id, action, changes)
+        result = _perform(
+            operator,
+            kind,
+            object_id,
+            action,
+            changes,
+            **({"credential": credential} if credential is not None else {}),
+        )
     except Exception as exc:
         state = (
             "unknown"

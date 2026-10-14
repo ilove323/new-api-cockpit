@@ -235,11 +235,11 @@ test('encrypted password protocol covers RSA and hybrid long passwords without a
   }
 });
 
-test('ordinary upstream user can explicitly sign out and switch accounts instead of entering a login loop', async () => {
+test('unavailable upstream user can explicitly sign out and switch accounts instead of entering a login loop', async () => {
   const h = environment({sid: '', expires: 0, login: true}); let signedOut = false;
   h.handle = (url, init) => {
     if (url === '/api/user/auth/refresh') return signedOut ? response({code: 'AUTH_UNAUTHORIZED'}, 401) : response({success: true, data: bundle('ordinary-session')});
-    if (url === '/cockpit/api/auth/session') return init.method === 'DELETE' ? response({ok: true}) : response({code: 'AUTH_FORBIDDEN', error: '仅管理员可访问'}, 403);
+    if (url === '/cockpit/api/auth/session') return init.method === 'DELETE' ? response({ok: true}) : response({code: 'AUTH_FORBIDDEN', error: '当前账号不可用'}, 403);
     if (url === '/api/user/auth/logout') {signedOut = true; return response({success: true});}
     if (url === '/api/status') return response({success: true, data: {password_login_enabled: true}});
     return response({ok: true});
@@ -261,4 +261,42 @@ test('no Web Lock refresh conflict is retried once, while stale/malformed cross-
   h.channels[0].events.message({data: {kind: 'signed_out', sid: 'session-a', timestamp: Date.now() - 70000, source: 'other'}});
   h.channels[0].events.message({data: {kind: 'admin', sid: 'session-a', timestamp: Date.now(), source: 'other'}});
   await settle(); assert.equal(h.calls.length, before); assert.deepEqual(h.redirects, []);
+});
+
+test('enabled ordinary users land in manual rather than a protected admin next page', async () => {
+  for (const password of [false, true]) {
+    const h = environment({sid: '', expires: 0, login: true, next: '/cockpit/users/'});
+    const fallback = h.handle;
+    h.handle = (url, init) => {
+      if (url === '/api/user/auth/refresh' && password) return response({code: 'AUTH_UNAUTHORIZED'}, 401);
+      if (url === '/cockpit/api/auth/session' && init.method === 'POST') return response({...identity(), role: 1});
+      return fallback(url, init);
+    };
+    h.run('login.js'); await settle();
+    if (password) {
+      h.elements.get('login-username').value = 'member'; h.elements.get('login-password').value = 'synthetic-password';
+      await h.elements.get('login-form').fire('submit');
+    }
+    assert.deepEqual(h.redirects, ['/cockpit/manual']);
+  }
+});
+
+test('ordinary login returns to manual or intelligence requested pages, never admin pages', async () => {
+  for (const next of ['/cockpit/intelligence', '/cockpit/intelligence/', '/cockpit/manual', '/cockpit/manual/']) {
+    for (const password of [false, true]) {
+      const h = environment({sid: '', expires: 0, login: true, next});
+      const fallback = h.handle;
+      h.handle = (url, init) => {
+        if (url === '/api/user/auth/refresh' && password) return response({code: 'AUTH_UNAUTHORIZED'}, 401);
+        if (url === '/cockpit/api/auth/session' && init.method === 'POST') return response({...identity(), role: 1});
+        return fallback(url, init);
+      };
+      h.run('login.js'); await settle();
+      if (password) {
+        h.elements.get('login-username').value = 'member'; h.elements.get('login-password').value = 'synthetic-password';
+        await h.elements.get('login-form').fire('submit');
+      }
+      assert.deepEqual(h.redirects, [next]);
+    }
+  }
 });

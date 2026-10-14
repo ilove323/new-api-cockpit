@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 90s
     env_file: .env
+    environment:
+      COCKPIT_PROCESS_ROLE: web
     ports:
       - "${BIND_HOST:-127.0.0.1}:${PORT:-8091}:8000"
     networks: [new-api]
@@ -17,7 +19,55 @@ services:
       timeout: 5s
       retries: 3
 
+  image-studio:
+    image: ghcr.io/ilove323/new-api-cockpit:${IMAGE_TAG:?Set IMAGE_TAG to a released version}
+    restart: unless-stopped
+    stop_grace_period: 360s
+    env_file: .env
+    environment:
+      COCKPIT_PROCESS_ROLE: image
+      IMAGE_STUDIO_REDIS_URL: ${IMAGE_STUDIO_REDIS_URL:-redis://image-studio-receipts:6379/0}
+    command: [gunicorn, --bind, "0.0.0.0:8000", --worker-class, gthread, --workers, "2", --threads, "1", --timeout, "360", --access-logfile, "-", "new_api_cockpit.app:app"]
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${IMAGE_STUDIO_PORT:-8092}:8000"
+    networks: [new-api, studio-receipts]
+    depends_on:
+      image-studio-receipts:
+        condition: service_healthy
+    read_only: true
+    mem_limit: ${IMAGE_STUDIO_MEMORY:-1g}
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Isolated dispatch receipts only; never shares New API's session/cache Redis.
+  image-studio-receipts:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: [redis-server, --protected-mode, "no", --appendonly, "yes", --appendfsync, "always", --maxmemory, "64mb", --maxmemory-policy, noeviction, --save, ""]
+    networks: [studio-receipts]
+    volumes: [image-studio-receipts:/data]
+    mem_limit: 128m
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  image-studio-receipts:
+
 networks:
+  studio-receipts:
+    internal: true
   new-api:
     external: true
     name: ${NEW_API_NETWORK:-new-api-network}

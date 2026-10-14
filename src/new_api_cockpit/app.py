@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Usage: PGHOST=... PGPASSWORD=... python -m new_api_cockpit.app
 # Production: docker compose up -d --build (Gunicorn serves /cockpit/).
-"""Single-container statistics, quota and user management with protected APIs."""
+"""Cockpit pages/APIs, with an isolated synchronous image-request role."""
 
 import os
 import re
@@ -34,6 +34,11 @@ from new_api_cockpit import (
     user_management,
     operation_records,
     openapi,
+    quality,
+    intelligence,
+    manual,
+    image_studio,
+    image_receipts,
 )
 
 from new_api_cockpit.report import (
@@ -59,6 +64,24 @@ from new_api_cockpit.auth import (
 
 app = Flask(__name__, static_url_path="/cockpit/static")
 PAT_ONLY_ENDPOINTS = {"balance_api", "balance_alert_api"}
+# Every other route keeps its administrator requirement, including new routes.
+USER_ENDPOINTS = {
+    "cockpit_home",
+    "browser_session",
+    "manual_page",
+    "manual_tokens",
+    "manual_models",
+    "manual_key",
+    "intelligence_page",
+    "intelligence_models",
+    "intelligence_test",
+    "intelligence_preview",
+    "image_studio_page",
+    "image_studio_tokens",
+    "image_studio_models",
+    "image_studio_generations",
+    "image_studio_edits",
+}
 
 
 class JSONProvider(DefaultJSONProvider):
@@ -98,6 +121,14 @@ def safe_next(value):
         "/cockpit/operations/",
         "/cockpit/docs",
         "/cockpit/docs/",
+        "/cockpit/quality",
+        "/cockpit/quality/",
+        "/cockpit/intelligence",
+        "/cockpit/intelligence/",
+        "/cockpit/manual",
+        "/cockpit/manual/",
+        "/cockpit/image-studio",
+        "/cockpit/image-studio/",
         "/cockpit/api/statistics/export",
     }
     return value if not parsed.netloc and parsed.path in paths else default
@@ -130,7 +161,7 @@ def request_identity():
             # JWTs are validated upstream; opaque PATs are looked up verbatim.
             if allow_pat and (pat_only or "." not in value):
                 return verify_pat(value)
-            return verify_session(value)
+            return verify_session(value, allow_user=True)
         if pat_only or not token:
             raise LoginRequired("请使用 Bearer 凭据。")
     if pat_only:
@@ -138,7 +169,7 @@ def request_identity():
     # Other authorization schemes grant no access; a browser cookie still works.
     if not token:
         return None
-    return verify_session(token)
+    return verify_session(token, allow_user=True)
 
 
 def same_origin_request():
@@ -162,7 +193,13 @@ def same_origin_request():
         return False
 
 
-def auth_failure(message="登录已失效，请重新登录。", status=401, code="AUTH_REQUIRED"):
+def auth_failure(
+    message="登录已失效，请重新登录。",
+    status=401,
+    code="AUTH_REQUIRED",
+    *,
+    clear_cookie=True,
+):
     is_page = request.endpoint in {
         "cockpit_home",
         "index",
@@ -170,6 +207,10 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
         "keys_page",
         "operations_page",
         "api_docs_page",
+        "quality_page",
+        "intelligence_page",
+        "manual_page",
+        "image_studio_page",
     }
     if is_page and status == 401:
         response = redirect(login_url(), 302)
@@ -185,6 +226,7 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
     # An unrelated PAT/JWT failure must not erase the browser's valid session.
     if (
         status in {401, 403}
+        and clear_cookie
         and not explicit_bearer
         and request.endpoint not in PAT_ONLY_ENDPOINTS
     ):
@@ -196,6 +238,12 @@ def auth_failure(message="登录已失效，请重新登录。", status=401, cod
 
 @app.before_request
 def authenticate():
+    if image_studio.process_role() == "image" and request.endpoint not in {
+        "health",
+        "image_studio_generations",
+        "image_studio_edits",
+    }:
+        return jsonify(error="该实例只处理图片请求。"), 404
     if request.endpoint is None or request.endpoint in {
         "static",
         "health",
@@ -216,6 +264,13 @@ def authenticate():
         return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
     if not user:
         return auth_failure()
+    if user["role"] < 10 and request.endpoint not in USER_ENDPOINTS:
+        return auth_failure(
+            "此功能仅管理员可访问；普通用户可使用模型使用、智力测试和生图工作站。",
+            403,
+            "AUTH_FORBIDDEN",
+            clear_cookie=False,
+        )
     expected = request.headers.get("X-Cockpit-Session")
     if expected and expected != user.get("session_id"):
         return auth_failure(
@@ -259,7 +314,7 @@ def browser_session():
     if not isinstance(body, dict) or set(body) != {"access_token"}:
         return jsonify(error="登录请求无效。"), 400
     try:
-        user = verify_session(body["access_token"])
+        user = verify_session(body["access_token"], allow_user=True)
     except LoginRequired as exc:
         return auth_failure(str(exc))
     except LoginForbidden as exc:
@@ -306,12 +361,54 @@ def headers(response):
             "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
+    if request.endpoint == "intelligence_page":
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "frame-src 'self'; connect-src 'self'; img-src 'self' data:; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
+    if request.endpoint in {
+        "manual_page",
+        "manual_tokens",
+        "manual_models",
+        "manual_key",
+    }:
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "connect-src 'self'; img-src 'self' data:; object-src 'none'; "
+            "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
+    if request.endpoint == "intelligence_preview":
+        # The HTTP sandbox also applies when the generated document is opened
+        # directly. Never relax the parent's script policy to render model HTML.
+        response.headers["Content-Security-Policy"] = intelligence.PREVIEW_CSP
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        )
+    if request.endpoint == "image_studio_page" or request.path.startswith(
+        "/cockpit/api/image-studio/"
+    ):
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "connect-src 'self'; img-src 'self' data: blob:; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        )
     return response
 
 
 @app.get("/healthz")
 def health():
-    state = timers.status()
+    state = (
+        image_studio.health()
+        if image_studio.process_role() == "image"
+        else timers.status()
+    )
+    if image_studio.process_role() == "image":
+        state["receipts_ready"] = image_receipts.health()
+        state["ready"] = state["ready"] and state["receipts_ready"]
     return jsonify(status="ok" if state["ready"] else "unhealthy", timers=state), (
         200 if state["ready"] else 503
     )
@@ -320,7 +417,207 @@ def health():
 @app.get("/cockpit")
 @app.get("/cockpit/")
 def cockpit_home():
-    return redirect("/cockpit/statistics/", 302)
+    return redirect(
+        "/cockpit/statistics/" if g.current_user["role"] >= 10 else "/cockpit/manual",
+        302,
+    )
+
+
+@app.get("/cockpit/manual")
+@app.get("/cockpit/manual/")
+def manual_page():
+    return render_template("manual.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/api/manual/tokens")
+def manual_tokens():
+    return jsonify(manual.list_tokens(g.current_user, new_api_credential()))
+
+
+def manual_body():
+    if request.headers.get("X-Cockpit-Manual") != "1" or not request.is_json:
+        raise manual.ManualError("请求需要 JSON 和 X-Cockpit-Manual: 1。", 403)
+    request.max_content_length = 1024
+    return request.get_json(silent=True)
+
+
+@app.post("/cockpit/api/manual/models")
+def manual_models():
+    return jsonify(manual.models(g.current_user, new_api_credential(), manual_body()))
+
+
+@app.post("/cockpit/api/manual/key")
+def manual_key():
+    return jsonify(
+        key=manual.reveal_key(g.current_user, new_api_credential(), manual_body())
+    )
+
+
+@app.errorhandler(manual.ManualError)
+def manual_error(exc):
+    return jsonify(error=str(exc), code=exc.code), exc.status
+
+
+@app.get("/cockpit/image-studio")
+@app.get("/cockpit/image-studio/")
+def image_studio_page():
+    return render_template("studio.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/api/image-studio/tokens")
+def image_studio_tokens():
+    return jsonify(image_studio.list_tokens(g.current_user, new_api_credential()))
+
+
+def studio_request(*, multipart=False):
+    if request.headers.get("X-Cockpit-Studio") != "1":
+        raise image_studio.StudioError("请求缺少 X-Cockpit-Studio: 1。", 403)
+    if multipart:
+        if request.mimetype != "multipart/form-data":
+            raise image_studio.StudioError("改图请求需要 multipart/form-data。", 400)
+        request.max_content_length = 24 * 1024 * 1024
+        request.max_form_memory_size = 192 * 1024
+        request.max_form_parts = 16
+    else:
+        if not request.is_json:
+            raise image_studio.StudioError("请求需要 JSON。", 400)
+        request.max_content_length = 192 * 1024
+    if request.content_length and request.content_length > request.max_content_length:
+        raise image_studio.StudioError("图片请求过大。", 413)
+
+
+@app.post("/cockpit/api/image-studio/models")
+def image_studio_models():
+    studio_request()
+    request.max_content_length = 1024
+    return jsonify(
+        image_studio.models(
+            g.current_user, new_api_credential(), request.get_json(silent=True)
+        )
+    )
+
+
+@app.post("/cockpit/api/image-studio/generations")
+def image_studio_generations():
+    studio_request()
+    with image_studio.capacity(g.current_user):
+        return jsonify(
+            image_studio.run(
+                g.current_user, new_api_credential(), request.get_json(silent=True)
+            )
+        )
+
+
+def studio_edit_body():
+    from . import image_transport
+    from PIL import Image
+    from io import BytesIO
+    import json
+
+    form = request.form
+    required = {
+        "token_id",
+        "model",
+        "prompt",
+        "parameters",
+        "request_id",
+        "contract_revision",
+        "intent",
+    }
+    if "contract_revision" not in form or "intent" not in form:
+        raise image_studio.StudioError(
+            "工作站协议已更新，请刷新模型后重新提交。", 409, "IMAGE_CONTRACT_CHANGED"
+        )
+    if set(form) != required or any(len(form.getlist(k)) != 1 for k in required):
+        raise image_studio.StudioError("改图表单字段无效或重复。")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", form["token_id"]):
+        raise image_studio.StudioError("令牌 ID 无效。")
+    try:
+        params = json.loads(form["parameters"])
+        intent = json.loads(form["intent"])
+    except ValueError:
+        raise image_studio.StudioError("图片参数或编辑意图不是有效的 JSON。") from None
+    body = image_studio.parse_request(
+        {
+            **form.to_dict(),
+            "token_id": int(form["token_id"]),
+            "parameters": params,
+            "intent": intent,
+        }
+    )
+    uploads = request.files
+    images = uploads.getlist("image[]")
+    masks = uploads.getlist("mask")
+    if (
+        set(uploads) - {"image[]", "mask"}
+        or not 1 <= len(images) <= 4
+        or len(masks) > 1
+    ):
+        raise image_studio.StudioError("请上传 1–4 张图像，遮罩最多一张。")
+    inspected, total_pixels, sent_bytes = [], 0, 0
+    try:
+        for index, file in enumerate(images):
+            data = file.read(image_transport.MAX_INPUT_BYTES + 1)
+            image = image_transport.inspect_image(
+                data, max_pixels=16_000_000 if index == 0 else 32_000_000
+            )
+            total_pixels += image["width"] * image["height"]
+            sent_bytes += len(image["data"])
+            if total_pixels > 32_000_000:
+                raise image_studio.StudioError(
+                    "输入图像的解码像素合计超过 32 MP。", 413
+                )
+            inspected.append(image)
+        mask = None
+        if masks:
+            mask = image_transport.inspect_image(masks[0].read(4_000_001), mask=True)
+            if (mask["width"], mask["height"]) != (
+                inspected[0]["width"],
+                inspected[0]["height"],
+            ):
+                raise image_studio.StudioError("遮罩尺寸必须与第一张实际输入图像一致。")
+            with Image.open(BytesIO(mask["data"])) as decoded:
+                if decoded.getchannel("A").getextrema()[0] == 255:
+                    raise image_studio.StudioError("局部修改请先画出修改区域。")
+            sent_bytes += len(mask["data"])
+        if sent_bytes > image_transport.MAX_UPLOAD_BYTES - 65536:
+            raise image_studio.StudioError(
+                "规范化后的输入图片过大，请减少参考图。", 413
+            )
+        return body, inspected, mask
+    finally:
+        for file in images + masks:
+            file.close()
+
+
+@app.post("/cockpit/api/image-studio/edits")
+def image_studio_edits():
+    from . import image_transport
+
+    studio_request(multipart=True)
+    try:
+        with image_studio.capacity(g.current_user):
+            body, images, mask = studio_edit_body()
+            return jsonify(
+                image_studio.run(
+                    g.current_user, new_api_credential(), body, images=images, mask=mask
+                )
+            )
+    except image_transport.ImageError as exc:
+        raise image_studio.StudioError(
+            str(exc), exc.status, exc.code, exc.uncertain
+        ) from None
+
+
+@app.errorhandler(image_studio.StudioError)
+@app.errorhandler(image_receipts.ReceiptError)
+def image_studio_error(exc):
+    return jsonify(
+        error=str(exc),
+        code=exc.code,
+        uncertain=exc.uncertain,
+        details=getattr(exc, "details", {}),
+    ), exc.status
 
 
 @app.get("/cockpit/docs")
@@ -396,6 +693,99 @@ def index():
         ),
         end=now.strftime("%Y-%m-%dT%H:%M:%S"),
     )
+
+
+@app.get("/cockpit/quality")
+@app.get("/cockpit/quality/")
+def quality_page():
+    from datetime import timedelta
+
+    now = datetime.now(TZ).replace(microsecond=0)
+    return render_template(
+        "quality.html",
+        site_name=load_site_name(),
+        start=(now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S"),
+        end=now.strftime("%Y-%m-%dT%H:%M:%S"),
+    )
+
+
+@app.get("/cockpit/api/quality/summary")
+def quality_summary():
+    return jsonify(quality.load(request.args))
+
+
+@app.get("/cockpit/api/quality/trends")
+def quality_trends():
+    return jsonify(quality.load(request.args, with_trends=True))
+
+
+@app.errorhandler(quality.QualityUnavailable)
+def quality_unavailable(exc):
+    return jsonify(error=str(exc)), 503
+
+
+def new_api_credential():
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, value = authorization.partition(" ")
+    return value if scheme.lower() == "bearer" else request.cookies.get(COOKIE_NAME)
+
+
+@app.get("/cockpit/intelligence")
+@app.get("/cockpit/intelligence/")
+def intelligence_page():
+    return render_template(
+        "intelligence.html", site_name=load_site_name(), prompt=intelligence.PROMPT
+    )
+
+
+@app.get("/cockpit/api/intelligence/models")
+def intelligence_models():
+    return jsonify(intelligence.model_options(g.current_user, new_api_credential()))
+
+
+@app.post("/cockpit/api/intelligence/test")
+def intelligence_test():
+    request.max_content_length = 4096
+    if request.headers.get("X-Intelligence-Request") != "1" or not request.is_json:
+        return jsonify(error="请使用 JSON 和 X-Intelligence-Request: 1 发起测试。"), 403
+    return jsonify(
+        intelligence.run(
+            g.current_user, new_api_credential(), request.get_json(silent=True)
+        )
+    )
+
+
+@app.post("/cockpit/api/intelligence/preview")
+def intelligence_preview():
+    # Stateless POST: HTML stays in this page, never in a URL, file or table.
+    request.max_content_length = intelligence.MAX_HTML_BYTES * 3 + 8192
+    request.max_form_memory_size = request.max_content_length
+    if request.is_json:
+        if request.headers.get("X-Intelligence-Request") != "1":
+            return jsonify(error="缺少预览请求头。"), 403
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or set(body) != {"html"}:
+            return jsonify(error="只允许提供 HTML。"), 400
+        html = body["html"]
+    else:
+        # A form targets the sandbox frame without enabling inline scripts in
+        # the parent. Require browser same-origin POST AND the page's session ID.
+        if (
+            request.mimetype != "application/x-www-form-urlencoded"
+            or not request.headers.get("Origin")
+            or not g.current_user.get("session_id")
+            or request.form.get("session_id") != g.current_user["session_id"]
+        ):
+            return jsonify(error="预览会话或来源不匹配，请重新加载页面。"), 403
+        html = request.form.get("html")
+    response = make_response(intelligence.preview_document(html))
+    response.mimetype = "text/html"
+    return response
+
+
+@app.errorhandler(intelligence.IntelligenceError)
+def intelligence_error(exc):
+    return jsonify(error=str(exc), uncertain=exc.uncertain), exc.status
 
 
 @app.get("/cockpit/users")
@@ -933,7 +1323,14 @@ def http_error(exc):
     if not request.path.startswith("/cockpit/api/"):
         return exc
     response = exc.get_response()
-    response.set_data(app.json.dumps({"error": exc.description}))
+    body = {"error": exc.description}
+    if request.path.startswith("/cockpit/api/image-studio/"):
+        body.update(
+            code="IMAGE_TOO_LARGE" if exc.code == 413 else "IMAGE_INVALID_REQUEST",
+            uncertain=exc.code >= 500
+            and request.endpoint in {"image_studio_generations", "image_studio_edits"},
+        )
+    response.set_data(app.json.dumps(body))
     response.content_type = "application/json"
     return response
 
@@ -982,6 +1379,8 @@ def schema_unavailable(exc):
 def database_error(exc):
     app.logger.error("Database query failed: %s", type(exc).__name__)
     if isinstance(exc, psycopg.errors.QueryCanceled):
+        if request.path.startswith("/cockpit/api/quality/"):
+            return jsonify(error="查询超过 30 秒，请缩小时间范围后重试。"), 504
         return jsonify(error="查询超过 60 秒，请缩小时间范围后重试。"), 504
     return jsonify(error="数据库查询失败，请检查连接配置与数据库日志。"), 503
 

@@ -65,7 +65,7 @@ class HistoricalPricesTest(unittest.TestCase):
             )
         )
 
-    def test_historical_price_rows_and_changed_ratio_reconciliation(self):
+    def test_historical_price_rows_keep_observed_ratios(self):
         expression = 'len <= 1000 ? tier("low", p * 2 + cr * 0.2 + cc * 2.5 + c * 10) : tier("high", p * 4 + cr * 0.4 + cc * 5 + c * 20)'
         current = {
             "billing_setting.billing_mode": {"m": "tiered_expr"},
@@ -116,7 +116,6 @@ class HistoricalPricesTest(unittest.TestCase):
             cache_read_tokens=300,
             cache_write_tokens=0,
             total_tokens=333,
-            ratio_count=2,
             group_ratio=Decimal("3.4"),
             amount=Decimal("0.000575"),
             failure_codes={},
@@ -128,25 +127,25 @@ class HistoricalPricesTest(unittest.TestCase):
             ],
         )
         rows = decorate([source], current)
-        self.assertEqual(len(rows), 2)
-        low, historical = rows
-        self.assertEqual(low["tier_name"], "low")
-        self.assertEqual(low["request_count"], 2)
-        self.assertEqual(low["amount"], Decimal("0.00032"))
-        self.assertEqual(low["original_cache_read_tokens"], 200)
-        self.assertEqual(low["cache_read_tokens"], 171)
-        self.assertEqual(low["total_tokens"], 193)
-        self.assertEqual(low["group_ratio"], Decimal("3.4"))
-        self.assertTrue(low["cost_formula"]["converted"])
-        self.assertEqual(low["cost_formula"]["calculated"], Decimal("0.00032028"))
+        self.assertEqual(len(rows), 3)
+        first, second, historical = rows
+        for row, ratio, amount in [(first, "3", "0.00015"), (second, "3.4", "0.00017")]:
+            self.assertEqual(row["tier_name"], "low")
+            self.assertEqual(row["request_count"], 1)
+            self.assertEqual(row["cache_read_tokens"], 100)
+            self.assertEqual(row["total_tokens"], 111)
+            self.assertEqual(row["group_ratio"], Decimal(ratio))
+            self.assertEqual(row["amount"], Decimal(amount))
+            self.assertEqual(row["cost_formula"]["calculated"], Decimal(amount))
         self.assertEqual(historical["tier_name"], "-")
         self.assertEqual(historical["input_price"], Decimal(3))
         self.assertEqual(historical["cache_read_tokens"], 100)
         self.assertEqual(historical["cost_formula"]["calculated"], Decimal("0.000255"))
+        self.assertEqual(totals(rows)["total_tokens"], 333)
         self.assertEqual(totals(rows)["amount"], source["amount"])
         self.assertEqual(sum(row["request_count"] for row in rows), 3)
 
-    def test_three_historical_ratios_merge_when_price_matches(self):
+    def test_three_historical_ratios_form_three_rows(self):
         options = {
             "ModelRatio": {"m": 1},
             "CompletionRatio": {"m": 5},
@@ -194,12 +193,15 @@ class HistoricalPricesTest(unittest.TestCase):
             tier_usage=buckets,
         )
         rows = decorate([source], options)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["request_count"], 3)
-        self.assertEqual(rows[0]["original_cache_read_tokens"], 300)
-        self.assertEqual(rows[0]["cache_read_tokens"], 256)
-        self.assertEqual(rows[0]["total_tokens"], 289)
-        self.assertEqual(rows[0]["amount"], Decimal("0.00048"))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(
+            [r["group_ratio"] for r in rows],
+            [Decimal("3"), Decimal("3.2"), Decimal("3.4")],
+        )
+        self.assertEqual([r["request_count"] for r in rows], [1, 1, 1])
+        self.assertEqual([r["cache_read_tokens"] for r in rows], [100, 100, 100])
+        self.assertEqual([r["total_tokens"] for r in rows], [111, 111, 111])
+        self.assertEqual(totals(rows)["amount"], Decimal("0.00048"))
 
     def test_unpriced_request_does_not_borrow_current_tariff(self):
         source = dict(

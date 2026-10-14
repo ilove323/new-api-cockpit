@@ -6,6 +6,7 @@ Read-only PostgreSQL integration test; a CTE shadows logs with synthetic rows.
 import json
 import os
 import unittest
+from decimal import Decimal
 import psycopg
 from psycopg.rows import dict_row
 from new_api_cockpit.report import FAILURE_SQL, SQL
@@ -69,7 +70,7 @@ class UsageSQLTest(unittest.TestCase):
         cases = [
             ("gpt", None, 100, 20, 30, 10, 60, 120),
             ("claude-native", "anthropic", 100, 20, 30, 10, 100, 160),
-            ("claude-converted", "openai", 100, 20, 30, 10, 100, 160),
+            ("claude-openai", "openai", 100, 20, 30, 10, 100, 160),
             ("alias", "anthropic", 100, 20, 30, 10, 60, 120),
             ("glm", None, 100, 20, 30, 10, 60, 120),
             ("deepseek", None, 100, 20, 30, 10, 60, 120),
@@ -132,7 +133,10 @@ class UsageSQLTest(unittest.TestCase):
             self.assertEqual(row["output_tokens"], c * 3)
             self.assertEqual(row["total_tokens"], total * 3)
             self.assertEqual(float(row["group_ratio"]), 3.4)
-            self.assertEqual(row["ratio_count"], 2)
+            self.assertEqual(
+                {Decimal(b["group_ratio"]) for b in row["tier_usage"]},
+                {Decimal("3"), Decimal("3.4")},
+            )
 
     def test_optional_token_dimension_keeps_same_names_separate(self):
         fixtures = [

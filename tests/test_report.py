@@ -20,7 +20,6 @@ from new_api_cockpit.report import (
     totals,
     rankings,
     TOKEN_FIELDS,
-    convert_tokens,
     load_site_name,
     cost_formula,
     merge_failures,
@@ -65,7 +64,7 @@ class ReportTest(unittest.TestCase):
             [],
         )
 
-    def test_expression_amount_and_usage_not_reconciled(self):
+    def test_expression_amount_and_usage_preserved(self):
         original = dict(
             user_id=2,
             username="a",
@@ -77,7 +76,6 @@ class ReportTest(unittest.TestCase):
             cache_read_tokens=40,
             cache_write_tokens=30,
             pricing_input_tokens=10,
-            ratio_count=2,
             group_ratio=Decimal(4),
             amount=Decimal("1.25"),
         )
@@ -118,7 +116,6 @@ class ReportTest(unittest.TestCase):
             cache_read_tokens=0,
             cache_write_tokens=0,
             group_ratio=Decimal(4),
-            ratio_count=1,
             amount=Decimal("0.022024"),
         )
         formula = cost_formula(row)
@@ -194,7 +191,6 @@ class ReportTest(unittest.TestCase):
             cache_read_tokens=15,
             cache_write_tokens=0,
             total_tokens=345,
-            ratio_count=2,
             group_ratio=Decimal(1),
             amount=Decimal("0.006"),
             tier_usage=buckets,
@@ -246,7 +242,6 @@ class ReportTest(unittest.TestCase):
             cache_read_tokens=3968,
             cache_write_tokens=0,
             total_tokens=4455,
-            ratio_count=1,
             group_ratio=Decimal("3.4"),
             amount=Decimal("0.037258"),
             tier_usage=[
@@ -283,7 +278,7 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(row["amount"], Decimal("0.037258"))
 
         # An obsolete name must not become its own row: it joins the current
-        # low tier, while other current tiers and missing names remain separate.
+        # low tier at the same recorded ratio. Other ratios remain separate.
         merged_source = deepcopy(source)
         original = source["tier_usage"][0]
         merged_source["tier_usage"] = [
@@ -325,14 +320,18 @@ class ReportTest(unittest.TestCase):
         merged_source["amount"] = Decimal("0.217258")
         merged_source["failure_count"] = 1
         rows = decorate([merged_source], options)
-        self.assertEqual([r["tier_name"] for r in rows], ["0_272k", "272k_plus", "-"])
-        low = rows[0]
-        self.assertEqual(low["request_count"], 3)
-        self.assertEqual(low["total_tokens"], 13365)
-        self.assertEqual(low["amount"], Decimal("0.127258"))
-        self.assertEqual(low["group_ratio"], Decimal(2))
-        self.assertEqual(low["ratio_count"], 2)
-        self.assertEqual(len(low["cost_formula"]["buckets"]), 2)
+        self.assertEqual(
+            [r["tier_name"] for r in rows], ["0_272k", "0_272k", "272k_plus", "-"]
+        )
+        low = rows[1]
+        self.assertEqual(rows[0]["group_ratio"], Decimal(2))
+        self.assertEqual(rows[0]["request_count"], 1)
+        self.assertEqual(rows[0]["amount"], Decimal("0.05"))
+        self.assertEqual(low["request_count"], 2)
+        self.assertEqual(low["total_tokens"], 8910)
+        self.assertEqual(low["amount"], Decimal("0.077258"))
+        self.assertEqual(low["group_ratio"], Decimal("3.4"))
+        self.assertEqual(len(low["cost_formula"]["buckets"]), 1)
         combined = low["cost_formula"]["buckets"][0]
         self.assertEqual(combined["request_count"], 2)
         self.assertEqual(combined["input_tokens"], 868)
@@ -346,10 +345,11 @@ class ReportTest(unittest.TestCase):
             "用户模型用量"
         ]
         self.assertEqual(
-            [ws[f"E{n}"].value for n in (3, 4, 5)], ["0_272k", "272k_plus", "-"]
+            [ws[f"E{n}"].value for n in (3, 4, 5, 6)],
+            ["0_272k", "0_272k", "272k_plus", "-"],
         )
-        self.assertEqual(ws["C3"].value, 3)
-        self.assertEqual(ws["P3"].value, float(Decimal("0.127258")))
+        self.assertEqual(ws["C4"].value, 2)
+        self.assertEqual(ws["P4"].value, float(Decimal("0.077258")))
 
     def test_cost_formula_decimal_and_difference(self):
         row = dict(
@@ -363,8 +363,6 @@ class ReportTest(unittest.TestCase):
             write_price=Decimal("2.5"),
             group_ratio=Decimal(3),
             amount=Decimal("13"),
-            ratio_count=2,
-            converted_cache_read_tokens=None,
         )
         result = cost_formula(row)
         self.assertEqual(result["calculated"], Decimal("12.93"))
@@ -373,8 +371,6 @@ class ReportTest(unittest.TestCase):
         self.assertIsNone(cost_formula(row)["calculated"])
         row["input_tokens"] = 0
         self.assertEqual(cost_formula(row)["calculated"], Decimal("6.93"))
-        row["converted_cache_read_tokens"] = 0
-        self.assertTrue(cost_formula(row)["converted"])
 
     def test_site_name_database_and_fallback(self):
         with patch("new_api_cockpit.report.psycopg.connect") as connect:
@@ -625,94 +621,6 @@ class ReportTest(unittest.TestCase):
             self.assertEqual(ws[f"{col}5"].value, f"=SUM({col}3:{col}4)")
         self.assertEqual(ws.max_column, 16)
         self.assertNotIn("计价非缓存输入Token", [c.value for c in ws[2]])
-        self.assertNotIn("折算状态", [c.value for c in ws[2]])
-
-    def test_merged_conversion_used_consistently(self):
-        original = dict(
-            user_id=2,
-            username="converted",
-            model_name="gpt",
-            request_count=2,
-            total_tokens=10000,
-            input_tokens=10000,
-            output_tokens=0,
-            cache_read_tokens=10000,
-            cache_write_tokens=0,
-            pricing_input_tokens=0,
-            ratio_count=2,
-            group_ratio=Decimal("3.4"),
-            amount=Decimal(".032"),
-        )
-        options = {"ModelRatio": {"gpt": 1}, "CacheRatio": {"gpt": 0.5}}
-        row = decorate([deepcopy(original)], options)[0]
-        self.assertEqual(row["total_tokens"], row["converted_total_tokens"])
-        self.assertEqual(row["cache_read_tokens"], row["converted_cache_read_tokens"])
-        self.assertEqual(row["original_total_tokens"], 10000)
-        self.assertEqual(row["original_cache_read_tokens"], 10000)
-        self.assertIsInstance(row["cache_read_tokens"], int)
-        self.assertIsInstance(row["total_tokens"], int)
-        self.assertEqual(row["cache_read_tokens"], 9412)
-        self.assertEqual(totals([row])["total_tokens"], row["total_tokens"])
-        self.assertEqual(
-            rankings([row])["user_tokens"][0]["total_tokens"], row["total_tokens"]
-        )
-        ws = load_workbook(export_excel([row], "2026-09-01", "2026-09-01")).active
-        self.assertAlmostEqual(ws["F3"].value, float(row["total_tokens"]))
-        self.assertAlmostEqual(ws["I3"].value, float(row["cache_read_tokens"]))
-        self.assertEqual(ws["F3"].number_format, "#,##0")
-        self.assertEqual(ws["I3"].number_format, "#,##0")
-        self.assertEqual(ws["F2"].value, "总Token")
-        self.assertAlmostEqual(ws["P3"].value, float(row["amount"]))
-        self.assertNotIn("折算总Token", [c.value for c in ws[2]])
-        for count in (1, 3):
-            fallback = decorate([dict(original, ratio_count=count)], options)[0]
-            self.assertEqual(fallback["total_tokens"], 10000)
-        zero = decorate([dict(original, amount=Decimal(0))], options)[0]
-        self.assertEqual(zero["total_tokens"], 0)
-
-    def test_conversion_unique_solution_preserves_original(self):
-        row = dict(
-            ratio_count=2,
-            group_ratio=Decimal("3.4"),
-            amount=Decimal("0.032"),
-            pricing_input_tokens=0,
-            output_tokens=0,
-            cache_write_tokens=0,
-            cache_read_tokens=10000,
-            total_tokens=10000,
-            input_price=None,
-            output_price=None,
-            write_price=None,
-            cache_price=Decimal(1),
-        )
-        convert_tokens(row)
-        self.assertLess(row["converted_cache_read_tokens"], 10000)
-        self.assertEqual(row["cache_read_tokens"], 10000)
-        self.assertEqual(
-            (
-                row["converted_cache_read_tokens"]
-                * row["cache_price"]
-                * row["group_ratio"]
-                / 1000000
-            ).quantize(Decimal(".000001")),
-            row["amount"],
-        )
-        row["group_ratio"] = Decimal(3)
-        convert_tokens(row)
-        self.assertGreater(row["converted_cache_read_tokens"], 10000)
-        self.assertEqual(
-            row["converted_total_tokens"], row["converted_cache_read_tokens"]
-        )
-        for count in (1, 3):
-            row["ratio_count"] = count
-            convert_tokens(row)
-            self.assertIsNone(row["converted_total_tokens"])
-        row.update(ratio_count=2, pricing_input_tokens=100000, input_price=Decimal(10))
-        convert_tokens(row)
-        self.assertIsNone(row["converted_total_tokens"])
-        row["cache_price"] = None
-        convert_tokens(row)
-        self.assertIsNone(row["converted_total_tokens"])
 
     def test_excel_ranking_sheets(self):
         wb = load_workbook(export_excel(self.rows, "2026-07-26", "2026-08-25"))

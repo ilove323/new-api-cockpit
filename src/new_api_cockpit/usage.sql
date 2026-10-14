@@ -68,7 +68,6 @@ WITH source AS MATERIALIZED (
     SELECT user_id, username, token_id, token_name, model_name,
         BOOL_OR(metadata_invalid) AS metadata_invalid,
         SUM(request_count) AS request_count,
-        COUNT(DISTINCT group_ratio) AS ratio_count,
         SUM(raw_input_tokens) AS raw_input_tokens,
         SUM(input_tokens) AS input_tokens,
         SUM(output_tokens) AS output_tokens,

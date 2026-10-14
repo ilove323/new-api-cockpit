@@ -32,7 +32,7 @@ function rowMoneyFormula(row){
     for(const [label,key] of [['输入','input_price'],['输出','output_price'],['缓存读','cache_price'],['缓存写（5 分钟）','write_price']])
       lines.push(`${label}价格：${moneyNumber(f.prices[key])}`);
     for(const b of f.buckets){
-      lines.push(`${b.current_ratio?'当前':'历史'}倍率 ${moneyNumber(b.ratio)} · ${moneyNumber(b.request_count)} 次请求`);
+      lines.push(`请求倍率 ${moneyNumber(b.ratio)} · ${moneyNumber(b.request_count)} 次请求`);
       if(b.terms.length){
         const terms=b.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyNumber(t.price)}`);
         lines.push(`(${terms.join(' + ')}) × ${moneyNumber(b.ratio)} ÷ 1,000,000`);
@@ -42,7 +42,6 @@ function rowMoneyFormula(row){
     lines.push(`试算合计：${f.calculated===null?'无法完整计算':'¥ '+moneyNumber(f.calculated)}`);
     lines.push(`实际消费金额：¥ ${moneyNumber(row.amount)}`);
     if(f.difference!==null)lines.push(`差额（实际 − 试算）：¥ ${moneyNumber(f.difference)}`);
-    if(f.converted)lines.push('历史倍率与当前分组倍率不一致时，缓存读取 Token 按当前价格和倍率数学配平。');
     lines.push('实际金额来自消费日志；逐请求配额取整可能产生微小尾差。');
     return lines;
   }
@@ -78,9 +77,7 @@ function rowMoneyFormula(row){
   lines.push(`计算金额：${f.calculated===null?'无法完整计算（缺少单价或倍率）':'¥ '+moneyNumber(f.calculated)}`);
   lines.push(`实际消费金额：¥ ${moneyNumber(row.amount)}`);
   if(f.difference!==null)lines.push(`差额（实际 − 计算）：¥ ${moneyNumber(f.difference)}`);
-  lines.push('计算使用当前单价和倍率；实际金额来自消费日志汇总。');
-  if(f.converted)lines.push('缓存读使用数学折算后的整数，四舍五入可能产生尾差。');
-  else if(f.ratio_count>1)lines.push('区间存在多种历史倍率，按当前显示倍率重算可能与实际金额不同。');
+  lines.push('试算使用展示单价和日志倍率；实际金额来自消费日志汇总。');
   return lines;
 }
 function totalMoneyFormula(rows,total){

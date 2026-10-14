@@ -1,16 +1,16 @@
 # API 参考
 
 Cockpit 的业务接口统一放在 `/cockpit/api/`，与页面共用站点入口。
-用户、令牌、配额、规则、报表和操作记录接口支持 **New API 管理员 PAT** 调用，
-网页通过 New API 登录会话调用同一套业务接口。
+报表、渠道质量、智力测试、模型使用、生图工作站、用户、令牌、配额、规则和操作记录接口支持 **New API 管理员 PAT** 调用。
+网页通过 New API 登录会话调用同一套接口；模型使用、智力测试和生图工作站向所有启用用户开放，其余管理功能要求管理员。
 
-- 页面：`/cockpit/statistics/`、`/cockpit/users/`、`/cockpit/keys/`、`/cockpit/operations/`。
-- API：`/cockpit/api/statistics/...`、`/cockpit/api/users/...`、`/cockpit/api/keys/...`、`/cockpit/api/operations`。
+- 页面地址见 [README](../README.md#功能)。
+- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`manual`、`image-studio`、`users`、`keys`、`operations` 模块。
 - 独立余额和报警：`/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert`。
 - New API 自己的 `/api/...` 不属于本项目，仍由 New API 处理。
 
 登录后在 `/cockpit/docs/` 可查看交互式文档并试调用，使用方法见[交互式文档](interactive-api.md)。
-`GET /cockpit/api/openapi.json` 返回 OpenAPI 3.1 描述，接受管理员 PAT 或浏览器会话，不访问业务数据。
+`GET /cockpit/api/openapi.json` 返回 OpenAPI 3.1 描述，接受管理员 PAT 或管理员浏览器会话，不访问业务数据。
 
 Nginx 转发完整 `/cockpit/` 前缀，覆盖页面、API 和静态资源。
 
@@ -37,6 +37,7 @@ PAT 不放在 URL、请求体或 Cookie，也不需要写入 Cockpit 的 `.env`�
 显式 Bearer 优先于 Cookie，凭据无效时不会回退到另一个登录身份。
 统计模块的 `/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert` 仅接受管理员 PAT。
 会话桥接 `/cockpit/api/auth/session` 用于网页登录，不接受 PAT 换取网页登录 Cookie。
+`/cockpit/api/manual/`、`/cockpit/api/intelligence/`、`/cockpit/api/image-studio/` 接口允许启用的普通用户会话或访问 JWT，仅针对当前账号；使用管理员 PAT 时也不能指定其他用户。
 不开放跨域 CORS；服务器、脚本直接调用不需要 `Origin`。浏览器写请求的来源必须与站点一致。
 
 下文示例假定调用环境已安全注入 `ADMIN_PAT`，只需设置站点地址：
@@ -59,10 +60,15 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | 定时规则新增、编辑、启停、删除 | `X-Quota-Action: schedule` |
 | 报表详情、余额设置、历史追溯、手工检查、通知设置与测试 | `X-Statistics-Request: 1` |
 | 浏览器会话承接、清除 | `X-Cockpit-Auth: 1` |
+| 智力测试发起、JSON HTML 预览 | `X-Intelligence-Request: 1` |
+| 模型使用：按令牌读取模型、读取 KEY | `X-Cockpit-Manual: 1` |
+| 生图工作站：模型目录、生成、编辑 | `X-Cockpit-Studio: 1` |
 
 确认头只是防误操作和跨站表单的校验，**不表示幂等**。
 用户/KEY/额度写操作必须配置监控库保存审计，未配置时不能执行。
 浏览器请求另外携带 `X-Cockpit-Session` 防止旧页面误操作；PAT 调用不需要该头。
+图片编辑使用 `multipart/form-data`，不是 JSON；浏览器发送 FormData 时由浏览器生成 Content-Type 和 boundary。
+生成/编辑属于真实计费写操作，交互式客户端须明确确认且不得自动重放；文档调试器不开放这两个接口的试运行。
 
 ### 数据类型与错误
 
@@ -81,11 +87,11 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 |---|---|
 | 400 | 参数、金额、字段或业务条件不合法；检查错误信息 |
 | 401 | 缺少或无效凭据；PAT 账号不符合管理员条件时也返回此状态。响应含 `WWW-Authenticate: Bearer` |
-| 403 | 当前身份无目标操作权限、会话不是可用管理员，或缺少确认头/来源不匹配 |
+| 403 | 当前功能要求管理员、账号不可用、无目标操作权限，或缺少确认头/来源不匹配 |
 | 404 / 405 | 路径不存在 / 方法不支持 |
 | 409 | 设置版本、预览、会话或执行状态冲突；重新读取并核对，不要盲目重试 |
 | 410 | 报表详情快照过期或不属于当前账号/账本；重新查询列表 |
-| 413 | 会话桥接请求超过大小上限 |
+| 413 | 请求体超过接口的大小上限，包括会话桥接、测试参数和预览 HTML |
 | 502 | 上游写请求结果不明确，可能已经生效；部分接口含 `uncertain: true` |
 | 503 | 数据库、认证服务或必要表结构不可用，或余额数据不可用 |
 | 504 | 数据库查询超时；缩小统计区间 |
@@ -121,6 +127,15 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | `GET` | `/cockpit/api/statistics/balance/channel` | 读取指定通知渠道的配置与状态 |
 | `PUT` | `/cockpit/api/statistics/balance/channel` | 保存指定通知渠道的配置与开关 |
 | `POST` | `/cockpit/api/statistics/balance/channel/test` | 发送测试通知 |
+| `GET` | `/cockpit/api/quality/summary` | 渠道质量、性能健康与筛选选项 |
+| `GET` | `/cockpit/api/quality/trends` | 渠道质量、小时趋势和历史价格 |
+| `GET` | `/cockpit/api/intelligence/models` | 可测试模型及自动分组 |
+| `POST` | `/cockpit/api/intelligence/test` | 同步鹈鹕骑车测试，真实计费 |
+| `POST` | `/cockpit/api/intelligence/preview` | 当前 HTML 的沙箱预览，不调用模型 |
+| `GET` | `/cockpit/api/image-studio/tokens` | 本人 GPT KEY 脱敏摘要 |
+| `POST` | `/cockpit/api/image-studio/models` | 所选 KEY 的模型、操作能力与参数，不生成内容 |
+| `POST` | `/cockpit/api/image-studio/generations` | 同步文生图，真实计费 |
+| `POST` | `/cockpit/api/image-studio/edits` | multipart 图片编辑，真实计费 |
 | `GET` | `/cockpit/api/users` | 用户与配额列表 |
 | `GET` | `/cockpit/api/users/{user_id}` | 用户资料详情 |
 | `GET` | `/cockpit/api/users/{user_id}/groups` | 用户可切换的组 |
@@ -255,15 +270,14 @@ curl --fail-with-body --get "$BASE_URL/cockpit/api/statistics/usage" \
 | token_id / token_name | 分令牌时为实际 ID/名称，汇总时为 0/空字符串 |
 | request_count | 消费请求数，不含失败请求 |
 | total_tokens / input_tokens / output_tokens / cache_read_tokens / cache_write_tokens | 展示口径用量；无法确认时可为 null，不以零替代损坏的元数据 |
-| original_cache_read_tokens / original_total_tokens | 配平前原始值；无法还原时可为 null |
-| group_ratio | 展示/试算使用的当前分组倍率，十进制字符串；配置无法确定时可为 null |
+| group_ratio | 请求日志记录的分组倍率，十进制字符串；无法确认时可为 null |
 | input_price / output_price / cache_price / write_price | 请求价格，元/百万 Token，字符串或 null；缓存写按 5 分钟档 |
 | amount | 日志实际消费，十进制字符串，不用当前价格覆盖历史账单 |
 | failure_count / failure_codes | 勾选失败查询时提供；例如 `3` / `{"429":2,"502":1}`，无法解析错误码为 `未知` |
 | cost_formula | 完整公式对象，含 `calculated`、`actual`、`difference` 等详情；lazy 模式通过详情接口取 |
 
-相同用户、模型、价格（以及分令牌模式的令牌）合并，倍率本身不分行。
-倍率与当前分组倍率不一致时按当前价格配平缓存，这是数学换算，不是原始流量重写。
+相同用户、模型、价格、日志分组倍率（以及分令牌模式的令牌）合并，不同价格或倍率分别成行。
+所有日期的 Token 用量取日志统计值，倍率不随当前分组配置改变。
 缺少可靠历史价格时单价可能为空，金额仍保留；完整口径见[统计口径](calculation.md)。
 同一模型分成多条价格行时，不要把同组失败次数在每行重复累加。
 
@@ -696,3 +710,202 @@ curl --fail-with-body --get "$BASE_URL/cockpit/api/operations" \
   返回 `{"ok":true}`；这一步不撤销 New API 会话，网页登录退出另经官方 logout 完成。
 
 PAT 只用于 API 调用，不能通过它打开管理页面或跳过 New API 的网页登录、二次验证。
+
+## 渠道质量接口
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/cockpit/api/quality/summary` | 模型/渠道对比、精确总汇总、筛选选项；不加载小时趋势和历史价格组合 |
+| `GET` | `/cockpit/api/quality/trends` | 同样的结果，加上历史价格、有记录的小时趋势、每行最近最多五个请求 ID 样本 |
+
+均接受管理员 PAT 或现有浏览器会话，只读，不发报警或修改渠道。
+
+| 查询参数 | 说明 |
+|---|---|
+| `start` / `end` | 北京时间日期、分钟或秒；结束秒包含，省略默认近 24 小时；最多 31 天 |
+| `mode` | `channel`（默认）或 `upstream`；按渠道 ID 或渠道当前标签汇总 |
+| `stream` | `all`（默认）、`stream`、`nonstream` |
+| `channel_status` | `enabled`（默认）：只统计 New API 当前启用且未删除的渠道；`all`：包含禁用、已删除和未知渠道的历史 |
+| `latency_scope` | `direct`（默认）、`all`；改变总耗时与平均 token/s 的成功样本，不改变调用/费用总数；旧日志重试不计算速度 |
+| `model` / `user` | 模型、用户名；精确匹配，可重复，最多各 100 个 |
+| `channel_id` / `token_id` | 非负 ID，可重复，最多各 100 个 |
+| `tag` | 按渠道当前标签限定上游；`tag=` 选未分组；省略时展示全部上游，不关联余额账本 |
+
+质量页不切换账本，也不按计费分组或档位筛选。传入 `scope_id`、`group`、`tier` 返回 400；这不影响用量统计接口的对应筛选。
+页面固定使用当前启用渠道明细、全部请求方式和确认无重试的速度样本，不提供这些选项的切换；接口仍支持上表参数。
+页面仅提供模型、渠道筛选，勾选即更新；用户、令牌参数仍可由 API 调用方按需使用。
+操作列只提供“查看日志”。小时趋势、历史价格和请求 ID 样本可通过 `trends` 接口读取。
+渠道状态每次查询重新读取，行明细、汇总、小时趋势、价格详情和筛选选项按同一渠道范围统计。
+响应顶层 `channel_status` 返回所用范围；行中的同名字段仍是 New API 渠道状态数值。该限制不修改源数据，也不改变账务归档和余额统计。
+
+示例：
+
+```bash
+curl --fail-with-body "$BASE_URL/cockpit/api/quality/summary?start=2026-10-09&end=2026-10-09&model=gpt-6-astra" \
+  -H "Authorization: Bearer $ADMIN_PAT"
+```
+
+返回 `rows`、`totals`、`top_models`、`options`、`warnings`、`start_ts`、`end_ts`（排他上界）及更新时间。
+每行包括 `request_count`、`success_count`、`failure_count`、`ignored_count`、`unknown_count`、
+`success_rate`（0～100 或 null）、`failure_codes`、`duration_p50_ms` / `duration_p95_ms`、
+`frt_p50_ms` / `frt_p95_ms`、`avg_duration_ms`、`avg_tokens_per_second`、有效样本数、覆盖率和 `amount`（十进制字符串）。
+平均延迟 = `duration_total_ms / duration_samples`，范围与总耗时分位数一致；无有效样本为 null，不平均渠道均值。
+`top_models` 按当前时间与筛选，合并同模型所有渠道的调用次数后排序，最多六个，返回模型名、请求/成功/失败次数和重新计算的成功率。
+性能健康直接使用同一响应的 `totals.success_rate`、`totals.avg_duration_ms`、`totals.avg_tokens_per_second` 与 `top_models`。
+页面不展示背景提示列表，`warnings` 仍供 API 调用方使用，查询失败仍返回相应错误状态。
+平均 token/s = `tps_output_tokens * 1000 / tps_duration_ms`（含首字等待，不是纯生成速度）；
+`tps_samples` 是参与计算的成功调用数，`tps_coverage` 是占成功调用的百分比。三项汇总只包含同批有效样本：输出 Token 和耗时均为正、可归属到最终消费渠道。
+无有效样本时两项合计为 0，平均速度为 null；上游、总汇总和小时趋势均重新累计后求比值，不平均已有速度。
+旧日志无法拆开重试耗时的调用不参加速度计算；输入和缓存 Token 不参加。
+`unique_requests` 是关联请求 ID 的去重数，总汇总独立计算，不能相加各行值。
+`trends` 中的 `pricing_buckets` 列历史价格、倍率、分组、档位、消费记录数与日志金额；单价缺失时为 null。
+`summary` 不计算价格组合，`pricing_buckets` 为空、`price_bucket_count` 为 0，不表示没有历史价格。
+
+缺失指标为 null，不是 0。质量分类不改变费用，客户端取消、违禁计费记录与结果未知不在成功率分母；明确的 400 等业务拒绝计入失败。
+`failure_codes` 优先使用尝试事件或同请求/渠道/尝试的错误日志 HTTP 状态码；未记录错误码的流式失败以 `流式失败（未记录错误码）` 为键。
+页面不展示排除/未知列，API 仍保留相应计数。
+路由信息不充分、日志关闭或已删除时，不能保证完整可用率。
+超过 1000 个模型/渠道组合、异常 JSON 回退超过上限返回 503；查询超时返回 504，缩小时间或筛选范围后再查。
+详细规则见[渠道质量](quality.md)。
+
+## 智力测试接口
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/cockpit/api/intelligence/models` | 查询当前用户可测试模型、自动分组、文本端点、固定题目及专用 KEY 名称；不补建 PAT/KEY |
+| `POST` | `/cockpit/api/intelligence/test` | 同步生成鹈鹕骑车 HTML，正常计费 |
+| `POST` | `/cockpit/api/intelligence/preview` | 当前请求内沙箱预览 HTML，不调用模型、不保存 |
+
+均接受启用用户的有效登录会话或管理员 PAT，不能指定另一用户的身份。普通用户读取官方 `/api/user/models`，使用自己的会话操作测试 KEY，不创建 PAT；管理员继续使用本人 PAT 和受限补建能力。
+测试只接受 `{"model":"模型名"}`，必须携带 `X-Intelligence-Request: 1`；分组与题目由后端决定。
+模型目录的每行包含 `model`、`group`、`available_groups`、`channel_id`、`channel_type`、`endpoint`。
+优先当前用户组，否则按组名排序；组内按渠道优先级降序、ID 升序选择当前启用渠道。
+`endpoint` 只有 `anthropic` 和 `openai`：Anthropic 渠道（`channel_type: 14`）使用 `/v1/messages`，其他使用 `/v1/chat/completions`。
+开始时重新核对可用模型和分组。管理员固定选中的渠道；普通用户不使用指定渠道后缀，由 New API 在所选分组内正常路由，目录中的渠道字段仅用于选择测试协议。不按模型名猜协议，不自动切换协议或重试。
+测试返回 `model`、`group`、`channel_id`、`channel_type`、`endpoint`、`key_name`、`elapsed_ms`、`html`、`source`、`warning`。普通用户请求没有固定实际渠道，响应中的 `channel_id`、`channel_type` 为 null。
+Cockpit 不发送输出 Token 上限参数；Claude 必需的 `max_tokens` 由 New API 的模型配置补齐，实际仍受上游限制。
+`html` 为 null 表示结果不能预览，仍可查看 `source` 与 `warning`；不代表可以原样重试而不计费。
+同一用户并发返回 409，不排队。模型生成最多 180 秒，超时返回 504、`uncertain: true`，不自动重试。
+生成响应没有任务 ID，不提供历史或结果查询接口，刷新页面不能找回。
+
+测试 KEY 名为 `cockpit-智力测试专用`，只在当前用户名下查找或创建，永久保留。
+首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 的额度、到期、启禁与 IP 配置不重置。
+每次自动匹配分组并限定所选模型；KEY 创建/配置写入现有审计，不保存 HTML、PAT 或完整 KEY。
+
+```bash
+curl --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H 'Content-Type: application/json' -H 'X-Intelligence-Request: 1' \
+  --data '{"model":"gpt-6-astra"}'
+```
+
+预览 JSON 只接受 `{"html":"完整 HTML 文档"}`，同样携带确认头，最多 512 KiB，返回 `text/html`。
+响应通过 HTTP CSP 强制沙箱、限制资源和脚本权限。管理页面使用同源会话表单内嵌响应；
+预览响应附加仅回传宽高的尺寸脚本，用于窗口缩放，不改变测试返回的 `html` / `source`。
+表单需要有效 Origin 与匹配的 `session_id`，不接受 PAT 表单替代。
+更完整的使用与限制见[智力测试](intelligence.md)。
+
+## 模型使用（本人令牌）
+
+| 方法 | 地址 | 用途 |
+| --- | --- | --- |
+| `GET` | `/cockpit/api/manual/tokens` | 列出本人令牌，返回 `tokens`、`token_manager_path`；KEY 始终脱敏 |
+| `POST` | `/cockpit/api/manual/models` | 按所选 KEY 查询 `/v1/models`，返回 `models: [{id, protocols}]`，不生成内容、不返回 KEY |
+| `POST` | `/cockpit/api/manual/key` | 明确复制时读取本人模型 KEY，返回 `key`（含 `sk-` 前缀）；响应敏感且禁止缓存 |
+
+启用的普通用户会话可用，管理页面仍要求管理员。管理员 PAT 也只读取该管理员自己的令牌。
+POST 使用 JSON、`X-Cockpit-Manual: 1`，请求体仅接受 `{"token_id": 123}`；最多 1024 字节。
+后台先读取官方本人令牌详情，验证归属、状态、有效期和额度，再调用官方 KEY 读取接口。
+模型目录调用受 KEY 的分组、模型限制和 IP 允许列表约束，不修改设置、不回退到全站目录。
+`protocols` 值为 `chat`、`responses`、`anthropic`；空数组表示上游未声明，不代表全部支持。
+令牌列表最多 2000 个，超过返回 413；令牌不可用返回 409，无归属权限或受 IP 限制返回 403，上游响应无效/不可用返回 502/503。
+KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY 复制，不进入交互式文档调试器，避免在响应面板泄露。
+官方可能记录 KEY 读取审计，但不新增 Cockpit 操作记录。教程与协议地址规则见[模型使用](manual.md)。
+
+## 生图工作站接口
+
+所有启用用户可用，始终限定本人 GPT 分组 KEY。管理员 PAT 也不能代用其他用户。生成/编辑是收费操作，交互式 API 文档不提供试运行。
+
+### GET /cockpit/api/image-studio/tokens
+
+返回 `tokens` 和固定的 `token_manager_path`。令牌摘要包含 `id`、名称、脱敏 KEY、`group: "GPT"`、`usable` 与不可用原因，不返回原始 KEY。
+
+### POST /cockpit/api/image-studio/models
+
+携带 `X-Cockpit-Studio: 1`，发送 `{"token_id": 123}`，请求最多 1024 字节。这一步只读取模型目录，不生成图片。
+
+每项模型返回：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 当前 KEY 授权的精确 gpt-image 型号 |
+| `revision` | 有效路由契约的 64 位十六进制摘要，提交时带回 |
+| `generation` | `null` 或 `{parameters}`，独立的生成参数 |
+| `edit` | `null` 或 `{parameters, local_strategy, max_images, inputs}` |
+| `unavailable_reason` | 没有共同契约时的说明，可省略 |
+
+`local_strategy` 为 `native-mask`、`reference-only` 或 `unavailable`。
+`inputs` 提供当前渠道的 MIME 类型、单图字节/像素、总像素、最长边与宽高比上限；页面会在提交前校验实际导出的主图、指导图和参考图。
+`parameters` 包含 `allowed_fields`、`sizes`、`custom_size`、`qualities`、`formats`、`backgrounds`、`input_fidelity`、`max_images`。按操作使用对应参数，未出现在 `allowed_fields` 中的字段不要发送。
+
+目录按本人模型限制、GPT 启用 abilities、启用渠道、KEY 的 `/v1/models` 准入与显式协议配置求交；同模型所有可能路由使用共同契约。不默认选择型号，不通过收费请求探测能力。
+
+### POST /cockpit/api/image-studio/generations
+
+携带 `X-Cockpit-Studio: 1`，JSON 请求最多 192 KiB，七个顶层字段必填：
+
+```json
+{
+  "token_id": 123,
+  "model": "gpt-image-1",
+  "prompt": "一只站在窗边的橘猫",
+  "parameters": {"size": "1024x1024", "quality": "medium", "output_format": "png"},
+  "request_id": "studio-request-1",
+  "contract_revision": "从模型目录原样读取的 revision",
+  "intent": {"operation": "generate", "has_annotations": false, "reference_roles": []}
+}
+```
+
+上例 `contract_revision` 是说明占位值，实际必须使用目录返回的摘要。
+`token_id` 是 1～2147483647 的整数；`request_id` 是 8～128 个英文字母、数字、下划线或连字符。生成提示词必须非空，最多 32000 字符、不含 NUL。
+
+参数来自 `generation.parameters`。按配置允许时可省略自动值；服务端固定 `n=1`，不接受客户端传入 `n`、上游地址、凭据、渠道、`response_format` 等字段。
+自定义尺寸为 16 的倍数、最长边 3840、比例不超过 3:1、像素 655360～8294400；JPEG 不支持透明背景。`input_fidelity` 不用于生成。
+
+### POST /cockpit/api/image-studio/edits
+
+携带 `X-Cockpit-Studio: 1`，使用 `multipart/form-data`：
+
+| 字段 | 类型与约定 |
+|---|---|
+| `token_id` | 正整数的表单文本，仅一次 |
+| `model` / `prompt` / `request_id` / `contract_revision` | 普通表单文本，各仅一次 |
+| `parameters` | `edit.parameters` 允许的参数对象，JSON 文本 |
+| `intent` | `{operation,has_annotations,reference_roles}` 的 JSON 文本 |
+| `image[]` | 1～4 个真实文件，同名 part 保序：主图、可选指导图、参考图 |
+| `mask` | 仅 `native-mask` 局部修改必填；整图或 `reference-only` 禁止发送 |
+
+`operation` 为 `whole` 或 `local`。`has_annotations` 表示指导图是否有用户标注。每张用户参考图对应一个 `reference_roles` 值：`reference`、`subject`、`style` 或 `composition`。
+
+有指导标注时 `prompt` 可以为空，后台添加固定的编辑说明；没有标注则需要明确的文字要求。
+`reference-only` 局部修改的第二张图必须是同坐标的选区指导图，即使没有标注也需要它；`native-mask` 仅在有标注时追加指导图。图片角色与数量必须一致。
+
+输入只接受 PNG/JPEG/WebP，统一 EXIF 方向，拒绝动画、SVG/HTML 和 URL。主图最多 16 MP、全部输入合计 32 MP；单张最多 8 MiB，总上传含表单和遮罩最多 24 MiB，实际还受契约的更小上限约束。
+原生遮罩小于 4 MB、带 alpha、与第一张工作图同尺寸；alpha 0 表示可修改，255 表示保护。重复标量、额外字段和不匹配尺寸会在付费请求前拒绝。
+
+### 响应与去重
+
+成功返回 `images: [{b64_json,mime,width,height}]`、`model`、`request_id`、`duration_seconds`；上游提供时另有 `usage`、`upstream_request_id`。
+无论供应商返回 Base64 还是经管理员许可的 HTTPS 图片链接，API 最终只返回验证后的图片数据，不暴露临时链接。输出最多 8.5 MP，上游 JSON 最多 48 MiB。
+
+失败返回 `error`、`code`、`uncertain`，以及可用的 `details`：错误类别、HTTP 状态、参数名、安全供应商错误码、上游请求 ID。不会原样回传供应商报文。认证错误可附 `login_url`。
+
+- 契约修订变化返回 `409`，此时未调用模型；重新读取目录并让用户确认新提交。
+- 回执有效期内，同账号相同请求 ID 不再派发，返回 `IMAGE_REQUEST_DUPLICATE`；同 ID 的输入摘要不同返回 `IMAGE_REQUEST_CONFLICT`。默认 TTL 24 小时，到期后不保证幂等。
+- 回执只保存摘要与状态，没有图片、提示词、KEY；无后台任务、结果查询或断线恢复接口。
+- 同用户最多一笔、全站默认两笔，忙时 `429`；监控库或 Redis 回执不可用时 `503`，不降级成本地锁。
+- 连接 10 秒、上传 30 秒、总截止 300 秒。应用不自动重试、不换模型，认证刷新不重放付费 POST。
+- 超时、断网或 `uncertain: true` 表示结果可能已生效；结束等待不取消上游，需人工核对 New API 日志。New API 的下游重试另由其配置决定。
+- 严格局部合成发生在工作站浏览器；直接调用 edits 得到的是模型结果，不承诺选区外像素未变。
+
+操作见[生图工作站](image-studio.md)，能力文件、Redis 与数据库读权限见[部署](deployment.md#生图工作站请求池)。

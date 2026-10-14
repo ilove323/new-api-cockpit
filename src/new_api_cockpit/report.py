@@ -2,7 +2,7 @@
 
 import json
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -87,106 +87,6 @@ FIELDS = [
 ]
 
 
-def convert_tokens(row):
-    """Solve only for cache reads; never overwrite measured usage or money."""
-    row.update(
-        converted_cache_read_tokens=None,
-        converted_total_tokens=None,
-        conversion_status="不折算：非两种倍率",
-    )
-    if row.get("pricing_mode") == "expression":
-        row["conversion_status"] = "不折算：表达式计费不能用单一价格反推用量"
-        return
-    if row.get("ratio_count") != 2:
-        return
-    ratio = row["group_ratio"]
-    cache_price = row["cache_price"]
-    if ratio is None or ratio <= 0 or cache_price is None or cache_price <= 0:
-        row["conversion_status"] = "无法折算：倍率或缓存读价格无效"
-        return
-    fixed = Decimal(0)
-    for token, price in [
-        ("pricing_input_tokens", "input_price"),
-        ("output_tokens", "output_price"),
-        ("cache_write_tokens", "write_price"),
-    ]:
-        count = row.get(token)
-        if count is None or count < 0 or (count and row[price] is None):
-            row["conversion_status"] = "无法折算：单价缺失或计价用量无效"
-            return
-        fixed += Decimal(count) * (row[price] or Decimal(0))
-    cache = (row["amount"] * 1000000 / ratio - fixed) / cache_price
-    total = Decimal(row["total_tokens"]) - row["cache_read_tokens"] + cache
-    if cache < 0 or total < 0:
-        row["conversion_status"] = "无法折算：唯一解为负数"
-        return
-    row.update(
-        converted_cache_read_tokens=cache,
-        converted_total_tokens=total,
-        conversion_status="已折算（非原始用量）",
-    )
-
-
-def convert_historical_row(row):
-    """Reconcile cache per log-price/group bucket only when its ratio changed."""
-    original_cache = row["cache_read_tokens"]
-    converted = False
-    statuses = []
-    for bucket in row["pricing_buckets"]:
-        old_cache = int(bucket["cache_read_tokens"])
-        bucket["display_cache_read_tokens"] = old_cache
-        bucket["display_total_tokens"] = int(bucket["total_tokens"])
-        historical = bucket["historical_group_ratio"]
-        current = bucket["current_group_ratio"]
-        if historical is None or current is None:
-            statuses.append("倍率缺失")
-            continue
-        if historical == current:
-            continue
-        if not bucket["current_match"]:
-            statuses.append("历史价格不匹配当前档位")
-            continue
-        cache_price = row["cache_price"]
-        if current <= 0 or cache_price is None or cache_price <= 0:
-            statuses.append("当前倍率或缓存价格无效")
-            continue
-        fixed = Decimal(0)
-        for count_field, price_field in (
-            ("pricing_input_tokens", "input_price"),
-            ("output_tokens", "output_price"),
-            ("cache_write_tokens", "write_price"),
-        ):
-            count = int(bucket[count_field])
-            price = row[price_field]
-            if count < 0 or (count and price is None):
-                statuses.append("其他计价单价缺失")
-                break
-            fixed += Decimal(count) * (price or Decimal(0))
-        else:
-            solved = (
-                Decimal(str(bucket["amount"])) * 1000000 / current - fixed
-            ) / cache_price
-            if solved < 0 or not solved.is_finite():
-                statuses.append("缓存读取唯一解无效")
-                continue
-            cache = int(solved.quantize(Decimal(1), rounding=ROUND_HALF_UP))
-            bucket["display_cache_read_tokens"] = cache
-            bucket["display_total_tokens"] += cache - old_cache
-            converted = True
-    cache = sum(
-        bucket["display_cache_read_tokens"] for bucket in row["pricing_buckets"]
-    )
-    row.update(
-        converted_cache_read_tokens=cache if converted else None,
-        converted_total_tokens=row["total_tokens"] - original_cache + cache
-        if converted
-        else None,
-        conversion_status="；".join(statuses)
-        if statuses
-        else ("已折算" if converted else "倍率一致"),
-    )
-
-
 def parse_boundary(value, end=False):
     """Accept dates or minute/second timestamps in Beijing time."""
     try:
@@ -259,16 +159,26 @@ def price_details(model, options):
     return {**prices, "pricing_mode": "expression", "price_tiers": tiers or []}
 
 
-def expand_price_rows(rows, options):
-    """Group expression usage by current tier; unknown names join the low tier."""
-    expanded = []
-    usage_fields = [
+def bucket_row(source, buckets, ratio):
+    """Sum logged counters for one price/ratio row, never deriving them from fees."""
+    row = dict(source, tier_usage=buckets, group_ratio=ratio)
+    for field in (
         "request_count",
         "raw_input_tokens",
         "pricing_input_tokens",
         "total_tokens",
         *TOKEN_FIELDS,
-    ]
+    ):
+        row[field] = sum(int(bucket[field]) for bucket in buckets)
+    row["amount"] = sum(
+        (Decimal(str(bucket["amount"])) for bucket in buckets), Decimal(0)
+    )
+    return row
+
+
+def expand_price_rows(rows, options):
+    """Group observed prices and ratios; matching prices retain current tier names."""
+    expanded = []
     for source in rows:
         if source.get("metadata_error_count"):
             expanded.append(
@@ -285,19 +195,28 @@ def expand_price_rows(rows, options):
         tiers = details["price_tiers"]
         usage = source.get("tier_usage") or []
         if usage and all("price_snapshot" in bucket for bucket in usage):
-            expanded.extend(expand_historical_rows(source, details, options))
+            expanded.extend(expand_historical_rows(source, details))
             continue
         if details["pricing_mode"] != "expression" or not tiers or not usage:
-            row = dict(source)
-            row.update(details)
-            row["tier_name"] = "-"
-            if details["pricing_mode"] != "expression":
-                row.pop("tier_usage", None)
-            if tiers:
-                row.update(
-                    {field: low_tier(tiers)[field] for field in PRICE_VARS.values()}
+            grouped = {}
+            for bucket in usage:
+                grouped.setdefault(number(bucket.get("group_ratio")), []).append(bucket)
+            ratios = sorted(
+                grouped, key=lambda ratio: (ratio is None, ratio or Decimal(0))
+            )
+            for index, ratio in enumerate(ratios or [source.get("group_ratio")]):
+                row = (
+                    bucket_row(source, grouped[ratio], ratio) if usage else dict(source)
                 )
-            expanded.append(row)
+                row.update(details, tier_name="-")
+                if tiers:
+                    row.update(
+                        {field: low_tier(tiers)[field] for field in PRICE_VARS.values()}
+                    )
+                if index:
+                    row["failure_codes"] = {}
+                    row["failure_count"] = 0
+                expanded.append(row)
             continue
         by_name = {tier["name"]: tier for tier in tiers}
         low_name = low_tier(tiers)["name"]
@@ -305,44 +224,38 @@ def expand_price_rows(rows, options):
         for bucket in usage:
             recorded = bucket.get("matched_tier") or ""
             name = low_name if recorded and recorded not in by_name else recorded
-            grouped.setdefault(name, []).append(bucket)
+            ratio = number(bucket.get("group_ratio"))
+            grouped.setdefault((name, ratio), []).append(bucket)
         order = {tier["name"]: index for index, tier in enumerate(tiers)}
         keys = sorted(
-            grouped, key=lambda name: (order.get(name, len(tiers)), name == "", name)
+            grouped,
+            key=lambda key: (
+                order.get(key[0], len(tiers)),
+                key[0] == "",
+                key[0],
+                key[1] is None,
+                key[1] or Decimal(0),
+            ),
         )
-        failure_target = "" if "" in grouped else keys[0]
-        for name in keys:
-            buckets = grouped[name]
-            row = dict(source)
+        failure_target = next((key for key in keys if key[0] == ""), keys[0])
+        for key in keys:
+            name, ratio = key
+            buckets = grouped[key]
+            row = bucket_row(source, buckets, ratio)
             row.update(details)
             row["tier_name"] = name or "-"
-            row["tier_usage"] = buckets
-            for field in usage_fields:
-                row[field] = sum(int(bucket[field]) for bucket in buckets)
-            row["amount"] = sum(
-                (Decimal(str(bucket["amount"])) for bucket in buckets), Decimal(0)
-            )
-            row["ratio_count"] = len({str(bucket["group_ratio"]) for bucket in buckets})
-            latest = max(
-                buckets,
-                key=lambda bucket: (
-                    bucket.get("latest_at", 0),
-                    bucket.get("latest_id", 0),
-                ),
-            )
-            row["group_ratio"] = Decimal(str(latest["group_ratio"]))
             tier = by_name.get(name) or low_tier(tiers)
             if tier:
                 row.update({field: tier[field] for field in PRICE_VARS.values()})
-            if name != failure_target:
+            if key != failure_target:
                 row["failure_codes"] = {}
                 row["failure_count"] = 0
             expanded.append(row)
     return expanded
 
 
-def expand_historical_rows(source, details, options):
-    """Group requests by their observed unit prices, mapping matches to today."""
+def expand_historical_rows(source, details):
+    """Keep each observed price/ratio pair separate, regardless of request date."""
     candidates = (
         details["price_tiers"] if details["pricing_mode"] == "expression" else []
     )
@@ -350,7 +263,6 @@ def expand_historical_rows(source, details, options):
         candidates = [
             {"name": "-", **{field: details[field] for field in PRICE_FIELDS}}
         ]
-    current_groups = options.get("GroupRatio", {})
     grouped = {}
     for raw in source["tier_usage"]:
         bucket = dict(raw)
@@ -369,52 +281,36 @@ def expand_historical_rows(source, details, options):
             key = ("unknown", bucket.get("latest_id"))
             display = dict.fromkeys(PRICE_FIELDS)
             tier_name = "-"
-        bucket["historical_prices"] = historical
-        bucket["current_match"] = bool(match)
-        bucket["current_group_ratio"] = number(
-            current_groups.get(bucket.get("group_name"))
-        )
-        bucket["historical_group_ratio"] = number(bucket.get("group_ratio"))
+        ratio = number(bucket.get("group_ratio"))
+        bucket["group_ratio"] = ratio
+        key = (*key, ratio)
         if key not in grouped:
-            grouped[key] = {"tier_name": tier_name, "prices": display, "buckets": []}
+            grouped[key] = {
+                "tier_name": tier_name,
+                "prices": display,
+                "ratio": ratio,
+                "buckets": [],
+            }
         grouped[key]["buckets"].append(bucket)
 
-    usage_fields = (
-        "request_count",
-        "raw_input_tokens",
-        "pricing_input_tokens",
-        "total_tokens",
-        *TOKEN_FIELDS,
-    )
     ordered = sorted(
         grouped.values(),
         key=lambda group: (
             group["tier_name"] == "-",
             group["tier_name"],
             tuple("" if x is None else str(x) for x in price_key(group["prices"])),
+            group["ratio"] is None,
+            group["ratio"] or Decimal(0),
         ),
     )
     result = []
     for index, item in enumerate(ordered):
         buckets = item["buckets"]
-        row = dict(source)
+        row = bucket_row(source, buckets, item["ratio"])
         row.update(details)
         row.update(item["prices"])
         row["tier_name"] = item["tier_name"]
         row["pricing_buckets"] = buckets
-        row["tier_usage"] = buckets
-        for field in usage_fields:
-            row[field] = sum(int(bucket[field]) for bucket in buckets)
-        row["amount"] = sum(
-            (Decimal(str(bucket["amount"])) for bucket in buckets), Decimal(0)
-        )
-        row["ratio_count"] = len(
-            {bucket["historical_group_ratio"] for bucket in buckets}
-        )
-        latest = max(
-            buckets, key=lambda b: (b.get("latest_at", 0), b.get("latest_id", 0))
-        )
-        row["group_ratio"] = latest["current_group_ratio"]
         if index:
             row["failure_codes"] = {}
             row["failure_count"] = 0
@@ -554,7 +450,6 @@ def cost_formula(row):
             ratio=row.get("group_ratio"),
             calculated=calculated,
             difference=row["amount"] - calculated if calculated is not None else None,
-            ratio_count=row.get("ratio_count"),
         )
     terms = []
     ratio = row["group_ratio"]
@@ -579,21 +474,16 @@ def cost_formula(row):
         ratio=ratio,
         calculated=calculated,
         difference=row["amount"] - calculated if calculated is not None else None,
-        converted=row.get("converted_cache_read_tokens") is not None,
-        ratio_count=row.get("ratio_count"),
     )
 
 
 def historical_cost_formula(row):
-    """Explain current-tier reconciliation or unmatched historical-price billing."""
+    """Explain request-time prices and ratios without changing logged usage."""
     prices = {field: row[field] for field in PRICE_FIELDS}
     grouped = {}
     for source in row["pricing_buckets"]:
-        current = source["current_group_ratio"]
-        historical = source["historical_group_ratio"]
-        use_current = source["current_match"] and current is not None
-        ratio = current if use_current else historical
-        read = int(source["display_cache_read_tokens"])
+        ratio = source["group_ratio"]
+        read = int(source["cache_read_tokens"])
         write = int(source["cache_write_tokens"])
         input_count = int(source["pricing_input_tokens"])
         if prices["cache_price"] is None:
@@ -630,11 +520,10 @@ def historical_cost_formula(row):
             if ratio is not None and all(term["weighted"] is not None for term in terms)
             else None
         )
-        key = (ratio, use_current)
+        key = ratio
         if key not in grouped:
             grouped[key] = dict(
                 ratio=ratio,
-                current_ratio=use_current,
                 terms=terms,
                 request_count=int(source["request_count"]),
                 calculated=calculated,
@@ -668,7 +557,6 @@ def historical_cost_formula(row):
         buckets=buckets,
         calculated=calculated,
         difference=row["amount"] - calculated if calculated is not None else None,
-        converted=row["converted_cache_read_tokens"] is not None,
         matched_tier=row["tier_name"] != "-",
     )
 
@@ -679,10 +567,6 @@ def decorate(rows, options):
         row["display_name"] = (row.get("display_name") or "").strip()
         if row.get("metadata_error_count"):
             row.update(
-                converted_cache_read_tokens=None,
-                converted_total_tokens=None,
-                original_cache_read_tokens=None,
-                original_total_tokens=row["total_tokens"],
                 cost_formula=dict(
                     mode="unknown",
                     calculated=None,
@@ -694,31 +578,8 @@ def decorate(rows, options):
             continue
         for field in ["total_tokens", "request_count", *TOKEN_FIELDS]:
             row[field] = int(row[field])
-        if "pricing_buckets" in row:
-            convert_historical_row(row)
-        else:
-            convert_tokens(row)
-        if (
-            "pricing_buckets" not in row
-            and row["converted_cache_read_tokens"] is not None
-        ):
-            cache = int(
-                row["converted_cache_read_tokens"].quantize(
-                    Decimal(1), rounding=ROUND_HALF_UP
-                )
-            )
-            row["converted_cache_read_tokens"] = cache
-            row["converted_total_tokens"] = (
-                row["total_tokens"] - row["cache_read_tokens"] + cache
-            )
         if row.get("pricing_input_tokens") is not None:
             row["pricing_input_tokens"] = int(row["pricing_input_tokens"])
-        # Preserve source values for auditing; use one consistent report basis.
-        for field in ("cache_read_tokens", "total_tokens"):
-            row["original_" + field] = row[field]
-            converted = row["converted_" + field]
-            if converted is not None:
-                row[field] = converted
         row["cost_formula"] = (
             historical_cost_formula(row)
             if "pricing_buckets" in row
@@ -759,7 +620,6 @@ def merge_failures(rows, failures, by_token):
                 token_name=failure["token_name"] if by_token else "",
                 model_name=failure["model_name"],
                 request_count=0,
-                ratio_count=0,
                 raw_input_tokens=0,
                 input_tokens=0,
                 output_tokens=0,
@@ -905,7 +765,6 @@ def load_report(
                     "CacheRatio",
                     "CreateCacheRatio",
                     "ModelPrice",
-                    "GroupRatio",
                     "billing_setting.billing_mode",
                     "billing_setting.billing_expr",
                 ],

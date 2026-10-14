@@ -307,7 +307,7 @@ class AuthTest(unittest.TestCase):
         with upstream({**USER, "role": 1}):
             response = self.client.get("/cockpit/api/users")
             self.assertEqual(response.status_code, 403)
-            self.assertIn("Max-Age=0", response.headers["Set-Cookie"])
+            self.assertNotIn("Set-Cookie", response.headers)
         self.login_cookie()
         response = self.client.post(
             "/cockpit/api/users/quota/apply",

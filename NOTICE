@@ -12,3 +12,31 @@ src/new_api_cockpit/static/fonts/OFL-LICENSE.txt.
 Bundled Scalar API Reference 1.73.1 retains its original MIT license:
 src/new_api_cockpit/static/SCALAR-LICENSE.
 Source: https://github.com/scalar/scalar, package @scalar/api-reference.
+
+Bundled Konva 10.7.1 retains its original MIT license:
+src/new_api_cockpit/static/KONVA-LICENSE.
+Source: https://github.com/konvajs/konva, package konva.
+
+GPT Image Playground sketch and viewport source, and adapted editor/lightbox code:
+Copyright (c) 2026 CookSleep, MIT License.
+Source: https://github.com/CookSleep/gpt_image_playground
+Revision: 1e9d5af60aadd9117a835cc2da43908b8e3370dd
+License: src/new_api_cockpit/static/GPT-IMAGE-PLAYGROUND-LICENSE.
+
+Adapted InvokeAI CanvasCompositorModule.getCompositeCanvas, Apache-2.0 License.
+Copyright 2022-2026 InvokeAI Contributors
+Source: https://github.com/invoke-ai/InvokeAI
+Revision: aa46003581e2c482e03e62116f68ef3c3a6f0233
+License: src/new_api_cockpit/static/INVOKEAI-LICENSE.
+Upstream notice: src/new_api_cockpit/static/INVOKEAI-NOTICE.
+Source files, hashes and modifications: frontend/studio/vendor/sources.json
+and docs/image-studio-sources.md. These components do not change ownership
+of unrelated Cockpit code or incorporate upstream authentication/job services.
+
+TRAE tutorial screenshots retain the original rights of their respective owners;
+they are not relicensed under this project's Apache License.
+Documentation: https://docs.trae.cn/ide_models
+Files: src/new_api_cockpit/static/manual-images/trae-add.webp and trae-manage.webp.
+Original images:
+https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/f2d7930d44a54f42ba53ee3dd406cd59~tplv-goo7wpa0wc-topic.webp
+https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/46a23e003cdb40d899a55e72b555c469~tplv-goo7wpa0wc-topic.webp

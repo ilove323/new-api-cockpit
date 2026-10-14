@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 渠道质量</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <link rel="stylesheet" href="/cockpit/static/quality.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/dropdowns.js"></script>
+  <script defer src="/cockpit/static/quality.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main class="quality-page">
+    <section class="page-panel">
+      <div class="page-heading"><h1>渠道质量</h1></div>
+      <form id="quality-query" class="quality-query">
+        <label>开始时间（北京时间）<input id="quality-start" type="datetime-local" step="1" value="{{ start }}" required></label>
+        <label>结束时间（北京时间）<input id="quality-end" type="datetime-local" step="1" value="{{ end }}" required></label>
+        <button id="quality-submit" type="submit">{{ icon('search') }}查询</button>
+      </form>
+      <div class="table-toolbar quality-presets"><button type="button" data-quality-days="1">近24小时</button><button type="button" data-quality-days="7">近7天</button></div>
+      <p id="quality-status" class="quality-status" role="status" aria-live="polite" hidden></p>
+    </section>
+    <section id="quality-health" class="page-panel quality-health" aria-labelledby="quality-health-title" aria-busy="true">
+      <div class="quality-health-heading"><span class="quality-icon-badge quality-good">{{ icon('heart-pulse') }}</span><h2 id="quality-health-title">性能健康</h2></div>
+      <div class="quality-health-body">
+        <div class="quality-health-metrics">
+          <div class="quality-health-metric"><div class="quality-health-label"><span class="quality-icon-badge quality-good">{{ icon('heart-pulse') }}</span><span>成功率</span></div><strong id="quality-health-success" class="quality-health-value">—</strong></div>
+          <div class="quality-health-metric"><div class="quality-health-label"><span class="quality-icon-badge quality-warn">{{ icon('timer') }}</span><span>平均延迟</span></div><strong id="quality-health-latency" class="quality-health-value">—</strong></div>
+          <div class="quality-health-metric"><div class="quality-health-label"><span class="quality-icon-badge quality-info">{{ icon('gauge') }}</span><span>吞吐量</span></div><strong id="quality-health-throughput" class="quality-health-value">—</strong></div>
+        </div>
+        <h3 class="quality-top-models-title">流量最高的模型</h3>
+        <div id="quality-top-models" class="quality-top-models"></div>
+      </div>
+    </section>
+    <section id="quality-metrics" class="quality-metrics" aria-label="质量汇总"></section>
+    <section class="page-panel">
+      <div class="page-heading"><h2>同模型渠道对比</h2></div>
+      <div id="quality-filters" class="table-toolbar" aria-label="质量筛选"></div>
+      <div class="table-wrap" tabindex="0" aria-label="渠道质量对比表，可横向滚动">
+        <table><thead><tr><th>模型</th><th>渠道 / ID</th><th>请求次数</th><th>成功率</th><th>失败 / 错误码</th><th>首字/总耗时 P50</th><th>首字/总耗时 P95</th><th title="成功请求输出 Token 合计 ÷ 有效耗时合计，包含首字等待">平均 token/s</th><th>日志费用（元）</th><th>操作</th></tr></thead><tbody id="quality-rows"></tbody></table>
+      </div>
+      <div class="quality-pagination"><button id="quality-prev" type="button">上一页</button><span id="quality-page"></span><button id="quality-next" type="button">下一页</button></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -142,7 +142,6 @@ def aggregate(records, by_token, *, failures=False):
                     request_count=0,
                     metadata_error_count=0,
                     amount=Decimal(0),
-                    ratio_count=0,
                     group_ratio=None,
                     total_tokens=None if separate else 0,
                     raw_input_tokens=0,
@@ -215,7 +214,6 @@ def aggregate(records, by_token, *, failures=False):
                 amount=sum((b["amount"] for b in buckets), Decimal(0)),
                 request_count=sum(b["request_count"] for b in buckets),
                 group_ratio=entry["ratio"],
-                ratio_count=len({Decimal(b["group_ratio"]) for b in buckets}),
                 **{field: sum(b[field] for b in buckets) for field in TOKENS},
             )
         )
