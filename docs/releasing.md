@@ -20,7 +20,7 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 2. 通过 PR 合并到 `main` 并通过 CI；准备发布说明，列明功能、升级要求和安全边界。
 3. 创建与版本完全匹配的 `vX.Y.Z` 标签并推送该标签。
 4. `release.yml` 复用 CI，校验版本与标签后构建 AMD64/ARM64 镜像，发布到 GHCR。
-5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、源库 PAT 补建 SQL 和校验和。
+5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、图片协议模板、源库 PAT 补建 SQL 和校验和。
    如维护者已提前创建 Release，工作流只补充或更新附件，不覆盖手写发布说明，也不重复创建 Release。
 6. GitHub Release 正文包含功能、升级、数据库与配置说明，不在当前文档目录积累按版本命名的历史文件。
 
@@ -33,11 +33,21 @@ GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packa
 
 ## 使用预构建镜像
 
-从目标 Release 下载 `compose.release.yml`、`.env.example`、`nginx.conf.example` 和 `SHA256SUMS`，
-配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
+从目标 Release 下载全部部署附件：`compose.release.yml`、`default.env.example`、`nginx.conf.example`、
+`image-studio-capabilities.example.json`、`source_pat_function.sql` 和 `SHA256SUMS`。
+将附件放在同一目录，校验后再复制环境变量模板：
+
+```bash
+sha256sum -c SHA256SUMS
+test -e .env || cp default.env.example .env
+chmod 600 .env
+```
+
+已有安装保留原 `.env`、连接串和密钥，按新模板逐项补充配置，不直接覆盖。
+首次部署配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
 需要补建用户 PAT 时，由源库表所有者安装同一 Release 的 `source_pat_function.sql` 并授权，
 不要将其作为监控库迁移执行；详见[用户与令牌管理](users.md#安装补建函数与最小权限)。
-图片池需要协议文件与源库读权限；模板从同一发布标签的源码取得，按[图片池配置](deployment.md#生图工作站请求池)填写后再启动。
+图片池需要协议文件与源库读权限；使用同一 Release 的协议模板，按[图片池配置](deployment.md#生图工作站请求池)填写并只读挂载后再启动。模板中的示例渠道并非可直接使用的上游配置。
 
 ```ini
 IMAGE_TAG=<与配置模板对应的正式版本>
