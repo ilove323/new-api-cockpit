@@ -2,7 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 
-test('one charged request, sandbox POST preview/replay, safe source text and no refresh history',async()=>{
+async function verifyPreview(cryptoMode){
   const root=path.join(__dirname,'../src/new_api_cockpit');
   const html=fs.readFileSync(path.join(root,'templates/intelligence.html'),'utf8');
   const script=fs.readFileSync(path.join(root,'static/intelligence.js'),'utf8');
@@ -19,6 +19,8 @@ test('one charged request, sandbox POST preview/replay, safe source text and no 
   const elements=new Map([...html.matchAll(/id="([^"]+)"/g)].map(m=>[m[1],new Element()]));
   const forms=[],calls=[],pending=[],events={};let unique=0,authChecks=0;
   const context={document:{getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),body:new Element('body'),querySelector:()=>({content:'fixture-session'}),addEventListener:(name,fn)=>events[name]=fn},window:{addEventListener:(name,fn)=>events[name]=fn,CockpitAuth:{ensure:async()=>{authChecks++;}}},AbortSignal,AbortController,crypto:{randomUUID:()=>String(++unique)},console,fetch:(url,init)=>{calls.push({url,init});return new Promise(resolve=>pending.push(resolve));}};
+  if(cryptoMode==='without-randomUUID')context.crypto={};
+  if(cryptoMode==='without-crypto')delete context.crypto;
   const settle=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
   vm.runInNewContext(script,context);
   assert.equal(calls.length,1);assert.equal(calls[0].url,'/cockpit/api/intelligence/models');
@@ -47,11 +49,13 @@ test('one charged request, sandbox POST preview/replay, safe source text and no 
   assert.equal(frame.style.height,'1200px');
   assert.equal(forms[0].method,'POST');assert.equal(forms[0].action,'/cockpit/api/intelligence/preview');
   assert.equal(forms[0].fields.html,output);assert.equal(forms[0].fields.session_id,'fixture-session');
+  assert.equal(forms[0].target,'cockpit-pelican-1');
   assert.equal(authChecks,1);
   await elements.get('intelligence-replay').fire('click');
   assert.equal(calls.length,2);assert.equal(forms.length,2);
   assert.equal(authChecks,2);
   assert.notEqual(forms[0].target,forms[1].target);
+  assert.equal(forms[1].target,'cockpit-pelican-2');
   const replayFrame=elements.get('intelligence-preview').children[0];
   events.message({source:frame.contentWindow,data:{type:'cockpit-intelligence-size',width:1600,height:1200}});
   assert.equal(replayFrame.style.height,'900px');
@@ -75,9 +79,21 @@ test('one charged request, sandbox POST preview/replay, safe source text and no 
   pending[4]({ok:true,json:async()=>({model:'model-b',group:'b',elapsed_ms:10,html:null,source:'partial source',warning:'输出截断'})});await incomplete;
   assert.equal(elements.get('intelligence-source').hidden,false);assert.equal(elements.get('intelligence-source').textContent,'partial source');
   assert.equal(elements.get('intelligence-effect').disabled,true);assert.equal(elements.get('intelligence-replay').disabled,true);assert.equal(forms.length,2);
+  // New generations and BFCache clears must not reuse earlier preview targets.
+  const next=elements.get('intelligence-test').fire('submit');
+  pending[5]({ok:true,json:async()=>({model:'model-b',group:'b',elapsed_ms:10,html:output,source:output,warning:''})});await next;
+  assert.equal(forms.length,3);assert.equal(forms[2].target,'cockpit-pelican-3');
+  assert.equal(new Set(forms.map(form=>form.target)).size,forms.length);
+  assert.equal(calls.filter(call=>call.url==='/cockpit/api/intelligence/test').length,5);
+  assert.equal(elements.get('intelligence-status').textContent,'生成完成。');
+  assert.equal(unique,0,'Preview target names must not depend on Crypto APIs');
   for(const forbidden of ['localStorage','sessionStorage','indexedDB','/runs','setInterval','innerHTML'])assert.equal(script.includes(forbidden),false);
   assert.equal(html.includes('history'),false);
-});
+}
+
+for(const cryptoMode of ['available','without-randomUUID','without-crypto']){
+  test(`sandbox preview/replay, safe source, no extra generation or history (${cryptoMode})`,()=>verifyPreview(cryptoMode));
+}
 
 test('sandbox dimensions include content clipped above its viewport; no result data leaves it',()=>{
   const script=fs.readFileSync(path.join(__dirname,'../src/new_api_cockpit/static/intelligence-preview.js'),'utf8');

@@ -4,6 +4,8 @@
   if(typeof document==='undefined')return;
   const $=id=>document.getElementById(id);if(!$('intelligence-test'))return;
   let models=[],result=null,busy=false,frame=null,ticket=0,controller=null;
+  // Only names this page's preview frames, never an auth or model request ID.
+  let previewSequence=0;
   let previewWidth=1280,previewHeight=900,previewGrowths=0;
   function fit(){
     if(!frame)return;
@@ -53,7 +55,7 @@
     // Generation may outlast the access token. Refresh before the form POST,
     // without replaying inference or accepting a different login account.
     await window.CockpitAuth.ensure();if(current!==ticket||result?.html!==html)return;
-    frame=document.createElement('iframe');frame.name='cockpit-pelican-'+crypto.randomUUID();frame.title='鹈鹕骑车测试生成的动画';
+    frame=document.createElement('iframe');frame.name='cockpit-pelican-'+(++previewSequence);frame.title='鹈鹕骑车测试生成的动画';
     frame.setAttribute('sandbox','allow-scripts');frame.referrerPolicy='no-referrer';
     previewWidth=1280;previewHeight=900;previewGrowths=0;
     $('intelligence-preview').replaceChildren(frame);
