@@ -274,3 +274,45 @@ Redis 不可用、AOF 写入失败、策略不符时，付费请求在派发前�
 `schema_migrations.version` 记录文件名：新库执行完整链，已有库只执行缺失项。
 不能将已发布迁移合并进 `001` 或重编号；否则已登记旧文件的安装不会获得必要改动。
 新增表结构请追加迁移，升级前备份并停止应用，见[升级](upgrading.md#数据库迁移)。
+
+
+## 可选 AI 助手请求池
+
+聊天默认关闭，不影响现有web/image服务。启用、私有data目录权限、稳定instance ID、只读模型能力文件及可选Compose profile步骤见[AI助手配置](chat.md#配置与可选请求池)。
+chat角色使用同镜像独立8093池，只有它挂载`./data/chat`；不得把数据目录放进镜像或公开为静态资源。
+该角色不执行监控迁移/定时器，readiness不依赖监控库或图片回执Redis；没有新增数据库迁移。
+Nginx仅把`/cockpit/api/chat/`路由给chat池，并关闭SSE缓冲。未启用chat profile时原有默认启动方式保持不变。
+
+## IP 与 SSH 隧道访问
+
+公网部署应使用 HTTPS；可信隔离内网可明确选择 HTTP，并设置 `COCKPIT_COOKIE_SECURE=false`。New API 也需按对应版本配置允许 HTTP 会话 Cookie，否则两套系统不能共用登录。
+HTTP 不加密密码、会话和请求内容，不应直接暴露到公网。
+
+不绑定域名、希望任何 Host 都进入这套服务时，应将其设置为端口的默认站点，而不是限定一个 `server_name`：
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    # 在此放入 nginx.conf.example 中全部 Cockpit location。
+    # 保留精确的图片路由、聊天上传限制和 SSE 设置。
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 360s;
+        proxy_buffering off;
+    }
+}
+```
+
+同一监听地址只能有一个 `default_server`。先备份并屏蔽发行版 `/etc/nginx/nginx.conf` 或 `conf.d` 中原有的默认欢迎站点；只删新站点的 `server_name`，不会取代旧默认站点。
+用 `nginx -t` 检查后重载现有 Nginx，不需要安装第二套 Nginx。
+
+SSH 转发本机端口到服务器 80 后，浏览器 Host 会包含本机名称和端口，代理必须保留 `$http_host`，不能写死为服务器 IP。
+根路径 `/` 是 New API 首页，登录在 `/sign-in`，Cockpit 在 `/cockpit/`，不是把根路径全部改到 Cockpit。
+若怀疑看到旧欢迎页，先核对响应正文/版本头与生效配置，再检查浏览器缓存；不要把响应头的 `Server: nginx` 当成返回欢迎页的证据。

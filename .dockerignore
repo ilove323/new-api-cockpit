@@ -1,8 +1,10 @@
 .env
+/data/
 .env.*
 DEPLOYMENT.private.md
 docker-compose.override.yml
 image-studio-capabilities.json
+chat-capabilities.json
 .venv
 __pycache__
 tests

@@ -25,7 +25,7 @@ test('all original source files and licenses match the fixed repository manifest
   assert.equal(fs.readFileSync(path.join(vendor, 'gpt-image-playground/LICENSE'), 'utf8'), fs.readFileSync(path.join(directory, 'GPT-IMAGE-PLAYGROUND-LICENSE'), 'utf8'));
   assert.equal(fs.readFileSync(path.join(vendor, 'invokeai/LICENSE'), 'utf8'), fs.readFileSync(path.join(directory, 'INVOKEAI-LICENSE'), 'utf8'));
   assert.equal(fs.readFileSync(path.join(vendor, 'invokeai/NOTICE'), 'utf8'), fs.readFileSync(path.join(directory, 'INVOKEAI-NOTICE'), 'utf8'));
-  const html = fs.readFileSync(path.join(root, 'src/new_api_cockpit/templates/studio.html'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'src/new_api_cockpit/templates/image_studio/index.html'), 'utf8');
   assert(html.indexOf('studio-upstream.js') < html.indexOf('studio-canvas.js'));
   assert(html.indexOf('studio-lightbox.js') < html.indexOf('static/studio.js'));
   assert.match(source, /Copyright \(c\) 2026 CookSleep/);

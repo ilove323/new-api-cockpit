@@ -2159,7 +2159,9 @@ def document():
                 }
             }
     ops.extend(studio_ops)
-    paths = {}
+    from .features.chat.openapi import paths as chat_paths
+
+    paths = chat_paths()
     for path, method, spec in ops:
         paths.setdefault(path, {})[method] = spec
     export_response = paths["/cockpit/api/statistics/export"]["get"]["responses"]["200"]
@@ -2216,6 +2218,7 @@ def document():
                 "渠道质量",
                 "智力测试",
                 "生图工作站",
+                "AI助手",
                 "模型使用",
                 "通知渠道",
                 "用户管理",

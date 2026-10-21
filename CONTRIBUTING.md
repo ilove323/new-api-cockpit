@@ -58,6 +58,28 @@ node tests/browser/studio-size-regression.cjs
 
 默认只连本机测试页面、截获响应，不登录生产账号，不收费。
 
+## AI 助手离线回归
+
+聊天与生图的边界检查、HTTP 契约和文件/跨进程测试都包含在前述 `unittest discover` 中；前端回归包含在 `node --test tests/*.cjs` 中。
+未配置独立 PostgreSQL 或 Redis 时，对应环境测试明确跳过，不应临时接入生产库来消除跳过。
+
+聊天重点覆盖本人会话和账号隔离、完整历史分页与崩溃恢复、三协议连续状态、有界文件/公网工具、自动 Memory 的来源与版本保护、上下文压缩，以及 50 MiB 上传与超限拒绝。
+旧模块兼容别名、HTML 解析器回调和 Gunicorn 生命周期钩子均有实际调用，不应仅因缺少直接函数引用而删除。
+
+可选的真实浏览器回归使用本地 Flask 和合成上游；安装 Playwright 后运行：
+
+```bash
+node tests/browser/chat-integration.cjs
+node tests/browser/chat-v2-integration.cjs
+```
+
+默认使用本机 Chrome，可通过 `COCKPIT_BROWSER_EXECUTABLE` 指定 Chromium 路径，或用 `COCKPIT_PYTHON` 指定项目 Python。
+Playwright 必须能通过标准 Node 模块查找找到；单独安装开发工具时，可用 `NODE_PATH` 指向其 `node_modules`，测试不依赖维护者机器的目录。
+脚本自行启动本地网页/聊天池和临时文件目录，不登录真实站点、不使用个人 Chrome 配置、不调用付费模型；结束时清理自身进程和测试数据。
+前者覆盖文件选择自动建聊天、50 MiB 上传/下载一致性和用户隔离；后者覆盖三协议、记忆/压缩、历史与当前界面默认值。
+
+运行镜像使用 Linux/POSIX 的文件锁和本地存储；本机检查通过不等于 Linux 镜像、真实供应商计费或具体站点部署已验收。
+
 智力测试预览的离线浏览器回归：`node tests/browser/intelligence-preview-regression.cjs`。它模拟 HTTP/HTTPS 页面、缺少 `randomUUID`、双标签页、重播和页面恢复，所有模型响应均为虚构数据；使用本机 Chromium 时设置 `COCKPIT_BROWSER_EXECUTABLE`。
 
 通过 Issue 说明问题，通过 PR 提交修改；PR 说明行为变化、验证结果及升级影响。

@@ -4,7 +4,7 @@ from copy import deepcopy
 import json
 import unittest
 
-from new_api_cockpit import image_contracts as contracts
+from new_api_cockpit.features.image_studio import contracts
 
 
 def configuration(strategy="native-mask", *, array_only=False):

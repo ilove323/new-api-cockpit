@@ -1,0 +1,59 @@
+{% extends "chat/_base.html" %}
+{% block scripts %}<script defer src="/cockpit/static/chat/app.js"></script>{% endblock %}
+{% block main %}
+<main class="chat-page" id="chat-root" data-owner-user-id="{{ current_user.id if current_user else '' }}">
+  <div class="page-heading"><h1>AI 助手</h1><a href="/cockpit/chat/settings/">个人设置 · MEMORY / Skills</a></div>
+  <p class="hint">仅显示当前用户自己的聊天。历史与原 KEY 是否存在无关；正文不会保存在浏览器，未发送草稿刷新后丢失。勿粘贴凭据。</p>
+  <p id="chat-status" role="status" aria-live="polite"></p>
+  <fieldset id="chat-selection" class="page-panel chat-global-selection"><legend>模型与模式</legend><div class="chat-controls">
+    <label>本人 KEY<select id="chat-token" disabled><option value="">正在读取…</option></select></label>
+    <button id="chat-model-load" type="button" disabled>载入模型目录</button>
+    <label>模型<select id="chat-model" disabled><option value="">先选择 KEY，再载入模型目录</option></select></label>
+    <label>模式<select id="chat-mode"><option value="chat">普通聊天</option><option value="files">文件与联网</option></select></label>
+  </div></fieldset>
+  <div class="chat-layout">
+    <aside class="page-panel chat-history" aria-label="本人全部聊天">
+      <div class="page-heading"><h2>我的全部聊天</h2><button id="chat-new" type="button">新建</button></div>
+      <button id="chat-list-refresh" type="button" class="button-small">重新加载列表</button>
+      <p id="chat-list-info" class="hint"></p><p id="chat-list-status" role="status"></p>
+      <div id="chat-list" class="chat-list"></div>
+      <button id="chat-more" type="button" hidden>加载更多聊天</button>
+    </aside>
+    <section class="page-panel chat-main" aria-label="聊天内容">
+      <div class="page-heading"><h2 id="chat-title">选择或新建一个聊天</h2><div class="page-actions">
+        <button id="chat-skills-open" type="button" aria-haspopup="dialog" aria-controls="chat-skills-dialog">Skills</button>
+        <button id="chat-recover" type="button" class="button-small" disabled>只读刷新状态</button>
+        <button id="chat-rename" type="button" class="button-small" disabled>重命名</button>
+        <button id="chat-delete" type="button" class="button-small danger" disabled>删除</button>
+      </div></div>
+      <p id="chat-storage-warning" class="warning" hidden></p>
+      <div id="chat-messages" class="chat-messages" aria-label="完整聊天历史"></div>
+      <form id="chat-compose" class="chat-compose">
+        <label for="chat-text">消息<textarea id="chat-text" rows="4" placeholder="输入本轮任务；按发送后正常计费" disabled></textarea></label>
+        <p id="chat-candidate-status" class="warning" role="status" aria-live="polite"></p>
+        <div class="chat-compose-footer"><span id="chat-text-count" class="hint"></span><button id="chat-send" type="submit" disabled>发送 · 正常计费</button><button id="chat-stop" type="button" disabled>请求停止</button></div>
+        <p class="hint">不会自动重发。停止不能撤销已计费请求或已保存文件；刷新仅查询历史与状态，不继续生成。</p>
+      </form>
+    </section>
+    <aside class="page-panel chat-files" aria-label="当前聊天独立文件">
+      <h2>当前聊天文件</h2><p class="hint">上传原件只读，输出保留所有版本，不覆盖原件。文件不跨聊天共享。</p>
+      <label>上传单个文本文件<input id="chat-upload" type="file" aria-describedby="chat-upload-hint chat-file-limits" disabled></label>
+      <p id="chat-upload-hint" class="hint" role="status"></p>
+      <p id="chat-file-limits" class="hint"></p><p id="chat-file-status" role="status"></p>
+      <div id="chat-files-list"></div>
+    </aside>
+  </div>
+  <dialog id="chat-skills-dialog" class="chat-dialog chat-skills-dialog" aria-labelledby="chat-skills-heading">
+    <div class="page-heading"><h2 id="chat-skills-heading">Skills</h2><button id="chat-skills-close" type="button" autofocus>关闭</button></div>
+    <p id="chat-skills-status" role="status" aria-live="polite"></p>
+    <div class="table-toolbar"><span id="chat-context-info" class="hint">正在读取个人设置…</span><button id="chat-context-refresh" type="button" class="button-small">刷新个人设置</button><a href="/cockpit/chat/settings/">管理个人 Skills 库</a></div>
+    <fieldset id="chat-skills"><legend>当前聊天已载入</legend>
+      <p class="hint">载入后在当前聊天持续生效，直到手动移除；刷新或发送消息不会清空。按顺序优先使用，最多 3 个。</p>
+      <ol id="chat-skill-order" class="chat-skill-order"></ol>
+      <button id="chat-skills-clear" type="button" class="button-small">清空已载入</button>
+    </fieldset>
+    <h3>个人 Skills 库</h3><div id="chat-skill-choices" class="chat-skill-choices"></div>
+    <p class="hint">载入、移除与排序会立即保存到当前聊天，不修改个人库，也不调用模型。非空 MEMORY / SOUL / IDENTITY 和已载入 Skills 会发送给所选模型服务，不会赋予额外权限；历史上下文快照保持不变。</p>
+  </dialog>
+</main>
+{% endblock %}

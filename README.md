@@ -16,13 +16,15 @@
 给 [New API](https://github.com/QuantumNous/new-api) 补一套统计和管理页面：查用量、对账、设余额告警，
 批量管理用户、令牌和额度，比较渠道质量，也可以测试模型生成动画，或用自己的 GPT KEY 生成和编辑图片。
 页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 账号；管理功能仅对管理员开放，
-普通用户也能使用智力测试、模型使用教程和生图工作站：测试自己的可用模型、生成客户端配置、创作图片。
+普通用户也能使用智力测试、模型使用教程和生图工作站；显式启用 AI 助手后，还可用本人 KEY 聊天、整理私有文件和管理自己的 Skill/Memory。
 在同站点登录过 New API，可以直接进入。
 
 本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，网页与图片请求使用独立容器，
 和 New API 共用 Docker 网络，通过同一 HTTPS 入口访问。
 
 ## 功能
+
+> AI 助手为当前开发分支功能，默认关闭；已发布镜像的功能以对应 Release 为准。源码变化见[变更记录](CHANGELOG.md)。
 
 页面通过侧边栏切换：
 
@@ -32,6 +34,7 @@
 | 渠道质量 | `/cockpit/quality/` | 查看性能健康和高频模型，比较渠道成功率、失败码、首字与总耗时分位数、平均输出 token/s 和费用，跳到对应日志 |
 | 智力测试 | `/cockpit/intelligence/` | 选择模型做鹈鹕骑车测试，直接查看生成的 SVG 动画和 HTML 源码；结果仅留在当前页面 |
 | 生图工作站 | `/cockpit/image-studio` | 使用本人 GPT KEY 创作图片，选区、文字和箭头指导修改，编辑标注并放大比较候选 |
+| AI 助手（默认关闭） | `/cockpit/chat/` | 本人 KEY 三协议聊天、多候选/公开推理、受控联网文件 Agent、完整历史与自适应压缩、Skill/自动 Memory 管理 |
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
@@ -51,7 +54,7 @@ Token 按消费日志统计，倍率显示请求当时的值。
 用户、KEY 和额度的修改需要监控库保存操作记录，只记录已发起的操作。
 管理员管理 KEY 时使用所属用户的 PAT，缺失才通过受限函数补建；普通用户的智力测试使用本人登录会话，不创建 PAT。
 
-页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
+页面使用的业务接口（聊天模块除外）也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
 各模块的地址、参数及调用示例见 [API 参考](docs/api.md)。
 余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
 登录后从侧边栏打开 API 文档即可在线调试，使用方法见[交互式文档](docs/interactive-api.md)。
@@ -150,6 +153,9 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [工作站源码维护](docs/image-studio-sources.md) · [贡献指南](CONTRIBUTING.md)
+- AI 助手：[使用、隔离与配置](docs/chat.md) · [接口与设计](docs/design/ai-assistant-v2/README.md)（默认关闭，需单独配置聊天请求池）
+
+完整分类见[文档导航](docs/README.md)；最新源码变化见[变更记录](CHANGELOG.md)。公共文档不记录具体服务器的部署状态。
 
 问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。
 安全问题见 [SECURITY.md](SECURITY.md)，请勿公开密码、令牌或客户数据。

@@ -48,7 +48,10 @@ jobs:
       - run: ruff check src tests
       - run: ruff format --check src tests
       - run: python -m unittest discover -s tests
-      - run: for file in src/new_api_cockpit/static/*.js; do node --check "$file"; done
+      - run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file" || exit 1
+          done < <(find src/new_api_cockpit/static -name '*.js' -type f -print0)
       - run: npm ci --prefix frontend/studio --ignore-scripts
       - run: npm --prefix frontend/studio run check
       - run: node --test tests/*.cjs

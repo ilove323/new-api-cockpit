@@ -216,7 +216,7 @@ class ImageStudioSchemaTest(unittest.TestCase):
         )
 
     def test_public_input_limits_match_backend_contract(self):
-        from new_api_cockpit.image_contracts import INPUT_LIMITS
+        from new_api_cockpit.features.image_studio.contracts import INPUT_LIMITS
 
         edit = self.schemas["ImageStudioModel"]["properties"]["edit"]["anyOf"][0]
         self.assertIn("inputs", edit["required"])

@@ -36,7 +36,7 @@ New API 的 `user_sessions` 属于上游自身结构。Cockpit 登录不新增�
 
 ## 脚本与管理员 PAT
 
-所有业务接口统一在 `/cockpit/api/` 下，也接受已有 New API 管理员 PAT Bearer。
+业务接口统一在 `/cockpit/api/` 下；除私有聊天模块外，沿用已有 New API 管理员 PAT Bearer。
 模型使用接口只能读取认证账号本人的令牌；智力测试只使用认证账号自己的测试 KEY；生图工作站只使用本人 GPT KEY。管理员 PAT 也不能在这些接口里指定另一用户。
 PAT 每次按原值查询 `users.access_token`，要求管理员账号启用且未删除；不使用模型调用 KEY，不缓存认证结果。
 权限、执行身份及审计来自对应管理员，不接受客户端指定操作者。参数、确认头与错误处理见 [API 参考](api.md)。
@@ -57,3 +57,12 @@ API 文档页面通过浏览器登录打开；页面内调试可用当前会话�
 - HTTPS 下保持 `COCKPIT_COOKIE_SECURE=true`。仅可信 HTTP 开发/内网调试可显式设为 `false`；正式部署不得关闭。
 - 已核对 New API v1.0.0-rc.40 的 JWT 会话协议。接入其他版本时，需确认上述刷新、退出和用户信息接口一致，详见[兼容范围](compatibility.md)。
 - 登录通过官方接口完成，无需数据库会话表或额外授权。源库 PAT 补建用于用户/KEY 管理，与网页登录分别处理。
+
+
+## 私有聊天与个人上下文
+
+AI助手启用后允许所有启用用户访问本人聊天与设置页。`/cockpit/api/chat/` 仅接受官方已验证会话Cookie/访问JWT，拒绝管理员PAT；不因管理员角色授予跨用户权限。
+所有聊天API（包括GET/下载）强制匹配X-Cockpit-Session，写入另需同源和X-Cockpit-Chat:1。显式Bearer不回退Cookie，也不会尝试PAT源库认证。
+正文、附件、运行状态、取消、MEMORY/SOUL/IDENTITY、Skill和历史快照均从当前验证身份的用户ID确定作用域，不接受客户端owner_id。
+每次付费模型请求前重新验证固定的本次会话及本人KEY；账号变化/取消后不继续发起下一次收费请求。
+账号切换会清空浏览器旧内容与Blob，丢弃晚到响应；历史仍按稳定用户ID存储，不绑定session或旧KEY。详情见[AI助手](chat.md)。

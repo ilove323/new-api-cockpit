@@ -28,7 +28,7 @@ async function main() {
     'from flask import render_template,g\nfrom new_api_cockpit.app import app\n'
     + 'with app.test_request_context("/cockpit/image-studio"):\n'
     + ' g.current_user={"id":1,"username":"fixture","role":1,"session_id":"fixture-session","expires_at":4102444800}\n'
-    + ' print(render_template("studio.html",site_name="Studio regression"))'],
+    + ' print(render_template("image_studio/index.html",site_name="Studio regression"))'],
     {cwd:root,env:{...process.env,PYTHONPATH:path.join(root,'src')},encoding:'utf8'});
   assert.equal(rendered.status,0,'Fixture template render failed');
   const catalog = relay ? await relay({kind:'catalog'}) : {

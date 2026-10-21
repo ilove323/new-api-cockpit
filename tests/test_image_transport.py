@@ -23,7 +23,7 @@ import zlib
 
 from PIL import Image, PngImagePlugin
 
-from new_api_cockpit import image_transport as transport
+from new_api_cockpit.features.image_studio import transport
 
 KEY = "fixture-not-a-real-provider-key"
 GENERATION = "/v1/images/generations"
@@ -830,7 +830,7 @@ class ImageResponseTest(unittest.TestCase):
     def test_url_only_has_actionable_code_without_fetching_or_leaking_url(self):
         url = "https://private.invalid/image?signature=" + KEY
         with self.assertLogs(
-            "new_api_cockpit.image_transport", level="WARNING"
+            "new_api_cockpit.features.image_studio.transport", level="WARNING"
         ) as logs:
             error = self.invalid(json.dumps({"data": [{"url": url}]}).encode())
         self.assertEqual(error.code, "IMAGE_URL_ONLY_RESPONSE")

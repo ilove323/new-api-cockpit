@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · {% block title %}AI 助手{% endblock %}</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <link rel="stylesheet" href="/cockpit/static/chat/chat.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/chat/state.js"></script>
+  <script defer src="/cockpit/static/chat/selection.js"></script>
+  <script defer src="/cockpit/static/chat/stream.js"></script>
+  <script defer src="/cockpit/static/chat/api.js"></script>
+  <script defer src="/cockpit/static/chat/render.js"></script>
+  <script defer src="/cockpit/static/chat/files.js"></script>
+  {% block scripts %}{% endblock %}
+</head>
+<body class="app-layout" data-chat-page="{% block page_kind %}chat{% endblock %}">
+  {% from "partials/header.html" import app_header %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  {% block main %}{% endblock %}
+  <dialog id="chat-dialog" class="chat-dialog" aria-label="只读内容"></dialog>
+</body>
+</html>

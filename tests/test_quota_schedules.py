@@ -4,6 +4,7 @@ from session_fixture import fixture_identity, session_auth
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from threading import Event
 import unittest
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,16 @@ class ScheduleTest(unittest.TestCase):
                 self.assertEqual(text.count("  statistics:"), 1)
                 self.assertNotIn("  quota-worker:", text)
                 self.assertNotIn("  balance-worker:", text)
-                self.assertNotIn("profiles:", text)
+                # The optional chat pool must not make the scheduler/web pool
+                # opt-in. Original balance/quota workers remain consolidated.
+                statistics = re.split(
+                    r"\n  [a-z][a-z-]*:\n",
+                    text.split("  statistics:\n", 1)[1],
+                    maxsplit=1,
+                )[0]
+                self.assertNotIn("profiles:", statistics)
+                self.assertEqual(text.count("profiles:"), 1)
+                self.assertIn("  chat:\n    profiles: [chat]", text)
                 self.assertIn("stop_grace_period: 90s", text)
 
     def test_calendar_boundaries_are_strictly_future_and_beijing(self):

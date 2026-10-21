@@ -1,5 +1,8 @@
 # 架构
 
+> 当前开发分支包含默认关闭的 AI 助手，并将聊天/生图业务分别归档到独立功能目录。
+> [设计契约](design/ai-assistant-v2/README.md)与[配置说明](chat.md)保留完整边界；本地实现/离线验证不代表已发布或部署。
+
 ## 运行拓扑
 
 ```text
@@ -24,13 +27,20 @@ image-studio：独立同步请求池
   ├─ 监控 PostgreSQL：跨进程并发锁，不新增工作站表
   ├─ image-studio-receipts：隔离 Redis，短期派发回执
   └─ New API 图片 API：本人 GPT KEY；结果只返回浏览器
+
+可选 /cockpit/api/chat/ 前缀
+        |
+chat：独立有限运行池（默认关闭）
+  ├─ 本机绑定 ./data/chat：每用户/每聊天事件、文件、快照
+  ├─ 每用户个人 MEMORY/SOUL/IDENTITY 与文本 Skill
+  └─ New API 三协议：本人已有 KEY；无新的数据库/Redis
 ```
 
 两个数据库可以位于同一 PostgreSQL 实例，但必须分库配置。
-余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。所有时间边界使用北京时间。
+余额和配额调度由应用内线程运行，使用 PostgreSQL 领导锁协调多个进程。统计/调度时间边界使用北京时间；聊天事件时间为UTC。
 `/cockpit/` 下包含用量统计、渠道质量、智力测试、生图工作站、用户管理、令牌管理、操作记录、API 文档和模型使用，
 共用顶栏与侧边栏；完整页面地址见 [README](../README.md#功能)。
-业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`image-studio`、`users`、`keys`、`operations`、`manual` 模块，
+业务接口统一为 `/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`image-studio`、`chat`、`users`、`keys`、`operations`、`manual` 模块，
 页面与外部程序调用同一套接口和权限，不另建一份外部管理逻辑。
 部署参数见[部署](deployment.md)，视觉规范见[界面](ui.md)。
 
@@ -44,6 +54,7 @@ image-studio：独立同步请求池
 - `/healthz` 核对线程与两种领导锁；配置监控库但未就绪返回 `503`。探活不计算费用、不发送报警、不修改额度。
 - 未配置监控库时只提供查询，不启动定时器；用户、KEY、配额写操作必须有监控库审计。
 - `COCKPIT_PROCESS_ROLE=image` 不执行迁移或调度，仅处理图片生成和编辑；探活检查并发锁和持久回执，不发送模型请求。
+- `COCKPIT_PROCESS_ROLE=chat` 不执行迁移或调度，仅处理显式聊天API及自身探活；网页仍由web提供。SIGTERM取消有界在途运行，不自动恢复收费请求；未知role启动失败。
 
 ## 模块与数据流
 
@@ -55,9 +66,11 @@ image-studio：独立同步请求池
 | `quality.py`、`quality.sql`、`static/quality.js` | 只读渠道尝试去重、当前标签对比、结果分类、性能健康、耗时分位数和历史价格查询 |
 | `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、本人专用 KEY 复用与自适应沙箱预览，不保存结果 |
 | `manual.py`、`static/manual*.js` | 本人令牌和模型查询、九类工具的接入教程、脱敏预览及显式含 KEY 复制，不生成内容或保存凭据 |
-| `personal_tokens.py` | 模型使用与生图工作站共享的本人令牌归属、状态和原始 KEY 获取 |
-| `image_studio.py`、`image_contracts.py` | 版本化路由契约、输入角色编译、权限复核及付费派发 |
-| `image_transport.py`、`image_results.py`、`image_receipts.py` | 单次有界请求、安全图片结果解析和 Redis 去重回执 |
+| `integrations/new_api/`、`platform/` | 注入式本人令牌、模型限制/目录、源库只读连接和已验证身份契约；旧personal_tokens是兼容别名 |
+| `features/image_studio/{service,contracts,source_routes,capacity,http}.py` | 生图独立业务目录与Blueprint、版本化路由契约、输入角色编译、权限复核及付费派发；旧模块兼容别名 |
+| `features/image_studio/{transport,results,receipts}.py` | 单次有界请求、安全图片结果解析和Redis去重回执，原协议/锁号保持不变 |
+| `features/chat/` | 用户隔离的JSONL/commit存储、三协议有限循环、受控文件/联网工具、公开 reasoning/候选、工作检查点、个人文档/Skill及自动 Memory 审计；不引用其他业务模块 |
+| `composition.py` | 宿主组合入口，给平级功能目录注入本人KEY/源库/登录等窄服务，不把业务逻辑搬回宿主 |
 | `static/studio-domain.js`、`studio-request.js`、`studio-results.js` | 编辑规则、冻结提交、候选/版本及 Blob 生命周期 |
 | `static/studio.js`、`studio-canvas.js` | DOM 状态投影、Konva 工具、图层导出与局部像素合成 |
 | `frontend/studio/`、`static/studio-upstream.js` | 固定版本的画板与视图源码、标注擦除和图层合成适配，构建为本地静态资源 |
@@ -108,9 +121,9 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 
 ## 认证与审计
 
-网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，每次会话请求经官方 `/api/user/self` 验证身份和账号状态。管理路由默认要求管理员；普通用户允许模型使用、智力测试、生图工作站及其本人接口、会话桥接和入口重定向，后端使用显式端点白名单。
+网页登录复用 New API 会话；`/cockpit/login` 和静态资源公开，每次会话请求经官方 `/api/user/self` 验证身份和账号状态。管理路由默认要求管理员；普通用户允许模型使用、智力测试、生图工作站、启用后的AI助手及其本人接口、会话桥接和入口重定向，后端使用显式端点白名单。
 浏览器在官方路径刷新 HttpOnly Cookie，再将短期访问凭据交给 Cockpit 保存为 `/cockpit` 范围的 HttpOnly Cookie；会话由 New API 管理。
-业务 API 同时接受管理员 PAT Bearer，每次从源库读取其 ID、用户名及角色并验证启禁状态；
+聊天外的业务 API 同时接受管理员 PAT Bearer，每次从源库读取其 ID、用户名及角色并验证启禁状态；
 余额与报警接口仅接受 PAT。PAT 不能换取网页 Cookie，不能使用客户端指定的身份执行或记录操作。
 敏感写请求检查同源 JSON 与对应请求头；前端不自动重发写请求，账号切换时阻止旧页面继续提交。详见[登录与会话](authentication.md)。
 管理员管理 KEY 使用所属用户 PAT，每次从源库读取，缺失才经受限函数补建；普通用户测试使用自己的会话，不补建 PAT。后端取出的 PAT 不返回浏览器，不写入配置或监控库。
@@ -141,3 +154,12 @@ HTTP 接口为 `/cockpit/api/quality/summary` 和 `/cockpit/api/quality/trends`�
 尺寸测量脚本是随包分发的固定资源，每个应用进程加载一次；生成内容不参与缓存。
 只有 KEY 创建/配置沿用现有操作审计。管理员复用原 PAT 补建能力；普通用户使用自己的已验证会话调用官方令牌接口，不补建 PAT，不增加源库函数、写权限或表。
 接口在 `/cockpit/api/intelligence/` 下，细节见[智力测试](intelligence.md)。
+
+
+## 私有聊天与个人上下文
+
+聊天核心不引用统计、配额、教程、智力测试或生图业务；通过宿主注入已验证身份、本人KEY和会话复核。生图采用同等平级边界，仍保留源库路由检查、监控库并发锁和隔离Redis回执。
+聊天只支持单宿主机本地POSIX目录，owner从服务端用户ID导出，管理员没有跨用户入口；会话事件/文件按cid独立，个人设置显式在同一用户聊天间复用。
+事件先fsync并发布commit高水位再显示；会话索引由本人目录对账，坏记录仍可见。跨进程flock、空间预留、幂等ID和黏性取消阻止并发重复派发；崩溃只能恢复记录为中断，不能重发模型。
+个人文档与 Skill 采用版本 manifest，运行保存不可变快照；文件工具只作用于当前聊天，文件模式可启用受控公网工具。没有 shell 或代码执行；自动 Memory 仅由服务端受控提取与版本检查写入。
+配置、限制及备份见[AI 助手](chat.md)，开发检查见[贡献指南](../CONTRIBUTING.md#ai-助手离线回归)。
