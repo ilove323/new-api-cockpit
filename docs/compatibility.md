@@ -54,4 +54,4 @@ Claude 必需的 `max_tokens` 由 New API 常规转发按配置补齐，请求�
 路由契约额外读取 `channels.type/model_mapping/base_url/setting/settings/param_override/header_override`，只投影必要字段与摘要，不读取渠道 KEY。
 `options` 中仅核对全局透传开关、渠道亲和启用状态及是否存在影响图片的覆盖规则。源列存在却无读取权限时停止派发，不将缺权限当作默认值。
 当前协议编译器按 rc.40 OpenAI adaptor 的重构/透传行为实现，不以 `type=1` 推断图片编辑能力。
-具体输入、响应格式和局部编辑路径由版本化协议档声明；接入其他网关版本前需核对字段转换，见[工作站部署](deployment.md#生图工作站请求池)。
+具体输入、响应格式和局部编辑路径由版本化协议档声明；接入其他网关版本前需核对字段转换，见[工作站部署](existing-installation.md#生图工作站请求池)。

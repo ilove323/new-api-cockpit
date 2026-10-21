@@ -1,0 +1,338 @@
+# Full installation: run from the instance root, not from the source checkout.
+---
+name: new-api
+services:
+  postgres:
+    image: "${POSTGRES_IMAGE:-postgres:16-alpine}"
+    restart: unless-stopped
+    env_file:
+    - "./config/postgres.env"
+    volumes:
+    - "./data/postgres:/var/lib/postgresql/data:Z"
+    - "./source/deploy/full-stack/postgres-init.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro,z"
+    networks:
+    - backend
+    mem_limit: 1g
+    shm_size: 256m
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres -d postgres
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+  redis:
+    image: "${REDIS_IMAGE:-redis:7-alpine}"
+    restart: unless-stopped
+    user: 999:1000
+    env_file:
+    - "./config/redis-health.env"
+    command:
+    - redis-server
+    - "/usr/local/etc/redis/redis.conf"
+    volumes:
+    - "./data/redis:/data:Z"
+    - "./config/redis.conf:/usr/local/etc/redis/redis.conf:ro,z"
+    networks:
+    - backend
+    read_only: true
+    tmpfs:
+    - "/tmp:size=16m,mode=1777"
+    mem_limit: 256m
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+  image-studio-receipts:
+    image: "${REDIS_IMAGE:-redis:7-alpine}"
+    restart: unless-stopped
+    user: 999:1000
+    env_file:
+    - "./config/image-studio-receipts-health.env"
+    command:
+    - redis-server
+    - "/usr/local/etc/redis/redis.conf"
+    volumes:
+    - "./data/image-studio-receipts:/data:Z"
+    - "./config/image-studio-receipts.conf:/usr/local/etc/redis/redis.conf:ro,z"
+    networks:
+    - receipts
+    read_only: true
+    tmpfs:
+    - "/tmp:size=16m,mode=1777"
+    mem_limit: 128m
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+  new-api:
+    image: "${NEW_API_IMAGE:-calciumion/new-api:v1.0.0-rc.40}"
+    restart: unless-stopped
+    env_file:
+    - "./config/new-api.env"
+    command:
+    - "--log-dir"
+    - "/app/logs"
+    volumes:
+    - "./data/new-api:/data:Z"
+    - "./logs/new-api:/app/logs:Z"
+    ports:
+    - 127.0.0.1:3000:3000
+    networks:
+    - backend
+    mem_limit: 1g
+    read_only: true
+    tmpfs:
+    - "/tmp:size=128m,mode=1777"
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O - http://127.0.0.1:3000/api/status | grep -q '"success":true'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+  statistics:
+    image: "${COCKPIT_IMAGE:-new-api-cockpit:full}"
+    restart: unless-stopped
+    env_file:
+    - "./config/web.env"
+    command:
+    - gunicorn
+    - "--bind"
+    - 0.0.0.0:8000
+    - "--worker-class"
+    - gthread
+    - "--workers"
+    - '2'
+    - "--threads"
+    - '2'
+    - "--timeout"
+    - '90'
+    - "--access-logfile"
+    - "-"
+    - new_api_cockpit.app:app
+    ports:
+    - 127.0.0.1:8091:8000
+    networks:
+    - backend
+    - receipts
+    volumes:
+    - "./config/chat-capabilities.json:/app/config/chat-capabilities.json:ro,z"
+    - "./config/image-studio-capabilities.json:/app/config/image-studio-capabilities.json:ro,z"
+    read_only: true
+    tmpfs:
+    - "/tmp:size=64m,mode=1777"
+    mem_limit: 768m
+    pids_limit: 256
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    stop_grace_period: 100s
+    depends_on:
+      new-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      image-studio-receipts:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - "-c"
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=4)
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    build:
+      context: "./source"
+      args:
+        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.12-slim}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
+  image-studio:
+    image: "${COCKPIT_IMAGE:-new-api-cockpit:full}"
+    restart: unless-stopped
+    env_file:
+    - "./config/image.env"
+    command:
+    - gunicorn
+    - "--bind"
+    - 0.0.0.0:8000
+    - "--worker-class"
+    - gthread
+    - "--workers"
+    - '2'
+    - "--threads"
+    - '1'
+    - "--timeout"
+    - '360'
+    - "--access-logfile"
+    - "-"
+    - new_api_cockpit.app:app
+    ports:
+    - 127.0.0.1:8092:8000
+    networks:
+    - backend
+    - receipts
+    volumes:
+    - "./config/chat-capabilities.json:/app/config/chat-capabilities.json:ro,z"
+    - "./config/image-studio-capabilities.json:/app/config/image-studio-capabilities.json:ro,z"
+    read_only: true
+    tmpfs:
+    - "/tmp:size=128m,mode=1777"
+    mem_limit: 1g
+    pids_limit: 256
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    stop_grace_period: 370s
+    depends_on:
+      new-api:
+        condition: service_healthy
+      statistics:
+        condition: service_healthy
+      image-studio-receipts:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - "-c"
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=4)
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    build:
+      context: "./source"
+      args:
+        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.12-slim}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
+  chat:
+    image: "${COCKPIT_IMAGE:-new-api-cockpit:full}"
+    restart: unless-stopped
+    env_file:
+    - "./config/chat.env"
+    command:
+    - gunicorn
+    - "--bind"
+    - 0.0.0.0:8000
+    - "--worker-class"
+    - gthread
+    - "--workers"
+    - '2'
+    - "--threads"
+    - '8'
+    - "--timeout"
+    - '210'
+    - "--access-logfile"
+    - "-"
+    - new_api_cockpit.app:app
+    ports:
+    - 127.0.0.1:8093:8000
+    networks:
+    - backend
+    volumes:
+    - "./config/chat-capabilities.json:/app/config/chat-capabilities.json:ro,z"
+    - "./data/chat:/app/data/chat:Z"
+    read_only: true
+    tmpfs:
+    - "/tmp:size=64m,mode=1777"
+    mem_limit: 1g
+    pids_limit: 256
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    stop_grace_period: 220s
+    depends_on:
+      new-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - "-c"
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=4)
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    build:
+      context: "./source"
+      args:
+        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.12-slim}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
+networks:
+  backend:
+    driver: bridge
+    ipam:
+      config:
+      - subnet: "${APP_SUBNET:-172.28.241.0/24}"
+  receipts:
+    driver: bridge
+    internal: true

@@ -96,7 +96,7 @@ New API 增减接口不提供本功能所需的请求幂等键。因此不能承
 这些表均不存管理员密码或 PAT；执行记录仅保留脱敏结果，不保存远端原始响应。
 
 定时器由主应用的进程生命周期管理，关闭浏览器不影响规则执行。
-配置、健康检查和非 Docker 入口统一见[部署](deployment.md#运行状态检查)与[升级](upgrading.md#数据库迁移)。
+配置、健康检查和非 Docker 入口统一见[已有系统接入](existing-installation.md#运行状态检查)与[升级](upgrading.md#数据库迁移)。
 自定义 Gunicorn 配置须引入 `new_api_cockpit.gunicorn_conf` 的 `post_worker_init`、
 `worker_exit` 和 `graceful_timeout`，不可遗漏定时器启动/退出钩子。
 

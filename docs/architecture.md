@@ -116,7 +116,7 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 | `user_management_operations`、`user_management_operation_items`、`user_management_operation_targets` | 实际操作者、已发起请求审计、预览冻结名单 |
 | `report_snapshots`、`report_snapshot_rows` | 展示公式快照，非账单或余额缓存 |
 
-迁移目录见[数据库初始化与迁移](deployment.md#数据库初始化与迁移)。迁移文件是升级链，不能删除或重编号。
+迁移目录见[数据库初始化与迁移](existing-installation.md#数据库初始化与迁移)。迁移文件是升级链，不能删除或重编号。
 应用只使用上表列出的活动结构；已有库的其他表和数据不因应用升级被自动清空。
 
 ## 认证与审计

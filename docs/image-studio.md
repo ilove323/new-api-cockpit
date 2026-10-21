@@ -80,6 +80,6 @@ New API 自己的上游重试由它的配置决定，不能把 Cockpit 的一次
 - 图片池需要监控库的并发锁及可靠的 Redis 回执存储。任一不可用时拒绝新付费请求，不降级为浏览器锁。
 - 不新增工作站数据库表，不修改迁移历史、现有用户、PAT、KEY 或额度。
 
-具体配置见[部署](deployment.md#生图工作站请求池)，请求字段见 [API](api.md#生图工作站接口)。
+具体配置见[部署](existing-installation.md#生图工作站请求池)，请求字段见 [API](api.md#生图工作站接口)。
 
 画板与预览直接使用 GPT Image Playground 源码，指导图合成移植自 InvokeAI；固定提交、许可证和维护方式见[源码说明](image-studio-sources.md)。New API 登录、本人 KEY、模型权限和请求派发仍沿用 Cockpit。

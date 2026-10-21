@@ -909,7 +909,7 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 - 超时、断网或 `uncertain: true` 表示结果可能已生效；结束等待不取消上游，需人工核对 New API 日志。New API 的下游重试另由其配置决定。
 - 严格局部合成发生在工作站浏览器；直接调用 edits 得到的是模型结果，不承诺选区外像素未变。
 
-操作见[生图工作站](image-studio.md)，能力文件、Redis 与数据库读权限见[部署](deployment.md#生图工作站请求池)。
+操作见[生图工作站](image-studio.md)，能力文件、Redis 与数据库读权限见[部署](existing-installation.md#生图工作站请求池)。
 
 
 ## AI 助手（需显式启用）

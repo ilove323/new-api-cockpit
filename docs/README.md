@@ -4,7 +4,8 @@
 
 ## 安装与维护
 
-- [部署与反向代理](deployment.md)：环境配置、数据库权限、图片池、可选聊天池与 IP / SSH 隧道访问。
+- [从零全量部署](deployment.md)：七个服务、两个数据库、首次授权/账号初始化、IP / HTTPS / SSH 隧道和最小验收。
+- [已有 New API 接入](existing-installation.md)：复用现有数据库/网络，安装 Cockpit 的配置与反向代理。
 - [New API 兼容范围](compatibility.md)：数据库字段、JWT 登录接口及已核对的网关版本。
 - [升级、备份与回退](upgrading.md)：迁移、密钥与数据备份，以及聊天存储的版本兼容。
 - [版本发布与镜像](releasing.md)、[变更记录](../CHANGELOG.md)。

@@ -1,4 +1,4 @@
-# Include inside the existing HTTPS server used by New API.
+# Include inside the same HTTP(S) server used by New API.
 # Forward pages and /cockpit/api/ unchanged. Keep New API's / location as-is.
 location = /cockpit {
     # Let the application choose the landing page from the authenticated role.

@@ -87,6 +87,7 @@ Skill 是单文件提示模板，个人设置中维护模板库；聊天通过�
 ## 配置与可选请求池
 
 聊天使用同一个应用镜像、独立 `COCKPIT_PROCESS_ROLE=chat` 池，默认端口 8093；不运行迁移、余额或配额定时器。
+以下 profile 说明用于[接入已有 New API](existing-installation.md)；[全量部署](deployment.md)使用独立的七服务 Compose，默认已启用聊天池，不需要再合并这套配置。
 Compose 的 chat 是可选 profile，原有默认启动不受影响。聊天池通过环境白名单只接收 New API 内部地址和聊天配置，不继承 `.env` 中的数据库或通知凭据。
 
 在 Compose 所在目录准备仅供此实例使用的本地 POSIX 目录，禁止 NAS/NFS、共享多主机副本或软链接：

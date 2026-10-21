@@ -81,7 +81,10 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 
 ## 部署
 
-准备好 New API、PostgreSQL、Docker Compose，以及 Nginx 或同等反向代理。
+- **新服务器，全量安装 New API 和所有 Cockpit 组件**：按[从零部署手册](docs/deployment.md)执行，包含建库、角色授权、管理员初始化及 IP / HTTPS 入口。
+- **已运行 New API，只接入 Cockpit**：按[已有系统接入](docs/existing-installation.md)执行。
+
+下面的快速步骤属于第二种方式。准备好 New API、PostgreSQL、Docker Compose，以及 Nginx 或同等反向代理。
 New API 需要支持 JWT 登录和刷新接口，数据库字段见[兼容范围](docs/compatibility.md)。
 
 ### 1. 下载与配置
@@ -93,13 +96,13 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-按[部署文档](docs/deployment.md)填写 `.env`：
+按[已有系统接入文档](docs/existing-installation.md)填写 `.env`：
 
 - `PG*`：New API 原库的专用查询账号，授予所需表的 SELECT 权限。
 - `NEW_API_NETWORK`、`NEW_API_INTERNAL_URL`：现有 Docker 网络和 New API 内部地址。
 - `MONITOR_DATABASE_URL`：独立监控库，保存预算、归档、通知配置、定时规则和操作记录。建库方法见[监控库配置](docs/monitoring.md#独立数据库)。留空时提供只读查询。
 - `NOTIFICATION_ENCRYPTION_KEY`：保存通知凭据时填写（飞书、钉钉、邮件认证密码），并与监控库一起备份。
-- 生图工作站：源库查询账号增加 `abilities` 的路由列 SELECT（含 `priority`、`weight`）；图片池使用 `COCKPIT_PROCESS_ROLE=image`，必须配置版本化 `IMAGE_STUDIO_CAPABILITIES_FILE` 和短期 Redis 请求回执。见[图片池配置](docs/deployment.md#生图工作站请求池)。
+- 生图工作站：源库查询账号增加 `abilities` 的路由列 SELECT（含 `priority`、`weight`）；图片池使用 `COCKPIT_PROCESS_ROLE=image`，必须配置版本化 `IMAGE_STUDIO_CAPABILITIES_FILE` 和短期 Redis 请求回执。见[图片池配置](docs/existing-installation.md#生图工作站请求池)。
 
 需要补建用户 PAT 时，由源库表所有者安装 [source_pat_function.sql](sql/source_pat_function.sql)，
 再给查询账号授予函数执行权限，步骤见[用户管理部署](docs/users.md#安装补建函数与最小权限)。

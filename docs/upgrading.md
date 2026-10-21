@@ -4,6 +4,38 @@
 独立的 `image-studio-receipts` Redis 保留原容器和持久卷。本文适用于源码或配套发布镜像。
 当前运行结构见[架构说明](architecture.md)，参数与探活见[部署](deployment.md)。
 
+上述两池流程用于[接入已有 New API](existing-installation.md)的默认 Compose。
+如果是 `/root/new-api` 的七服务全量实例，先按下一节处理；不要把源码目录的 Compose 或发布模板覆盖到实例根目录。
+
+## 全量安装实例的更新
+
+本节仅适用于[全量部署手册](deployment.md)创建的七服务实例。命令在 `/root/new-api` 执行，而不是 `source/`。
+保留实例根目录的 Compose、项目名、`.env`、整个 `config/`、instance ID 和数据目录；不能再次运行 `init-config.py`、管理员初始化或首次建库脚本。
+
+1. 记录当前源码提交及三个 Cockpit 池的镜像，给旧镜像保留单独回退标签。预先核对两个数据库、角色/权限、私有配置及聊天的备份计划。
+2. 获取并核对目标提交，再更新 `source/`。核对该版本对 Compose、角色环境文件和能力文件的要求，按差异合并，不能整套替换随机密钥。更新 `source-commit.txt`；使用新的独立 `COCKPIT_IMAGE` 标签构建 `statistics` 一次，三个池必须引用同一新镜像。先构建好再停机，不改变基础组件的镜像版本。
+3. 在明确的维护窗口排空图片、聊天及管理操作，再停止 `statistics image-studio chat`；不停止或清理 New API、PostgreSQL、两套 Redis。停止写入后备份整个 `data/chat` 和私有配置，并完成数据库 dump；下方示例备份必须非空且能列出内容。
+4. 只重建 `statistics image-studio chat`。先等网页池自动迁移并健康，再启动图片和聊天池。不要运行无服务名的 `down` 或 `up --force-recreate` 波及基础组件。
+5. 按[最小验收](deployment.md#10-最小验收与交付边界)核对登录、迁移和数据保留。聊天回退受本文末尾的事件格式兼容限制；不能用恢复旧备份无提示覆盖升级后新增数据。
+
+数据库备份示例（`STAMP` 和备份目录在同一片段中建立）：
+
+```bash
+cd /root/new-api
+umask 077
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+install -d -m 700 "backups/$STAMP"
+docker compose exec -T postgres pg_dump -U newapi_owner -Fc new_api > "backups/$STAMP/new-api.dump"
+docker compose exec -T postgres pg_dump -U cockpit_monitor -Fc new_api_cockpit > "backups/$STAMP/cockpit.dump"
+docker compose exec -T postgres pg_dumpall -U postgres --roles-only > "backups/$STAMP/roles.sql"
+test -s "backups/$STAMP/new-api.dump" && test -s "backups/$STAMP/cockpit.dump"
+docker compose exec -T postgres pg_restore -l < "backups/$STAMP/new-api.dump" > "backups/$STAMP/new-api.contents.txt"
+docker compose exec -T postgres pg_restore -l < "backups/$STAMP/cockpit.dump" > "backups/$STAMP/cockpit.contents.txt"
+```
+
+角色备份含密码哈希，必须与配置备份同样保护，不写入公共日志或提交到 Git。上面没有备份聊天、配置和 Redis，不能把数据库 dump 当作完整实例备份。
+恢复监控库只影响监控库，不自动撤销已经发生的 New API 配额/KEY 操作或模型费用；恢复源库也必须另行评估业务影响并取得授权。
+
 ## 升级前检查
 
 - 记录当前 Git 提交、两个应用的镜像 ID/tag/digest、Compose 和私有 override；给旧镜像保留独立的回退标签，避免源码构建覆盖同名 tag。
@@ -11,7 +43,7 @@
 - 核对 New API 查询账号能读取[兼容范围](compatibility.md)中的字段；配额操作需可访问管理 API。
 - 确认 New API 支持当前登录协议，浏览器入口同源，后台内部地址可用，见[登录与会话](authentication.md)。
 - 更新应用镜像时同时使用配套 Compose，不把当前源码模板与不包含该实现的发布镜像混用。
-- 备份图片协议文件，确认回执 Redis 健康且持久卷仍在。缺少图片池时，先按[图片池部署](deployment.md#生图工作站请求池)准备配置、权限与回执服务。
+- 备份图片协议文件，确认回执 Redis 健康且持久卷仍在。缺少图片池时，先按[图片池部署](existing-installation.md#生图工作站请求池)准备配置、权限与回执服务。
 - 本文只替换两个应用服务，不对 New API、PostgreSQL 或 Redis 项目执行 `down`，不清理回执或业务数据。
 
 备份监控库（示例库名为 `new_api_cockpit`，应按自己的配置核对）：
@@ -125,7 +157,7 @@ python -m new_api_cockpit.runtime gunicorn --bind 127.0.0.1:8000 new_api_cockpit
 
 ## 可选聊天功能的升级与回退
 
-本地新增代码不会自动升级已发布镜像。采用包含此功能的版本前，按[AI助手配置](chat.md)准备data目录和显式chat profile；不需要新的SQL迁移。
+本地新增代码不会自动升级已发布镜像。采用包含此功能的版本前，按[AI助手配置](chat.md)准备data目录；接入已有 New API 的可选聊天池需显式 chat profile，七服务全量实例不需要 profile；不需要新的SQL迁移。
 保留`data/chat`和稳定instance ID，不随容器清理。升级前停止chat写入并一致备份；重建后分别验证每用户完整聊天列表、失败/中断历史、附件及个人设置仍在。
 chat回退时先停止新提交、取消并收尾在途轮次，停chat服务并隐藏CHAT_ENABLED入口，保留data；旧版本不理解新schema时禁止继续写，不自动降级/清空。
 模型请求断开或超时可能已计费，恢复备份或回退镜像不会撤销费用，也不得自动续跑。旧web/image池与既有监控迁移按原流程处理。
