@@ -1,54 +1,70 @@
 # 从零全量部署 New API 与 Cockpit
 
-本页是**无需聊天上下文的执行手册**。目标是在一台 Linux 服务器上安装 New API、两个 PostgreSQL 数据库、两套 Redis，以及 Cockpit 网页/管理、生图、AI 助手三个请求池，并配置统一 Nginx 入口后登录使用。
+在一台 Linux 服务器上安装 New API 和 Cockpit 的全部组件，完成数据库初始化、Nginx 反向代理和网页登录。
 
-**执行本手册必须已经获得目标服务器的部署授权。文档本身不是操作其他服务器的授权。**
-只需要接入已运行的 New API 时，改用[已有 New API 接入](existing-installation.md)，不要用下面的首次建库流程覆盖现有数据库。
+**默认方案：** `/root/new-api` 安装目录、IP + HTTP/80 访问、复用已安装的 Docker 和 Nginx。所有命令在目标服务器的 root Bash 终端执行；只有 SSH 隧道命令在访问电脑执行。
 
-## 1. 先收集这些输入
+本页用于**全新安装**。已有 New API 使用[接入手册](existing-installation.md)；已有本套实例使用[升级手册](upgrading.md#全量安装实例的更新)。发现已有配置或业务数据时，不执行首次初始化。
 
-没有历史上下文的 AI 应先填写下表，再操作；不要沿用其他聊天里的 IP、跳板机、账号、密码或证书。
+## 部署流程
 
-| 输入 | 要求与默认行为 |
+按第 1～9 节顺序执行，每一步通过“检查点”再继续。第 10 节为可选业务配置，第 11～12 节用于备份和排错。
+
+| 阶段 | 操作 | 完成标志 |
+|---|---|---|
+| [准备](#1-准备部署参数) | 确认连接、资源、端口与安装目录 | 目标正确，依赖可用，无冲突 |
+| [首次配置](#4-获取源码并生成首次配置) | 获取源码，生成本实例配置 | 配置生成成功，密钥未外泄 |
+| [基础组件](#5-启动基础组件) | 启动 PostgreSQL、两套 Redis、New API | 四个服务健康 |
+| [数据库与账号](#6-授权源库并创建管理员) | 授权源库，初始化管理员 | 授权成功，管理员已创建 |
+| [Cockpit](#7-启动全部-cockpit-组件并完成迁移) | 启动网页、图片、聊天三个请求池 | 七个服务健康，迁移齐全 |
+| [网页入口](#8-配置-nginx-统一入口) | 屏蔽欢迎站，配置 Nginx | 语法检查通过，入口指向应用 |
+| [登录](#9-登录与验收) | 从实际使用地址进入两套系统 | New API 与 Cockpit 均可登录 |
+
+代码块中的括号用于隔离 shell 设置；`set -euo pipefail` 使当前步骤遇错即停，不会接着执行后面的命令。失败时按错误恢复当前步骤，不从头重建实例。
+
+## 1. 准备部署参数
+
+开始前确定以下信息。`<尖括号>` 表示需要替换的参数，不应原样执行。
+
+| 参数 | 默认值或填写要求 |
 |---|---|
-| 目标 SSH | 明确目标地址、用户、端口；有跳板机时分别确认两跳身份及指纹。能登录跳板机不等于已到目标服务器 |
-| 安装性质 | 明确是**全新安装**还是已有系统升级/恢复。发现业务数据、现有 Compose 或 PostgreSQL 数据目录时停止首次初始化，转[升级](upgrading.md) |
-| 安装目录 | 默认 `/root/new-api`，源码、配置、应用数据、备份均放这里。系统 Nginx 生效副本及 Docker 引擎自身存储保留系统标准位置 |
-| 访问方式 | 按用户要求选择：可信内网 IP + HTTP/80，或域名/证书 + HTTPS。不要擅自要求域名、签自签证书或改用 443 |
-| Nginx / Docker | 已安装就复用，不能因部署应用而重装、覆盖全局配置或更换镜像源 |
-| 管理员 | 用户提供用户名与密码；密码仅交互输入，不写进文档、命令参数、shell 历史、`.env` 或日志 |
-| 上游渠道 | 真实供应商地址、KEY、精确模型 ID、分组和所支持协议。没有时可以完成安装与登录，但不得宣称模型已能调用 |
-| 生图/聊天能力 | 以实际渠道证据配置；不能从模型名称猜工具、图片编辑或原生压缩能力 |
-| 搜索与通知 | SearXNG、飞书/钉钉/SMTP 为可选外部服务；未提供时保持未配置，不伪造可用状态 |
-| 网络与资源 | 建议至少 8 GiB 内存及 30 GiB 可用磁盘；聊天总额默认 10 GiB。Docker 后端子网必须不与现有路由、VPN 或 Docker 网络冲突 |
+| SSH 连接 | 目标地址、用户、端口；使用跳板机时还需跳板地址、用户及两跳主机指纹 |
+| 安装目录 | `/root/new-api`，首次安装使用空目录；源码、配置、应用数据和备份均保存在这里 |
+| 访问入口 | 默认 `http://<服务器IP>`；也可通过 SSH 隧道访问 `http://localhost:24444` |
+| HTTPS | 仅在采用 HTTPS 时准备访问名及匹配的有效证书、私钥，见第 8 节 |
+| 管理员 | 准备用户名和符合 New API 策略的密码，第 6 节交互输入；不预设默认密码 |
+| Docker 子网 | 默认 `172.28.241.0/24`，必须与主机路由、VPN 和现有 Docker 网络不重叠 |
+| 资源 | 建议至少 8 GiB 内存、30 GiB 可用磁盘；聊天总存储额度默认 10 GiB |
+| 上游与可选服务 | 供应商地址、KEY、模型 ID/协议/分组；搜索、通知参数可在安装完成后配置 |
 
-HTTP 不加密密码和会话，只能用于用户明确选择的可信隔离内网。应用内部的明文通信仅限未发布端口的单机 Docker 网络。
+HTTP 会明文传输密码和会话，仅用于可信隔离内网；非可信网络使用 HTTPS，或通过 SSH 隧道访问。系统 Nginx 的生效配置及 Docker 引擎存储仍保留系统标准位置。
 
-## 2. 组件、端口与数据库职责
+## 2. 了解组件与端口
 
-本方案使用[完整 Compose 模板](../deploy/full-stack/compose.yml)，七个服务**全部启动**；不需要另开 chat profile。
+[完整 Compose 模板](../deploy/full-stack/compose.yml)包含七个服务，默认全部启用，无需 chat profile。
 
-| 服务 | 职责 | 对宿主机发布 |
+| 服务 | 用途 | 宿主机端口 |
 |---|---|---|
 | `postgres` | `new_api` 源库、`new_api_cockpit` 监控库 | 不发布 |
-| `redis` | New API 自身会话/缓存，独立认证 | 不发布 |
-| `image-studio-receipts` | 仅生图短期去重回执，独立认证、AOF always、noeviction | 不发布 |
-| `new-api` | 官方网关、账号、渠道、KEY、原始日志 | `127.0.0.1:3000` |
-| `statistics` | Cockpit 网页/API、统计、用户/KEY/额度、迁移与调度 | `127.0.0.1:8091` |
-| `image-studio` | 同步生图/改图请求池 | `127.0.0.1:8092` |
+| `redis` | New API 缓存，独立认证 | 不发布 |
+| `image-studio-receipts` | 生图去重回执，独立认证、AOF always、noeviction | 不发布 |
+| `new-api` | 网关、账号、渠道、KEY、原始日志 | `127.0.0.1:3000` |
+| `statistics` | Cockpit 网页/API、统计、管理、迁移和调度 | `127.0.0.1:8091` |
+| `image-studio` | 生图/改图请求池 | `127.0.0.1:8092` |
 | `chat` | 私有聊天、文件、Skills / Memory、受控联网 | `127.0.0.1:8093` |
 
-宿主机 Nginx 是唯一网页入口。`/`、`/api/`、`/v1/`、`/sign-in` 发往 New API；`/cockpit/` 发往网页池，图片两个付费端点及聊天 API 按精确规则发往独立请求池。
+Nginx 是统一入口：New API 使用 `/`、`/api/`、`/v1/`、`/sign-in`；Cockpit 使用 `/cockpit/`。图片的两个付费端点及聊天 API 单独转发到对应请求池，其余页面和接口进入网页池。
 
-- `newapi_owner`：只拥有 New API 源库，供 New API 初始化自己的业务表。
-- `cockpit_reader`：源库查询和受限 PAT 补建函数执行，无业务表 `UPDATE`。
-- `cockpit_monitor`：只拥有独立监控库，供 Cockpit 迁移、审计、预算和调度使用。
-- 聊天池没有 PostgreSQL、通知或 New API 会话签名密钥，只挂载本实例的可写聊天目录。
-- 全部功能装好不等于默认执行配额、通知或模型生成；这些需要实际配置和明确操作。
+数据库角色分工如下，不能混用：
 
-## 3. 核对目标和前置条件
+- `newapi_owner`：拥有源库，New API 使用它创建和维护业务表。
+- `cockpit_reader`：仅查询源库和执行受限 PAT 补建函数，不授予业务表 `UPDATE`。
+- `cockpit_monitor`：拥有独立监控库，Cockpit 使用它执行迁移、保存审计与配置。
+- 聊天池不接收数据库、通知或 New API 会话签名密钥，仅挂载本实例的聊天数据。
 
-以下操作均在**目标服务器**执行，使用 root 或等价权限：
+## 3. 检查目标服务器与依赖
+
+先确认当前终端已到目标服务器，而不只是跳板机：
 
 ```bash
 hostname
@@ -62,286 +78,373 @@ ss -lntp
 docker version
 docker compose version
 docker ps -a
-docker network ls
+docker network ls -q | xargs -r docker network inspect \
+  --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
 nginx -v
 nginx -t
 git --version
 ```
 
-再检查已有 Docker 网络的子网与 `/root/new-api` 内容。默认后端子网为 `172.28.241.0/24`；若冲突，后面用 `--subnet` 改为另一空闲的私网 `/24`。
-**不要为腾端口直接停止、删除其他容器、站点或数据库。**
+**检查点：**
 
-本模板使用 Compose 的健康依赖、`--wait` 等特性，要求 Compose plugin 2.27 或更新版本。
-Docker 未安装时按目标发行版使用 [Docker Engine 官方步骤](https://docs.docker.com/engine/install/)及 [Compose plugin 官方步骤](https://docs.docker.com/compose/install/linux/)；不要拿另一发行版的安装命令硬套，也不要执行未经核对的远程安装脚本。
-Docker 已安装但服务未运行时，在确认不影响其他业务后启动并设置开机启动。
+- 当前为正确服务器的 root，安装目录为空，内存与磁盘足够。
+- `3000/8091/8092/8093` 可用；已有 Nginx 占用 80 属正常情况，保留并在第 8 节配置。
+- Docker 可用，Compose plugin 为 2.27 或更新版本，Nginx 原配置通过语法检查。
+- 后端子网不冲突。不要通过停止其他业务、删除容器或改动现有数据库来腾位置。
 
-Nginx 仅在确实缺失时使用目标系统的软件仓库安装：RPM 系统使用 `dnf install nginx` / `yum install nginx`，Debian/Ubuntu 使用 `apt-get update && apt-get install nginx`。已有 Nginx 不再安装。
-同样先核对 Git、Bash、tar 和可用的 Python 3.6+，缺失时用目标系统的软件仓库补齐；不要替换系统 Python 或运行本机的部署命令来代替目标服务器操作。下面的 shell 片段按 Bash 执行。
+缺少依赖时先补齐，再继续：
 
-本方案默认 New API 固定为 [`v1.0.0-rc.40`](https://github.com/QuantumNous/new-api/releases/tag/v1.0.0-rc.40)，因为当前 Cockpit 的 JWT 登录、`users.access_token` PAT 和生图协议按这一版兼容；不要替换为 `latest`。PostgreSQL 使用 16，Redis 使用 7。其他版本先按[兼容范围](compatibility.md)核对。
+- Docker：按目标发行版使用 [Engine 安装步骤](https://docs.docker.com/engine/install/)和 [Compose plugin 安装步骤](https://docs.docker.com/compose/install/linux/)。已安装则复用，不替换全机镜像源。
+- Nginx：仅在未安装时通过系统仓库安装；RPM 系统使用 `dnf install nginx` / `yum install nginx`，Debian/Ubuntu 使用 `apt-get update && apt-get install nginx`。
+- Git、Bash、tar、curl 和 Python 3.6+：使用系统仓库补齐。RHEL 8 可使用已有 `/usr/libexec/platform-python`，无需替换系统 Python。Cockpit 容器内部使用 Python 3.12。
+- Docker 服务未运行时，在确认不影响现有业务后启动。
+
+本模板固定 New API 为 [`v1.0.0-rc.40`](https://github.com/QuantumNous/new-api/releases/tag/v1.0.0-rc.40)，PostgreSQL 为 16，Redis 为 7。不要将 New API 改为 `latest`；其他版本先核对[兼容范围](compatibility.md)。
 
 ## 4. 获取源码并生成首次配置
 
-确认这是全新实例后执行：
+### 4.1 获取源码
+
+以下代码块**仅执行一次**，已有内容会停止：
 
 ```bash
+(
+set -euo pipefail
 umask 077
+if [ -L /root/new-api ]; then
+  echo '安装目录不能是软链接。' >&2
+  exit 1
+fi
+if [ -d /root/new-api ] && [ -n "$(find /root/new-api -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo '/root/new-api 非空，请先确认是继续安装、接入还是升级。' >&2
+  exit 1
+fi
 install -d -m 700 /root/new-api
 git clone --branch develop https://github.com/ilove323/new-api-cockpit.git /root/new-api/source
 cd /root/new-api
-# 若用户指定了发布标签或提交，先在 source 中检出；所选版本必须包含 deploy/full-stack。
+# 如需固定发布标签或提交，在这里先检出；版本必须包含 deploy/full-stack。
 git -C source rev-parse HEAD > source-commit.txt
 test ! -e docker-compose.yml
 cp source/deploy/full-stack/compose.yml docker-compose.yml
 chmod 600 docker-compose.yml source-commit.txt
+)
 ```
 
-新功能未必已包含在旧发布镜像中，因此本方案从所记录的源码构建。后续不要不加区分地 `git pull`、更换分支或覆盖源码。
+**检查点：** `/root/new-api/source` 中有源码，根目录有 `docker-compose.yml` 和 `source-commit.txt`。后续命令始终从实例根目录执行，不从 `source/` 启动另一套 Compose。
 
-首次配置程序仅依赖 Python 标准库 3.6+；Cockpit 容器内部仍使用 Python 3.12。
-RHEL 8 没有 `python3` 命令但有平台 Python 时可使用 `/usr/libexec/platform-python`：
+### 4.2 生成私有配置
+
+默认使用 HTTP；采用 HTTPS 时，把下面唯一一条初始化命令的 `--scheme http` 改为 `--scheme https`。子网冲突时在同一条命令增加 `--subnet <空闲私网/24>`。
 
 ```bash
+(
+set -euo pipefail
 cd /root/new-api
 PYTHON=$(command -v python3 || true)
 if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
 "$PYTHON" -c 'import sys; assert sys.version_info >= (3,6)'
-# 用户明确选择 IP / HTTP 80 时：
 "$PYTHON" source/deploy/full-stack/init-config.py --root /root/new-api --scheme http
-# HTTPS 方案只将上面参数改为 --scheme https，勿两条都执行。
+)
 ```
 
-如子网冲突，在同一条首次命令增加 `--subnet <已核对空闲的私网/24>`。
-程序生成稳定唯一实例 ID、不同数据库/Redis 密码、New API `SESSION_SECRET` / `CRYPTO_SECRET` 和通知加密密钥，只输出非敏感摘要。
-它会拒绝覆盖已有配置、替换密钥或对已有数据重新初始化。中断后先检查实际状态，**不能靠删除 data/config 重来**。
+**检查点：** 输出包含 `"configuration_created": true`。程序已生成稳定实例 ID、不同的数据库/Redis 密码、New API 持久会话与加密密钥、通知加密密钥；无需复制或打印这些内容。
 
-生成目录如下：
+程序拒绝覆盖现有配置或初始化已有数据。若中断，先核对已经生成的文件，不删除 `data` 或 `config` 后重跑。
 
 ```text
 /root/new-api/
-  source/                 冻结版本源码（含完整安装模板）
-  source-commit.txt        实际构建提交
-  docker-compose.yml      完整七服务配置
-  .env                    镜像/网络等 Compose 参数，无管理员密码
+  source/                  对应构建版本的源码与安装模板
+  source-commit.txt         实际构建提交
+  docker-compose.yml       七服务配置
+  .env                     Compose 网络/镜像参数，无管理员密码
   config/
-    postgres.env          首次建库专用配置
-    new-api.env           New API 源库/Redis/持久会话与加密密钥
-    web.env image.env     源库查询、监控库与生图回执配置
-    chat.env              仅聊天设置和内部 New API 地址
-    *-health.env *.conf   Redis 认证与 AOF 配置
-    *-capabilities.json   能力白名单（初始为空）
+    postgres.env           首次建库配置
+    new-api.env            源库/缓存/持久会话与加密密钥
+    web.env image.env      查询、监控与图片回执配置
+    chat.env               仅聊天配置和内部 New API 地址
+    *-health.env *.conf     Redis 认证与持久化配置
+    *-capabilities.json    能力白名单，初始为空
     instance.json nginx/
-  data/                   postgres / redis / image-studio-receipts / new-api / chat
+  data/                    postgres / redis / image-studio-receipts / new-api / chat
   logs/new-api/
   backups/ releases/
 ```
 
-配置目录权限 `0700`、私有环境文件 `0600`。聊天数据属主为 `10001:10001`；本模板固定官方 Redis 7 Alpine 的 `999:1000`，Redis 配置为 `0400`。
-使用其他 Redis 镜像前必须检查其实际 UID/GID 并同步配置，不能用 `chmod 777` 绕过。聊天目录只支持本机 POSIX 文件系统，不使用共享 NAS/NFS 或多主机副本。
+配置目录权限为 `0700`，私有环境文件为 `0600`。聊天目录属主为 `10001:10001`；本模板固定 Redis 7 Alpine 的 `999:1000`，Redis 配置权限为 `0400`。
+更换 Redis 镜像时需同步核对 UID/GID，不用 `chmod 777`。聊天目录须使用本机 POSIX 文件系统，不使用共享 NAS/NFS。
 
-## 5. 拉取镜像并启动基础组件
+## 5. 启动基础组件
 
 ```bash
+(
+set -euo pipefail
 cd /root/new-api
 docker compose config -q
 docker compose pull postgres redis image-studio-receipts new-api
 docker compose build statistics
 docker compose up -d --wait --wait-timeout 180 postgres redis image-studio-receipts new-api
+docker compose ps
+)
 ```
 
-三个 Cockpit 请求池使用同一个本地镜像，因此只需构建 `statistics` 一次。
-确认镜像架构与目标主机匹配；不要把 amd64 镜像强行用于 arm64，也不要在用户不知情时开启模拟运行。
+**检查点：** `postgres`、`redis`、`image-studio-receipts`、`new-api` 四个服务均为运行且健康。三个 Cockpit 请求池共用一个镜像，只需构建 `statistics` 一次。
 
-镜像站不可达时不要反复盲目重试或覆盖全机 Docker 镜像源。在 `.env` 可分别设置 `POSTGRES_IMAGE`、`REDIS_IMAGE`、`PYTHON_IMAGE`、`NEW_API_IMAGE`，但必须保持对应版本与受信任来源。
-也可在有网络的受信任机器获取**同版本、同架构**镜像，经校验和验证后 `docker save` / `docker load` 导入。不要用另一个版本的 New API 顶替 rc.40；离线安装还需预置 Cockpit 构建依赖或经过核对的 Cockpit 运行镜像。
+首次启动时，PostgreSQL 自动运行[建库脚本](../deploy/full-stack/postgres-init.sql)，创建三个业务角色和两个数据库；随后 New API 创建源库业务表。这不需要手工清库或导入整库 SQL。
+已有 PostgreSQL 数据目录不会重复执行建库脚本；连接异常应排查角色、库和配置，不通过删除数据让脚本重跑。
 
-首次空 PostgreSQL 数据目录会执行[建库脚本](../deploy/full-stack/postgres-init.sql)，创建角色和两个库。New API 随后自动创建自己的业务表；不要把 Cockpit 的迁移刷进源库。
-该脚本不会在已有 PostgreSQL 数据目录上重新执行；若连接失败，应查明角色/库和日志状态，不能删除数据卷让初始化重跑。
+镜像拉取或构建失败时，检查网络、镜像架构和依赖来源。可在 `.env` 设置 `POSTGRES_IMAGE`、`REDIS_IMAGE`、`PYTHON_IMAGE`、`NEW_API_IMAGE`，但须保持版本、架构和可信来源一致。
+离线安装需预置经校验的同版本、同架构镜像及构建依赖，或预先构建 Cockpit 镜像后导入；不能仅导入基础镜像就跳过应用依赖。
 
-## 6. 给源库最小授权，初始化管理员
+## 6. 授权源库并创建管理员
 
-必须先确认 New API 已健康并创建 `users/logs/options/channels/tokens/abilities`，再执行：
+### 6.1 授予 Cockpit 最小权限
+
+确认第 5 节健康检查通过后执行：
 
 ```bash
+(
+set -euo pipefail
 cd /root/new-api
-set -o pipefail
 {
   cat source/sql/source_pat_function.sql
   cat source/deploy/full-stack/source-grants.sql
 } | docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U newapi_owner -d new_api
+)
 ```
 
-这会安装仓库唯一的受限 PAT 函数并授权查询角色，不给业务表 UPDATE，也不改用户密码、额度或 KEY。
-`psql` 命令不包含数据库密码；本地容器 socket 管理与对外 TCP 认证是不同边界，数据库端口始终不发布。
+**检查点：** 输出包含 `CREATE FUNCTION`、`REVOKE` 和 `GRANT`，没有 `ERROR`。该步骤安装受限 PAT 函数并授权查询，不修改账号密码、额度或 KEY，也不授予业务表 `UPDATE`。
+容器内本地 socket 不需要在命令里传密码；数据库 TCP 端口不对宿主机或外网发布。
 
-在**服务器交互终端**初始化用户指定的官方管理员：
+### 6.2 交互创建管理员
+
+在带 TTY 的服务器交互终端执行，按提示输入准备好的用户名和两次密码：
 
 ```bash
+(
+set -euo pipefail
 cd /root/new-api
 PYTHON=$(command -v python3 || true)
 if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
 "$PYTHON" source/deploy/full-stack/bootstrap-admin.py
+)
 ```
 
-该程序通过 `http://127.0.0.1:3000/api/setup` 检查并初始化，只使用官方接口；密码用 `getpass` 无回显读取，不写文件或参数，不打印请求/响应。它拒绝替换已有 root。
-用户名应符合 New API 限制，密码必须满足目标版本策略。AI 不应凭空设置默认密码或把用户密码拼入命令；无法安全交互时，把这一步交给用户完成。
+**检查点：** 输出包含 `"official_administrator_initialized": true`。密码输入无回显，不会作为明文保存在脚本、命令参数或配置中。
+程序通过本机官方 `/api/setup` 接口初始化；已有 root 账号时会停止，应使用原账号登录，而不是重新创建。
 
-管理员应在**开放 Nginx 入口之前**完成初始化，避免未初始化页面暴露给其他访问者。
-Cockpit 不创建第二套账号，两套系统共用此 New API 用户。
+在开放 Nginx 入口前完成此步骤。Cockpit 与 New API 共用账号，不需要再创建第二套管理员。
 
-## 7. 启动全部 Cockpit 请求池并刷好监控表
+## 7. 启动全部 Cockpit 组件并完成迁移
 
 ```bash
+(
+set -euo pipefail
 cd /root/new-api
 docker compose up -d --wait --wait-timeout 180 statistics image-studio chat
 docker compose ps
-docker compose exec -T postgres psql -X -U cockpit_monitor -d new_api_cockpit \
+docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U cockpit_monitor -d new_api_cockpit \
   -c 'SELECT version FROM schema_migrations ORDER BY version;'
+)
 ```
 
-网页池启动入口按编号自动应用缺失的 `source/src/new_api_cockpit/migrations/*.sql`，当前为 `001`～`011`。
-将查询返回的文件名与源码实际迁移文件核对；已有库只补缺失项，不重编号，不合并旧迁移，不清库。
-**图片和聊天角色不执行迁移或调度。** 图片池等网页池健康后再启动，避免迁移未完成时承接付费请求。
+**检查点：** 七个服务均运行且健康；迁移查询返回的文件名与 `source/src/new_api_cockpit/migrations/` 中的 SQL 文件逐项一致，当前版本为 `001`～`011`。
 
-此时应有七个服务运行且健康；源库和监控库是两套独立 schema/权限，源库查询角色没有表级 UPDATE。
-某项不健康只排查该组件，不用一遍遍重跑建库、生成新密钥或重复模型请求来“测试”。
+网页池启动入口自动执行缺失的监控库迁移，失败则不会启动网页进程。图片池在网页池健康后启动；图片和聊天角色不执行迁移或调度。
+源库与监控库分开，不能把监控迁移运行到 `new_api` 源库，也不能删除或重新编号已有迁移。
 
-## 8. 按需求配置现有 Nginx
+## 8. 配置 Nginx 统一入口
 
-### IP / HTTP / 任意 Host
+默认 HTTP 模板使用 80 的 `default_server`，**不固定 `server_name`**，可通过服务器 IP、localhost 或 SSH 转发访问。已有其他业务域名站点保留，按各自的匹配规则运行。
 
-默认使用[HTTP 默认站模板](../deploy/full-stack/nginx-http.conf)：**不写固定 `server_name`**，任何到达该端口的 Host（服务器 IP、localhost、SSH 转发端口）都进入同一套系统。
-
-先备份系统 Nginx，再看 `nginx -T`，找出发行版默认欢迎站点。必须屏蔽其完整 `server { ... }`；它可能在 `/etc/nginx/nginx.conf`，也可能在 `conf.d/default.conf`。
-只删除新站的 `server_name` 不够：旧 `default_server` 仍可能接管请求。不要误删已有的其他业务站点；同一监听地址只能有一个默认站。
-模板同时监听 IPv4 和 IPv6；主机确实禁用 IPv6 时去掉 `[::]:80` 那一行，不能因此阻断 IPv4 部署。
+### 8.1 备份并定位欢迎站
 
 ```bash
+(
+set -euo pipefail
+umask 077
 cd /root/new-api
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-install -d -m 700 "backups/nginx-$STAMP"
-tar -czf "backups/nginx-$STAMP/before.tar.gz" -C /etc nginx
-systemctl is-active nginx > "backups/nginx-$STAMP/was-active.txt" || true
-systemctl is-enabled nginx > "backups/nginx-$STAMP/was-enabled.txt" || true
-if command -v getsebool >/dev/null 2>&1; then
-  getsebool httpd_can_network_connect > "backups/nginx-$STAMP/selinux-before.txt"
+BACKUP="backups/nginx-$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 700 "$BACKUP"
+tar -czf "$BACKUP/before.tar.gz" -C /etc nginx
+systemctl is-active nginx > "$BACKUP/was-active.txt" || true
+systemctl is-enabled nginx > "$BACKUP/was-enabled.txt" || true
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != Disabled ]; then
+  getsebool httpd_can_network_connect > "$BACKUP/selinux-before.txt"
 fi
-# 完成上面的默认站定位与屏蔽后，再部署这两个文件：
+nginx -T > "$BACKUP/effective.conf" 2> "$BACKUP/check.log"
+printf 'Nginx 备份目录：/root/new-api/%s\n' "$BACKUP"
+grep -nE '^# configuration file |listen .*80|server_name|root .*html' "$BACKUP/effective.conf" || true
+)
+```
+
+根据输出定位发行版欢迎站，只处理确认属于默认欢迎页的站点：
+
+- 在 `/etc/nginx/nginx.conf` 中：删除或逐行注释其**完整 `server { ... }` 块**，包括嵌套 location；保留外围 `http`、`events` 和其他业务配置。
+- 在 `/etc/nginx/conf.d/default.conf` 等独立文件中：将该文件移出 `conf.d`，保存到刚输出的备份目录。不要只改成另一个仍以 `.conf` 结尾的文件名。
+- 检查 IPv4、IPv6 两种监听；同一监听地址只能有一个 `default_server`。有明确业务用途的其他默认站不能当欢迎页删除，需先确定站点分配。
+
+**检查点：** 欢迎站已停用，其他业务站点未被改动。仅删除新站的 `server_name` 不能解决旧默认站抢占请求的问题。
+
+### 8.2 准备配置副本
+
+```bash
+(
+set -euo pipefail
+cd /root/new-api
 install -m 644 source/nginx.conf.example config/nginx/new-api-cockpit-locations.inc
 install -m 644 source/deploy/full-stack/nginx-http.conf config/nginx/new-api.conf
+)
+```
+
+默认 HTTP 方案无需填写域名。主机禁用 IPv6 时，删除 `config/nginx/new-api.conf` 中的 `listen [::]:80 default_server;` 一行。
+
+**仅 HTTPS 方案需要调整：** 第 4 节选择 `--scheme https`，在上述副本中将监听改为 443 SSL，配置与访问名匹配的证书和私钥，再确定是否另加 80 跳转；域名站按实际域名配置。IP 证书也必须覆盖访问 IP，不使用自签证书替代有效证书。
+
+两种方案都保留位置规则和 `Host $http_host`，以便保留浏览器使用的端口；`X-Forwarded-Proto` 使用实际入口协议。不要将 `/root` 下的文件直接软链接给宿主 Nginx。
+
+### 8.3 发布、检查并启用
+
+以下步骤要求 `/etc/nginx/conf.d/new-api.conf` 未被其他站点使用；已存在时先核对归属和差异，不直接覆盖。
+
+```bash
+(
+set -euo pipefail
+cd /root/new-api
+test ! -e /etc/nginx/conf.d/new-api.conf
 install -m 644 config/nginx/new-api-cockpit-locations.inc /etc/nginx/new-api-cockpit-locations.inc
 install -m 644 config/nginx/new-api.conf /etc/nginx/conf.d/new-api.conf
-```
-
-宿主 Nginx 不应直接读取 `/root` 下的配置软链接：目录权限与 SELinux 可能阻止服务读取，因此保留原件并部署系统标准位置的副本。
-
-RHEL 等启用 SELinux 的系统保持 Enforcing，恢复新配置标签；如果 Nginx 被策略拒绝连接本机代理端口，记录原值后仅启用所需代理连接布尔值，不关闭 SELinux：
-
-```bash
-restorecon -F /etc/nginx/nginx.conf /etc/nginx/conf.d/new-api.conf /etc/nginx/new-api-cockpit-locations.inc
-getsebool httpd_can_network_connect
-# 只有原值为 off 且确需代理连接时：
-setsebool -P httpd_can_network_connect on
-```
-
-非 SELinux 系统不执行这一段。不要通过关闭防火墙、SELinux、证书验证或把 3000/8091/8092/8093 全部发布到公网来修复反代。
-
-```bash
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != Disabled ]; then
+  restorecon -F /etc/nginx/nginx.conf /etc/nginx/conf.d/new-api.conf /etc/nginx/new-api-cockpit-locations.inc
+  if getsebool httpd_can_network_connect | grep -q -- '--> off'; then
+    setsebool -P httpd_can_network_connect on
+  fi
+fi
 nginx -t
-# 已运行则重载；未运行则启动，二选一：
-systemctl reload nginx
-# systemctl start nginx
-systemctl enable nginx
-systemctl enable docker
+if systemctl is-active --quiet nginx; then
+  systemctl reload nginx
+else
+  systemctl start nginx
+fi
+systemctl enable nginx docker
+)
 ```
 
-如果 `nginx -t` 失败，不执行 reload；从备份恢复本次修改的文件和默认站片段，重新检查后恢复服务。回退时同时按记录恢复服务启停、自启及 SELinux/防火墙变更，不覆盖其他站点的新变更。
+**检查点：** `nginx -t` 成功，Nginx 正常运行，Docker 与 Nginx 已设为开机启动。修改防火墙时只开放计划使用的 80/443 和来源，先核对实际接口及 zone；不开放数据库、Redis 或应用回环端口，不关闭防火墙或 SELinux。
 
-如果用户要求开放入站访问，只允许所需的 80/443 与明确来源；修改防火墙前先确定实际接口和 zone，保留现有规则。
-不要因为服务器本机请求成功就声称其他网段、VPN 或公网已经连通。
+如果语法检查失败，本步骤不会重载；修正实例副本并重新部署对应文件，再检查并重载。需要回退时，恢复本次修改的配置及欢迎站片段，并按记录恢复服务、自启、SELinux 和防火墙状态；不要覆盖其他站点的新变更。
 
-### HTTPS 方案
+以后切换 HTTP/HTTPS 时，备份并同步调整 `new-api.env` 的 `SESSION_COOKIE_SECURE` 和各 Cockpit 角色环境文件的 `COCKPIT_COOKIE_SECURE`，然后重建相应容器；不重新运行首次初始化。HTTP 为 `false`，HTTPS 为 `true`。
 
-只在用户明确选择 HTTPS 且提供有效证书时使用：首次配置选 `--scheme https`，将模板中监听端口改为 443 SSL，配置与访问名匹配的证书/私钥，再确定 80 是否跳转。
-域名场景按用户域名设置站点；IP 场景证书也必须覆盖该 IP。不自动生成自签证书或绕过浏览器警告。
+## 9. 登录与验收
 
-两套系统 Cookie 必须与外部协议一致；后续 HTTP/HTTPS 切换要备份并修改 `new-api.env` 的 `SESSION_COOKIE_SECURE` 以及网页池的 `COCKPIT_COOKIE_SECURE` 后重建对应容器，**不是重新运行首次配置程序生成密钥**。
-浏览器中的 New API 与 Cockpit 必须同协议、同主机、同端口；Nginx 保留 `Host $http_host` 和正确的 `X-Forwarded-Proto`。
+### 直接访问
 
-## 9. 配置真正可用的模型、图片与联网
+默认 HTTP 入口在访问电脑打开：
 
-此步的渠道参数必须来自用户或其受信任运维资料，不能从另一个站点复制真实 KEY。
+- New API：`http://<服务器IP>/sign-in`
+- Cockpit：`http://<服务器IP>/cockpit/`
 
-1. 登录 New API，按实际供应商添加渠道、准确模型名/映射和用户分组；确认账号有使用权限与额度。若是私有站点，按用户要求设置注册与账号策略。
-2. 在本人账号创建/配置所需 KEY。生图工作站仅使用**本人已有、分组精确为 `GPT`** 的 KEY；聊天使用本人已有 KEY，不自动建 KEY、改组或改额度。
-3. 根据[生图协议说明](existing-installation.md#图片协议契约)和[能力示例](../image-studio-capabilities.example.json)填写 `config/image-studio-capabilities.json`，使用真实渠道 ID、公开模型 ID 与已核对的生成/编辑协议。示例不是可直接工作的真实渠道。
-4. 根据[聊天能力说明](chat.md#模型能力)填写 `config/chat-capabilities.json`；明确协议、工具、reasoning 与压缩能力。模型还必须在本人 KEY 实际目录中，配置文件不能越权添加模型。
-5. 原子替换 bind-mounted 能力文件后重建使用它们的容器，保证所有进程使用同一版本；网页与图片池共用图片配置，聊天池只接收聊天配置。
-6. 需要搜索时配置 `chat.env` 中的 SearXNG JSON 后端；未配置搜索不影响独立网页抓取/文本下载。不把搜索后端指向内网探测代理。
-7. 通知、预算、监控开关和定时配额按实际需求在 Cockpit 配置；没有授权不发通知测试、不新增自动发额度规则。
+使用第 6 节创建的同一个账号登录两套系统；也可在 New API 登录后进入 Cockpit 复用会话。HTTPS 方案替换为实际 HTTPS 地址，两套系统保持同协议、同主机、同端口。
 
-首次配置生成的能力文件为空白名单，是**安全的未配置状态**，不是通用模型能力模板。
-未提供真实渠道/KEY 时，可以交付“全部组件已安装、可登录、数据库已初始化”，但必须标明“模型/图片生成尚未配置”，不能承诺能聊天或生图。
-
-在维护窗口更新配置并确认没有在途生成请求后执行：
+HTTP 方案可在目标服务器做一次入口检查：
 
 ```bash
-cd /root/new-api
-docker compose up -d --force-recreate --wait --wait-timeout 180 statistics image-studio chat
+curl --fail --silent --show-error http://127.0.0.1/api/status
 ```
 
-## 10. 最小验收与交付边界
+应返回 New API JSON 且 `success` 为 `true`，不是 Nginx 欢迎页。服务器本机检查不能代替访问电脑的实际登录；`/` 是 New API 官方首页，看到产品首页并不代表仍是欢迎站。
 
-默认只做下面的最小验收，不跑大批回归、不清真实聊天、不调用付费模型、不修改真实额度：
+### 通过 SSH 隧道访问
 
-- 七个服务健康；监控迁移版本与源码对应，两个数据库与源库查询权限符合第 2 节。
-- 实际访问入口 `/api/status` 返回 New API JSON，而不是仅检查 `Server: nginx` 头；`/` 本来就是 New API 官方首页。
-- 使用同一实际访问地址登录 New API，再登录或复用会话进入 `/cockpit/`，确认统计、用户/KEY、操作记录、生图和聊天页面可打开。
-- 无 KEY 的空页面可以选择允许类型的文本文件；50 MiB 上限与 Nginx `51264k` 一致。除非用户明确要求，不创建大型测试文件或运行生成任务。
-- `8091/8092/8093/3000` 仅绑定回环；PostgreSQL、Redis 不发布端口；实例目录与密钥权限正确。
-
-如果用户只要求“能登录两套系统就结束”，完成两次实际登录后停止，不擅自增加渠道压测、付费测试或数据清理。
-若用户另行授权真实模型验收，只发最小必要请求，事先说明会计费；分别记录聊天、图片生成、编辑、搜索等实际通过项，不用健康状态代替。
-
-交付记录应包含：访问地址、源码提交、镜像 ID/摘要、服务状态、数据库迁移、数据/配置/备份路径，以及尚缺的真实渠道/搜索/通知配置。
-记录账号名称但不回显密码；不要把具体环境秘密、真实 KEY 或用户数据提交到 Git。
-
-记录实际运行镜像时只输出镜像元信息，不要把包含环境变量的完整 `docker inspect` 或未脱敏 `docker compose config` 写入公共日志：
-
-```bash
-cd /root/new-api
-docker compose images > releases/images.txt
-docker compose images -q | sort -u | xargs -r docker image inspect \
-  --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}}' > releases/image-identities.txt
-chmod 600 releases/images.txt releases/image-identities.txt
-```
-
-### SSH 隧道访问
-
-转发应在用户的本机执行，目标必须是刚安装的**目标服务器**，不是跳板机的 80：
+无法直连内网时，在**访问电脑**替换参数后执行，并保持该进程运行：
 
 ```bash
 ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
   -L 127.0.0.1:24444:127.0.0.1:80 <目标用户>@<目标地址>
 ```
 
-需要跳板机时加入 `-J <跳板用户>@<跳板地址>`，目标非 22 端口加入 `-p <目标SSH端口>`。
-如果目标是跳板机回环上的转发端口，目的地址仍是对应 `root@127.0.0.1 -p <端口>`；不能套用另一台服务器的命令。
-首次连接先经可信渠道核对目标指纹，再交互保存主机记录；`BatchMode=yes` 不会弹出确认。不要用 `StrictHostKeyChecking=no` 或盲目删除旧指纹绕过冲突。
+有跳板机时增加 `-J <跳板用户>@<跳板地址>`，目标 SSH 非 22 端口时增加 `-p <目标SSH端口>`。目标若是跳板机回环上的 SSH 转发，则使用对应 `<目标用户>@127.0.0.1` 和目标端口；最后转发的是**目标服务器的 80**，不是跳板机的 80。
 
-用户本机访问 `http://localhost:24444/sign-in` 与 `http://localhost:24444/cockpit/`。保持隧道进程运行，先核对本机监听者和响应再判断缓存；不要只在服务器上验收。
+首次连接先用普通交互式 SSH，通过可信渠道核对并保存两跳指纹，再运行上面的 BatchMode 命令。遇到指纹冲突先核实，不关闭主机校验或盲目删除旧记录。
 
-## 11. 备份、回退与后续升级
+本机访问 `http://localhost:24444/sign-in` 与 `http://localhost:24444/cockpit/`。此示例适用于 HTTP/80 方案；HTTPS 隧道应转发 HTTPS 端口并保留与证书匹配的访问名。
 
-交付前设置 Docker 与现有 Nginx 开机启动，容器使用 `unless-stopped`；备份由用户保管到安全的异机存储，本机副本不防磁盘丢失。
-至少保留：
+### 完成标准
 
-- `new_api`、`new_api_cockpit` 的 PostgreSQL 一致性备份及角色/权限；
-- 完整 `config`、`.env`、Compose、源码提交与镜像标识，尤其是 New API 两个持久密钥和通知加密密钥；
-- 停止聊天写入后的一致 `data/chat`，保留 instance ID；
-- 两套 Redis 持久数据，尤其是防重复派发的短期生图回执；
-- Nginx 原配置、修改后的原件，以及变更前服务/SELinux/防火墙状态。
+- 七个服务健康，监控库迁移与源码一致。
+- 从实际使用地址能登录 New API 和 Cockpit，统计、管理、生图、聊天页面可打开。
+- 应用只监听回环地址，数据库和 Redis 不发布端口，私有文件权限正确。
 
-不能把运行中的 PostgreSQL 目录直接打包冒充一致备份：使用 `pg_dump` / `pg_dumpall`，或停止相关服务后做冷备。也不能仅备份聊天索引而丢掉事件、manifest、快照或文件。
-恢复先核对目标、停止写入并保存当前状态，在空目录/独立实例验证，不能覆盖运行数据；新事件格式可能不兼容旧聊天程序。
-已存在的数据仅做增量迁移；升级过程不得重跑首次密钥生成、清空数据库或把旧备份自动覆盖新聊天。具体流程见[升级、备份与回退](upgrading.md)。
+**满足以上条件即完成安装。** 验收不要求调用付费模型、发送通知或增减真实额度。文件功能如需检查，使用小型允许类型文本即可，不需要上传大文件；上限为 50 MiB，聊天 Nginx 规则为 `51264k`。
+
+交付时记录访问地址、账号名称、源码提交、镜像标识、数据库迁移、数据/配置/备份路径，以及未配置的可选项。不记录密码、真实 KEY 或完整环境变量；`docker compose config -q` 可用于校验，不输出完整私有配置。
+
+镜像记录命令：
+
+```bash
+(
+set -euo pipefail
+umask 077
+cd /root/new-api
+docker compose images > releases/images.txt
+docker compose images -q | sort -u | xargs -r docker image inspect \
+  --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}}' > releases/image-identities.txt
+)
+```
+
+## 10. 按需接入模型、图片、搜索与通知
+
+本节在安装与登录完成后执行。没有真实渠道和 KEY 时，系统可登录使用管理功能，但聊天/图片生成尚未就绪。
+
+1. **渠道和模型：** 在 New API 添加实际供应商地址、KEY、精确模型 ID/映射、协议和分组；核对账号使用权限与额度，按站点要求设置注册策略。
+2. **个人 KEY：** 在本人账号准备所需 KEY。生图工作站只使用本人已有、分组精确为 `GPT` 的 KEY；聊天也使用本人已有 KEY，不会自动创建或更改分组、额度。
+3. **图片能力：** 按[协议说明](existing-installation.md#图片协议契约)和[能力示例](../image-studio-capabilities.example.json)填写 `config/image-studio-capabilities.json`。示例渠道 ID 和模型不是可直接工作的真实配置。
+4. **聊天能力：** 按[模型能力配置](chat.md#模型能力)填写 `config/chat-capabilities.json`。协议、工具、reasoning 与压缩能力以渠道实际支持情况为准；模型还须在本人 KEY 的实际目录中。
+5. **搜索：** 需要搜索时，在 `config/chat.env` 配置 SearXNG JSON 后端，参数见[搜索后端](chat.md#搜索后端)。未配置搜索不影响独立网页抓取/文本下载。
+6. **通知与调度：** 在 Cockpit 配置通知、预算、监控和定时配额。只创建计划实际启用的规则；测试通知和真实模型调用会产生外部操作或费用，应单独安排。
+
+初始能力文件是**空白名单**，不是通用能力模板。配置文件原子替换后，需要重建使用它们的容器，避免 bind mount 仍读取旧文件。
+在没有在途生成请求的维护窗口执行：
+
+```bash
+(
+set -euo pipefail
+cd /root/new-api
+docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 statistics image-studio chat
+)
+```
+
+网页与图片池使用同一份图片配置，聊天池只接收聊天配置。实际生成、编辑、搜索或通知是否可用，以各项单独验收结果为准，不能仅凭容器健康判断。
+
+## 11. 备份与后续维护
+
+安装完成后安排异机备份；实例目录里的副本不能防止整盘丢失。至少保留：
+
+- 两个 PostgreSQL 数据库的一致性备份，以及角色和权限。
+- 完整 `config`、`.env`、Compose、源码提交和镜像标识，尤其是 New API 的持久密钥与通知加密密钥。
+- 停止聊天写入后的一致 `data/chat`，包括事件、manifest、快照和文件，保留原 instance ID。
+- 两套 Redis 的持久数据，尤其是防重复派发的图片回执。
+- Nginx 修改前后的配置、服务状态和 SELinux/防火墙变更记录。
+
+运行中的 PostgreSQL 使用 `pg_dump` / `pg_dumpall`，不能直接打包数据目录作为一致备份。恢复前停止写入并保留当前状态，先在空目录或独立实例验证；恢复旧备份会丢失备份后的新记录。
+升级使用增量迁移，不重新生成密钥、不重复建库、不清空聊天。完整实例的更新和数据库备份命令见[升级与回退](upgrading.md#全量安装实例的更新)。
+
+## 12. 常见问题与继续位置
+
+先在 `/root/new-api` 查看 `docker compose ps`，再查看故障服务的 `docker compose logs --tail=60 <服务名>`。日志可能含业务信息，分享前脱敏；不要为了排错打印全部环境变量。
+
+| 现象 | 检查与处理 |
+|---|---|
+| 拉取/构建失败 | 核对网络、架构和受信任镜像来源；修复后继续第 5 节，不重做第 4 节 |
+| PostgreSQL 或 New API 不健康 | 查看对应服务日志，核对角色、库、挂载和连接；首次建库只对空数据目录生效，不删除数据卷 |
+| 管理员初始化停止 | 检查是否交互终端、是否已有 root、密码是否满足版本策略；已有账号用原账号登录，不重置数据库 |
+| 网页池迁移失败 | 查看 `statistics` 日志，核对监控库连接与权限；修复后继续第 7 节，由网页池补做缺失迁移并启动其余请求池 |
+| `duplicate default server` | 第 8 节还有未屏蔽的默认监听，分别检查 IPv4/IPv6 和 `nginx.conf`、`conf.d`，修正后重新 `nginx -t` |
+| IPv6 监听报错 | 主机确实未启用 IPv6 时，移除实例副本中的 `[::]:80` 监听，重新发布该文件；保留 IPv4 |
+| 仍是 Nginx 欢迎页 | 核对当前生效配置和重载结果、80 监听者、SSH 最终目标；用 `/api/status` 区分应用首页与欢迎页 |
+| `502 Bad Gateway` | 核对对应请求池健康状态、回环端口、Nginx upstream 与 SELinux 代理连接权限 |
+| Cockpit 登录循环或来源校验失败 | 两套系统须同源；保留 `Host $http_host` 中的端口和正确协议，HTTP 的 Cookie Secure 为 `false`，HTTPS 为 `true` |
+| 聊天池不健康 | 核对数据目录属主 `10001:10001`、权限 `0700`、磁盘空间、稳定 instance ID 与能力文件格式，不改成 `777` |
+| 模型/生图目录为空 | 继续第 10 节；核对本人 KEY、分组、上游目录与能力白名单，初始空配置不是安装失败 |
+| 上传返回 `413` | 应用和 Nginx 都需使用对应版本；检查聊天 location 的 `51264k` 已生效，不放大所有 API |
+| SSH 主机指纹校验失败 | 核对跳板和目标两跳指纹，先交互建立可信记录，再运行隧道；不使用 `StrictHostKeyChecking=no` 绕过 |

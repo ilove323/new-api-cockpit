@@ -123,7 +123,9 @@ Nginx 将 `/cockpit/api/chat/` 转到 chat 池并关闭 SSE 缓冲；页面/静�
 将能力文件只读挂载并设置 `CHAT_CAPABILITIES_FILE=/app/config/chat-capabilities.json`。不是每个 Anthropic 模型都接受 adaptive thinking，也不是每个 Responses 网关都支持 compact；按渠道设置，错误不隐式降级。
 `reasoning_effort` 只用于 Chat，`reasoning` 只用于 Responses，`thinking` 只用于 Anthropic。工具 schema 固定，不能透传任意请求参数。
 
-搜索后端可选配置（端点为虚构示例，不附带凭据）：
+### 搜索后端
+
+可选配置（端点为虚构示例，不附带凭据）：
 
 ```dotenv
 CHAT_WEB_SEARCH_BACKEND=searxng
