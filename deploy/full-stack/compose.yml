@@ -1,4 +1,4 @@
-# Full installation: run from the instance root, not from the source checkout.
+# Full installation, prebuilt image only. Run from the instance root.
 ---
 name: new-api
 services:
@@ -9,7 +9,7 @@ services:
     - "./config/postgres.env"
     volumes:
     - "./data/postgres:/var/lib/postgresql/data:Z"
-    - "./source/deploy/full-stack/postgres-init.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro,z"
+    - "./install/postgres-init.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro,z"
     networks:
     - backend
     mem_limit: 1g
@@ -138,7 +138,7 @@ services:
         max-size: 10m
         max-file: '3'
   statistics:
-    image: "${COCKPIT_IMAGE:-new-api-cockpit:full}"
+    image: "${COCKPIT_IMAGE:?Set COCKPIT_IMAGE from the matching release}"
     restart: unless-stopped
     env_file:
     - "./config/web.env"
@@ -197,13 +197,8 @@ services:
       options:
         max-size: 10m
         max-file: '3'
-    build:
-      context: "./source"
-      args:
-        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.12-slim}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
   image-studio:
-    image: "${COCKPIT_IMAGE:-new-api-cockpit:full}"
+    image: "${COCKPIT_IMAGE:?Set COCKPIT_IMAGE from the matching release}"
     restart: unless-stopped
     env_file:
     - "./config/image.env"
@@ -262,13 +257,8 @@ services:
       options:
         max-size: 10m
         max-file: '3'
-    build:
-      context: "./source"
-      args:
-        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.12-slim}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
   chat:
-    image: "${COCKPIT_IMAGE:-new-api-cockpit:full}"
+    image: "${COCKPIT_IMAGE:?Set COCKPIT_IMAGE from the matching release}"
     restart: unless-stopped
     env_file:
     - "./config/chat.env"
@@ -322,11 +312,6 @@ services:
       options:
         max-size: 10m
         max-file: '3'
-    build:
-      context: "./source"
-      args:
-        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.12-slim}"
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
 networks:
   backend:
     driver: bridge

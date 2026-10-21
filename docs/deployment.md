@@ -1,8 +1,12 @@
-# 从零全量部署 New API 与 Cockpit
+# 从零全量部署 New API 与 Cockpit（发布镜像）
 
-在一台 Linux 服务器上安装 New API 和 Cockpit 的全部组件，完成数据库初始化、Nginx 反向代理和网页登录。
+从 GitHub 正式 Release 下载配套安装包，直接拉取该版本的预构建镜像，完成全部组件、数据库、Nginx 和网页登录；目标服务器不下载应用源码、不编译镜像。
+
+需要自行构建或部署开发提交时，使用独立的[源码构建部署](deployment-source.md)。
 
 **默认方案：** `/root/new-api` 安装目录、IP + HTTP/80 访问、复用已安装的 Docker 和 Nginx。所有命令在目标服务器的 root Bash 终端执行；只有 SSH 隧道命令在访问电脑执行。
+
+**版本要求：** 所选 [Release](https://github.com/ilove323/new-api-cockpit/releases) 必须同时提供 `new-api-cockpit-vX.Y.Z-deploy.tar.gz`、对应 `.sha256` 和该版本 GHCR 镜像。`v0.3.0` 没有完整安装包及聊天组件，不能套用本手册；没有满足条件的 Release 时须先[完成发版](releasing.md#发布流程)，不自动切换到源码构建。
 
 本页用于**全新安装**。已有 New API 使用[接入手册](existing-installation.md)；已有本套实例使用[升级手册](upgrading.md#全量安装实例的更新)。发现已有配置或业务数据时，不执行首次初始化。
 
@@ -13,7 +17,7 @@
 | 阶段 | 操作 | 完成标志 |
 |---|---|---|
 | [准备](#1-准备部署参数) | 确认连接、资源、端口与安装目录 | 目标正确，依赖可用，无冲突 |
-| [首次配置](#4-获取源码并生成首次配置) | 获取源码，生成本实例配置 | 配置生成成功，密钥未外泄 |
+| [首次配置](#4-下载安装包并生成首次配置) | 下载同版本安装包，生成本实例配置 | 配置生成成功，密钥未外泄 |
 | [基础组件](#5-启动基础组件) | 启动 PostgreSQL、两套 Redis、New API | 四个服务健康 |
 | [数据库与账号](#6-授权源库并创建管理员) | 授权源库，初始化管理员 | 授权成功，管理员已创建 |
 | [Cockpit](#7-启动全部-cockpit-组件并完成迁移) | 启动网页、图片、聊天三个请求池 | 七个服务健康，迁移齐全 |
@@ -28,8 +32,9 @@
 
 | 参数 | 默认值或填写要求 |
 |---|---|
+| Release 标签 | 选择包含完整安装包的正式版本，填写第 4 节的 `RELEASE_TAG`；不用 `latest` |
 | SSH 连接 | 目标地址、用户、端口；使用跳板机时还需跳板地址、用户及两跳主机指纹 |
-| 安装目录 | `/root/new-api`，首次安装使用空目录；源码、配置、应用数据和备份均保存在这里 |
+| 安装目录 | `/root/new-api`，首次安装使用空目录；安装文件、配置、应用数据和备份均保存在这里 |
 | 访问入口 | 默认 `http://<服务器IP>`；也可通过 SSH 隧道访问 `http://localhost:24444` |
 | HTTPS | 仅在采用 HTTPS 时准备访问名及匹配的有效证书、私钥，见第 8 节 |
 | 管理员 | 准备用户名和符合 New API 策略的密码，第 6 节交互输入；不预设默认密码 |
@@ -82,7 +87,6 @@ docker network ls -q | xargs -r docker network inspect \
   --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
 nginx -v
 nginx -t
-git --version
 ```
 
 **检查点：**
@@ -96,21 +100,26 @@ git --version
 
 - Docker：按目标发行版使用 [Engine 安装步骤](https://docs.docker.com/engine/install/)和 [Compose plugin 安装步骤](https://docs.docker.com/compose/install/linux/)。已安装则复用，不替换全机镜像源。
 - Nginx：仅在未安装时通过系统仓库安装；RPM 系统使用 `dnf install nginx` / `yum install nginx`，Debian/Ubuntu 使用 `apt-get update && apt-get install nginx`。
-- Git、Bash、tar、curl 和 Python 3.6+：使用系统仓库补齐。RHEL 8 可使用已有 `/usr/libexec/platform-python`，无需替换系统 Python。Cockpit 容器内部使用 Python 3.12。
+- Bash、tar、gzip、curl、sha256sum 和 Python 3.6+：使用系统仓库补齐。RHEL 8 可使用已有 `/usr/libexec/platform-python`，无需替换系统 Python。Cockpit 容器内部使用 Python 3.12。
 - Docker 服务未运行时，在确认不影响现有业务后启动。
 
 本模板固定 New API 为 [`v1.0.0-rc.40`](https://github.com/QuantumNous/new-api/releases/tag/v1.0.0-rc.40)，PostgreSQL 为 16，Redis 为 7。不要将 New API 改为 `latest`；其他版本先核对[兼容范围](compatibility.md)。
 
-## 4. 获取源码并生成首次配置
+## 4. 下载安装包并生成首次配置
 
-### 4.1 获取源码
+### 4.1 选择 Release、下载并校验
 
-以下代码块**仅执行一次**，已有内容会停止：
+在所选 Release 的 Assets 中确认安装包、校验文件和对应镜像均已发布，再将下面的 `vX.Y.Z` 替换为实际标签。以下代码块**仅用于空目录的首次安装**：
 
 ```bash
 (
 set -euo pipefail
 umask 077
+RELEASE_TAG='vX.Y.Z'
+if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo '请将 RELEASE_TAG 改为已发布的正式标签。' >&2
+  exit 1
+fi
 if [ -L /root/new-api ]; then
   echo '安装目录不能是软链接。' >&2
   exit 1
@@ -119,18 +128,24 @@ if [ -d /root/new-api ] && [ -n "$(find /root/new-api -mindepth 1 -maxdepth 1 -p
   echo '/root/new-api 非空，请先确认是继续安装、接入还是升级。' >&2
   exit 1
 fi
-install -d -m 700 /root/new-api
-git clone --branch develop https://github.com/ilove323/new-api-cockpit.git /root/new-api/source
+install -d -m 700 /root/new-api /root/new-api/releases
+cd /root/new-api/releases
+ARCHIVE="new-api-cockpit-${RELEASE_TAG}-deploy.tar.gz"
+BASE="https://github.com/ilove323/new-api-cockpit/releases/download/${RELEASE_TAG}"
+curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$ARCHIVE" "$BASE/$ARCHIVE"
+curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$ARCHIVE.sha256" "$BASE/$ARCHIVE.sha256"
+sha256sum -c "$ARCHIVE.sha256"
+tar --extract --gzip --file "$ARCHIVE" --directory /root/new-api --no-same-owner
 cd /root/new-api
-# 如需固定发布标签或提交，在这里先检出；版本必须包含 deploy/full-stack。
-git -C source rev-parse HEAD > source-commit.txt
-test ! -e docker-compose.yml
-cp source/deploy/full-stack/compose.yml docker-compose.yml
-chmod 600 docker-compose.yml source-commit.txt
+cp install/compose.yml docker-compose.yml
+printf '%s\n' "$RELEASE_TAG" > release-tag.txt
+chmod 600 docker-compose.yml release-tag.txt
 )
 ```
 
-**检查点：** `/root/new-api/source` 中有源码，根目录有 `docker-compose.yml` 和 `source-commit.txt`。后续命令始终从实例根目录执行，不从 `source/` 启动另一套 Compose。
+**检查点：** 校验输出 `OK`，根目录有 `docker-compose.yml`、`release-tag.txt`，`install/` 中有初始化脚本、SQL、Nginx 片段、`release.env`、`release.json` 和 `migrations.txt`。下载或校验失败时不会解包或执行脚本，不改成 `git clone` 重试。
+
+`release.env` 固定该 Release 对应的 `COCKPIT_IMAGE=ghcr.io/ilove323/new-api-cockpit:X.Y.Z`。后续使用根目录 Compose，不在 `install/` 中另起一套项目。
 
 ### 4.2 生成私有配置
 
@@ -143,7 +158,9 @@ cd /root/new-api
 PYTHON=$(command -v python3 || true)
 if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
 "$PYTHON" -c 'import sys; assert sys.version_info >= (3,6)'
-"$PYTHON" source/deploy/full-stack/init-config.py --root /root/new-api --scheme http
+"$PYTHON" install/init-config.py --root /root/new-api --scheme http
+cat install/release.env >> .env
+chmod 600 .env
 )
 ```
 
@@ -153,8 +170,8 @@ if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
 
 ```text
 /root/new-api/
-  source/                  对应构建版本的源码与安装模板
-  source-commit.txt         实际构建提交
+  install/                 同一 Release 的公开安装文件，无应用源码
+  release-tag.txt           已选择的正式标签
   docker-compose.yml       七服务配置
   .env                     Compose 网络/镜像参数，无管理员密码
   config/
@@ -180,20 +197,19 @@ if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
 set -euo pipefail
 cd /root/new-api
 docker compose config -q
-docker compose pull postgres redis image-studio-receipts new-api
-docker compose build statistics
-docker compose up -d --wait --wait-timeout 180 postgres redis image-studio-receipts new-api
+docker compose pull
+docker compose up -d --no-build --pull never --wait --wait-timeout 180 postgres redis image-studio-receipts new-api
 docker compose ps
 )
 ```
 
-**检查点：** `postgres`、`redis`、`image-studio-receipts`、`new-api` 四个服务均为运行且健康。三个 Cockpit 请求池共用一个镜像，只需构建 `statistics` 一次。
+**检查点：** `postgres`、`redis`、`image-studio-receipts`、`new-api` 四个服务均为运行且健康。三个 Cockpit 请求池使用 `install/release.env` 中固定的同一个 GHCR 镜像；Compose 没有 `build` 配置，不会本地编译。
 
 首次启动时，PostgreSQL 自动运行[建库脚本](../deploy/full-stack/postgres-init.sql)，创建三个业务角色和两个数据库；随后 New API 创建源库业务表。这不需要手工清库或导入整库 SQL。
 已有 PostgreSQL 数据目录不会重复执行建库脚本；连接异常应排查角色、库和配置，不通过删除数据让脚本重跑。
 
-镜像拉取或构建失败时，检查网络、镜像架构和依赖来源。可在 `.env` 设置 `POSTGRES_IMAGE`、`REDIS_IMAGE`、`PYTHON_IMAGE`、`NEW_API_IMAGE`，但须保持版本、架构和可信来源一致。
-离线安装需预置经校验的同版本、同架构镜像及构建依赖，或预先构建 Cockpit 镜像后导入；不能仅导入基础镜像就跳过应用依赖。
+镜像拉取失败时，检查网络、镜像架构和仓库权限；GHCR 非公开包需使用有读取权限的账号安全登录。不要改用 `latest` 或另一版本。基础镜像源需要调整时，只改本实例的 `.env` 参数，保持版本和架构一致。
+离线安装可在可信联网机器拉取相同版本、相同架构的全部预构建镜像，经校验后 `docker save` / `docker load` 导入，随后执行上面的 `up --no-build --pull never`；无需准备编译依赖。
 
 ## 6. 授权源库并创建管理员
 
@@ -206,8 +222,8 @@ docker compose ps
 set -euo pipefail
 cd /root/new-api
 {
-  cat source/sql/source_pat_function.sql
-  cat source/deploy/full-stack/source-grants.sql
+  cat install/source_pat_function.sql
+  cat install/source-grants.sql
 } | docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U newapi_owner -d new_api
 )
 ```
@@ -225,7 +241,7 @@ set -euo pipefail
 cd /root/new-api
 PYTHON=$(command -v python3 || true)
 if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
-"$PYTHON" source/deploy/full-stack/bootstrap-admin.py
+"$PYTHON" install/bootstrap-admin.py
 )
 ```
 
@@ -240,14 +256,14 @@ if [ -z "$PYTHON" ]; then PYTHON=/usr/libexec/platform-python; fi
 (
 set -euo pipefail
 cd /root/new-api
-docker compose up -d --wait --wait-timeout 180 statistics image-studio chat
+docker compose up -d --no-build --pull never --wait --wait-timeout 180 statistics image-studio chat
 docker compose ps
 docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U cockpit_monitor -d new_api_cockpit \
   -c 'SELECT version FROM schema_migrations ORDER BY version;'
 )
 ```
 
-**检查点：** 七个服务均运行且健康；迁移查询返回的文件名与 `source/src/new_api_cockpit/migrations/` 中的 SQL 文件逐项一致，当前版本为 `001`～`011`。
+**检查点：** 七个服务均运行且健康；迁移查询返回的文件名与同一安装包的 `install/migrations.txt` 逐项一致，当前版本为 `001`～`011`。
 
 网页池启动入口自动执行缺失的监控库迁移，失败则不会启动网页进程。图片池在网页池健康后启动；图片和聊天角色不执行迁移或调度。
 源库与监控库分开，不能把监控迁移运行到 `new_api` 源库，也不能删除或重新编号已有迁移。
@@ -291,8 +307,8 @@ grep -nE '^# configuration file |listen .*80|server_name|root .*html' "$BACKUP/e
 (
 set -euo pipefail
 cd /root/new-api
-install -m 644 source/nginx.conf.example config/nginx/new-api-cockpit-locations.inc
-install -m 644 source/deploy/full-stack/nginx-http.conf config/nginx/new-api.conf
+install -m 644 install/nginx.conf.example config/nginx/new-api-cockpit-locations.inc
+install -m 644 install/nginx-http.conf config/nginx/new-api.conf
 )
 ```
 
@@ -371,13 +387,13 @@ ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
 
 ### 完成标准
 
-- 七个服务健康，监控库迁移与源码一致。
+- 七个服务健康，监控库迁移与该 Release 的清单一致。
 - 从实际使用地址能登录 New API 和 Cockpit，统计、管理、生图、聊天页面可打开。
 - 应用只监听回环地址，数据库和 Redis 不发布端口，私有文件权限正确。
 
 **满足以上条件即完成安装。** 验收不要求调用付费模型、发送通知或增减真实额度。文件功能如需检查，使用小型允许类型文本即可，不需要上传大文件；上限为 50 MiB，聊天 Nginx 规则为 `51264k`。
 
-交付时记录访问地址、账号名称、源码提交、镜像标识、数据库迁移、数据/配置/备份路径，以及未配置的可选项。不记录密码、真实 KEY 或完整环境变量；`docker compose config -q` 可用于校验，不输出完整私有配置。
+交付时记录访问地址、账号名称、Release 标签、镜像标识、数据库迁移、数据/配置/备份路径，以及未配置的可选项。不记录密码、真实 KEY 或完整环境变量；`docker compose config -q` 可用于校验，不输出完整私有配置。
 
 镜像记录命令：
 
@@ -410,7 +426,7 @@ docker compose images -q | sort -u | xargs -r docker image inspect \
 (
 set -euo pipefail
 cd /root/new-api
-docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 statistics image-studio chat
+docker compose up -d --no-build --pull never --no-deps --force-recreate --wait --wait-timeout 180 statistics image-studio chat
 )
 ```
 
@@ -421,7 +437,7 @@ docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 statis
 安装完成后安排异机备份；实例目录里的副本不能防止整盘丢失。至少保留：
 
 - 两个 PostgreSQL 数据库的一致性备份，以及角色和权限。
-- 完整 `config`、`.env`、Compose、源码提交和镜像标识，尤其是 New API 的持久密钥与通知加密密钥。
+- 完整 `config`、`.env`、Compose、Release 标签/元信息和镜像标识，尤其是 New API 的持久密钥与通知加密密钥。
 - 停止聊天写入后的一致 `data/chat`，包括事件、manifest、快照和文件，保留原 instance ID。
 - 两套 Redis 的持久数据，尤其是防重复派发的图片回执。
 - Nginx 修改前后的配置、服务状态和 SELinux/防火墙变更记录。
@@ -435,7 +451,8 @@ docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 statis
 
 | 现象 | 检查与处理 |
 |---|---|
-| 拉取/构建失败 | 核对网络、架构和受信任镜像来源；修复后继续第 5 节，不重做第 4 节 |
+| Release 附件不存在或校验失败 | 确认标签、附件名、发布状态与下载完整性；保留现场，只重新下载失败文件，不解包错误文件、不运行初始化 |
+| 镜像拉取失败 | 核对版本、网络、架构、仓库权限和受信任镜像来源；修复后继续第 5 节，不重做第 4 节 |
 | PostgreSQL 或 New API 不健康 | 查看对应服务日志，核对角色、库、挂载和连接；首次建库只对空数据目录生效，不删除数据卷 |
 | 管理员初始化停止 | 检查是否交互终端、是否已有 root、密码是否满足版本策略；已有账号用原账号登录，不重置数据库 |
 | 网页池迁移失败 | 查看 `statistics` 日志，核对监控库连接与权限；修复后继续第 7 节，由网页池补做缺失迁移并启动其余请求池 |

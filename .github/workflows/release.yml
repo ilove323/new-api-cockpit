@@ -58,11 +58,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          python deploy/build_release_bundle.py --tag "$RELEASE_TAG" --output-dir dist
+          bundle="new-api-cockpit-${RELEASE_TAG}-deploy.tar.gz"
           cp .env.example default.env.example
           sha256sum compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json > SHA256SUMS
           (cd sql && sha256sum source_pat_function.sql) >> SHA256SUMS
+          assets=(compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json sql/source_pat_function.sql SHA256SUMS "dist/$bundle" "dist/$bundle.sha256")
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json sql/source_pat_function.sql SHA256SUMS --clobber
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG" compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json sql/source_pat_function.sql SHA256SUMS
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG" "${assets[@]}"
           fi

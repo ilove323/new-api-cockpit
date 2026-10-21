@@ -4,7 +4,8 @@
 
 ## 安装与维护
 
-- [从零全量部署](deployment.md)：七个服务、两个数据库、首次授权/账号初始化、IP / HTTPS / SSH 隧道和最小验收。
+- [发布镜像全量部署](deployment.md)：同一 Release 安装包与预构建镜像、建库/账号、Nginx、登录及排错。
+- [源码构建部署](deployment-source.md)：开发提交、本地构建及源码实例更新，与发布镜像安装分开。
 - [已有 New API 接入](existing-installation.md)：复用现有数据库/网络，安装 Cockpit 的配置与反向代理。
 - [New API 兼容范围](compatibility.md)：数据库字段、JWT 登录接口及已核对的网关版本。
 - [升级、备份与回退](upgrading.md)：迁移、密钥与数据备份，以及聊天存储的版本兼容。

@@ -81,60 +81,15 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 
 ## 部署
 
-- **新服务器，全量安装 New API 和所有 Cockpit 组件**：按[从零部署手册](docs/deployment.md)执行，包含建库、角色授权、管理员初始化及 IP / HTTPS 入口。
-- **已运行 New API，只接入 Cockpit**：按[已有系统接入](docs/existing-installation.md)执行。
+默认使用 GitHub Release 的预构建镜像，不在服务器上编译应用：
 
-下面的快速步骤属于第二种方式。准备好 New API、PostgreSQL、Docker Compose，以及 Nginx 或同等反向代理。
-New API 需要支持 JWT 登录和刷新接口，数据库字段见[兼容范围](docs/compatibility.md)。
+- **新服务器全量安装**：[发布镜像部署手册](docs/deployment.md)，下载同一 Release 的安装包和镜像，完成建库、账号、Nginx 与登录。
+- **已有 New API，只安装 Cockpit**：[已有系统接入](docs/existing-installation.md)，使用对应 Release 的 Compose 和环境示例，不替换现有数据库。
+- **开发提交或自行构建**：[源码构建部署](docs/deployment-source.md)，与发布镜像流程分开。
+- **维护与回退**：[升级、备份与回退](docs/upgrading.md)。
 
-### 1. 下载与配置
-
-```bash
-git clone https://github.com/ilove323/new-api-cockpit.git
-cd new-api-cockpit
-cp .env.example .env
-chmod 600 .env
-```
-
-按[已有系统接入文档](docs/existing-installation.md)填写 `.env`：
-
-- `PG*`：New API 原库的专用查询账号，授予所需表的 SELECT 权限。
-- `NEW_API_NETWORK`、`NEW_API_INTERNAL_URL`：现有 Docker 网络和 New API 内部地址。
-- `MONITOR_DATABASE_URL`：独立监控库，保存预算、归档、通知配置、定时规则和操作记录。建库方法见[监控库配置](docs/monitoring.md#独立数据库)。留空时提供只读查询。
-- `NOTIFICATION_ENCRYPTION_KEY`：保存通知凭据时填写（飞书、钉钉、邮件认证密码），并与监控库一起备份。
-- 生图工作站：源库查询账号增加 `abilities` 的路由列 SELECT（含 `priority`、`weight`）；图片池使用 `COCKPIT_PROCESS_ROLE=image`，必须配置版本化 `IMAGE_STUDIO_CAPABILITIES_FILE` 和短期 Redis 请求回执。见[图片池配置](docs/existing-installation.md#生图工作站请求池)。
-
-需要补建用户 PAT 时，由源库表所有者安装 [source_pat_function.sql](sql/source_pat_function.sql)，
-再给查询账号授予函数执行权限，步骤见[用户管理部署](docs/users.md#安装补建函数与最小权限)。
-应用账号无需业务表的 UPDATE 权限，PAT 也无需填入 `.env`。
-
-### 2. 启动
-
-```bash
-docker compose up -d --build
-docker compose ps
-curl --fail-with-body http://127.0.0.1:8091/healthz
-```
-
-配置监控库后，启动入口自动应用缺失的迁移，余额和配额定时器随应用运行。
-配额规则在用户管理页右上角的设置中配置，保存后从下一个周期执行。
-
-上面是源码构建方式。使用发布镜像时，从对应 [Release](https://github.com/ilove323/new-api-cockpit/releases)
-下载配置文件，设置 `IMAGE_TAG` 后按[镜像部署说明](docs/releasing.md#使用预构建镜像)启动。
-已有安装请先看[升级、备份与回退](docs/upgrading.md)。
-
-### 3. 接入现有站点
-
-把 [nginx.conf.example](nginx.conf.example) 中的 location 加入 New API 的 HTTPS 站点，检查配置并重载。
-浏览器访问 `https://<你的域名>/cockpit/`，由侧边栏切换页面。
-New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和端口下，会话才能共用。
-
-没有有效登录时会打开登录页，密码和二次验证码由 New API 验证。
-使用 SSO、通行密钥或人机验证的站点，可从登录页进入官方登录流程，完成后返回。
-详细流程见[登录与会话](docs/authentication.md)。
-
-应用端口默认只监听宿主机 `127.0.0.1:8091`，用于反向代理和探活，不应直接公开到公网。
-图片池监听 `127.0.0.1:8092`，代理仅将生成/编辑两个精确路径转到图片池，页面和模型目录仍走 `8091`。
+完整安装要求 Release 包含全量安装附件和聊天组件；`v0.3.0` 不包含这些制品，不能与开发分支模板混用。可用功能以所选 Release 为准。
+New API 与 Cockpit 的浏览器入口须同协议、同主机、同端口，账号共用；应用端口只绑定回环地址，由 Nginx 统一反向代理。
 
 ## 界面预览
 

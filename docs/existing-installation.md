@@ -1,8 +1,8 @@
-# 接入已有 New API
+# 接入已有 New API（发布镜像）
 
 本页仅用于已有 New API / PostgreSQL 的接入。全新服务器应使用[全量部署手册](deployment.md)。
 
-以下命令均在 Cockpit 源码项目根目录执行。
+以下命令在独立 Cockpit 部署目录执行，使用同一 Release 的预构建镜像和公开附件。源码构建另见[源码部署](deployment-source.md#接入已有-new-api-的源码构建)。
 
 ## 部署条件
 
@@ -14,10 +14,36 @@
 
 ## 配置与启动
 
-根据 [.env.example](../.env.example) 创建 `.env`，将权限设为 `600`，填写实际数据库连接参数：
+从目标 [Release](https://github.com/ilove323/new-api-cockpit/releases) 下载配套附件，在新建的空部署目录执行下面的命令；替换 `vX.Y.Z`，不要使用 `latest`：
+
+```bash
+(
+set -euo pipefail
+umask 077
+RELEASE_TAG='vX.Y.Z'
+[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+install -d -m 700 /root/new-api/cockpit-release
+cd /root/new-api/cockpit-release
+test -z "$(find . -mindepth 1 -maxdepth 1 -print -quit)"
+BASE="https://github.com/ilove323/new-api-cockpit/releases/download/$RELEASE_TAG"
+for asset in compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json source_pat_function.sql SHA256SUMS; do
+  curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$asset" "$BASE/$asset"
+done
+sha256sum -c SHA256SUMS
+cp compose.release.yml docker-compose.yml
+cp default.env.example .env
+printf '\nIMAGE_TAG=%s\n' "${RELEASE_TAG#v}" >> .env
+printf '%s\n' "$RELEASE_TAG" > release-tag.txt
+chmod 600 .env docker-compose.yml release-tag.txt
+)
+```
+
+后续所有命令在 `/root/new-api/cockpit-release` 执行。已有安装应保留原 `.env`、密钥与项目名，按[升级步骤](upgrading.md)处理，不重新执行上面的首次下载流程。
+编辑 `.env` 填写实际连接参数；`IMAGE_TAG` 必须为匹配该 Release 的版本号（去掉 `v`）：
 
 | 参数 | 说明 |
 | --- | --- |
+| `IMAGE_TAG` | 所选 Release 的精确镜像版本，如标签 `vX.Y.Z` 对应 `X.Y.Z` |
 | `PGHOST` | PostgreSQL 在共享 Docker 网络中的服务名或网络别名 |
 | `PGPORT` | PostgreSQL 容器内部端口，通常为 `5432` |
 | `PGDATABASE` | New API 使用的数据库名 |
@@ -28,8 +54,6 @@
 | `IMAGE_STUDIO_MEMORY` | 图片池内存上限，默认 `1g`；结合图片大小和两笔并发核算 |
 | `COCKPIT_PROCESS_ROLE` | 默认 `web`；图片池固定为 `image`，仅承担生成/编辑，不启动定时器或迁移 |
 | `IMAGE_STUDIO_CAPABILITIES_FILE` | 可选能力 JSON 文件在容器内的路径；只读挂载，网页池与图片池使用同一份配置 |
-| `PYTHON_IMAGE` | 构建使用的 Python 镜像，默认 `python:3.12-slim` |
-| `PIP_INDEX_URL` | 可选 Python 包索引地址 |
 | `NEW_API_NETWORK` | 已有 New API Docker 网络名，默认 `new-api-network` |
 | `COCKPIT_COOKIE_SECURE` | 默认 `true`，会话 Cookie 仅通过 HTTPS 发送；仅可信 HTTP 开发/内网可显式设为 `false` |
 | `NEW_API_INTERNAL_URL` | New API 在共享 Docker 网络中的内部地址，默认 `http://new-api:3000`；用于官方会话验证、用户/KEY 管理以及手工和定时用户配额增减 |
@@ -49,7 +73,9 @@
 
 ```bash
 chmod 600 .env
-docker compose up -d --build
+docker compose config -q
+docker compose pull
+docker compose up -d --no-build --pull never
 docker compose ps
 docker compose logs --tail 100 statistics
 ```
@@ -135,7 +161,7 @@ PORT=8091
 重新创建容器，使端口映射生效（镜像部署请使用对应的 Compose 文件）：
 
 ```bash
-docker compose up -d --build --force-recreate statistics
+docker compose up -d --no-build --pull never --force-recreate statistics
 docker compose ps
 ```
 
@@ -269,7 +295,7 @@ Redis 不可用、AOF 写入失败、策略不符时，付费请求在派发前�
 
 `source_pat_function.sql` 安装源库 PAT 补建函数：目标用户没有 PAT 时补建，已有 PAT 原样返回。
 函数仅允许这一项写入，用户余额、密码和 KEY 由官方 API 修改。
-脚本位于源码仓库根目录的 `sql/`，Docker 镜像中为 `/app/sql/source_pat_function.sql`。
+发布附件下载后脚本位于部署目录的 `source_pat_function.sql`，Docker 镜像中为 `/app/sql/source_pat_function.sql`；使用与镜像同版本的文件。
 函数授权与安全边界见[用户管理](users.md#安装补建函数与最小权限)。
 
 监控迁移保存在 Python 应用包中，随镜像和安装包分发。
@@ -280,6 +306,7 @@ Redis 不可用、AOF 写入失败、策略不符时，付费请求在派发前�
 
 ## 可选 AI 助手请求池
 
+先确认所选 Release 已包含聊天组件和 profile；`v0.3.0` 不包含聊天，不能把开发分支的 chat 模板套在旧镜像上。
 聊天默认关闭，不影响现有web/image服务。启用、私有data目录权限、稳定instance ID、只读模型能力文件及可选Compose profile步骤见[AI助手配置](chat.md#配置与可选请求池)。
 chat角色使用同镜像独立8093池，只有它挂载`./data/chat`；不得把数据目录放进镜像或公开为静态资源。
 该角色不执行监控迁移/定时器，readiness不依赖监控库或图片回执Redis；没有新增数据库迁移。

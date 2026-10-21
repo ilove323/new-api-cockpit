@@ -12,10 +12,10 @@
 本节仅适用于[全量部署手册](deployment.md)创建的七服务实例。命令在 `/root/new-api` 执行，而不是 `source/`。
 保留实例根目录的 Compose、项目名、`.env`、整个 `config/`、instance ID 和数据目录；不能再次运行 `init-config.py`、管理员初始化或首次建库脚本。
 
-1. 记录当前源码提交及三个 Cockpit 池的镜像，给旧镜像保留单独回退标签。预先核对两个数据库、角色/权限、私有配置及聊天的备份计划。
-2. 获取并核对目标提交，再更新 `source/`。核对该版本对 Compose、角色环境文件和能力文件的要求，按差异合并，不能整套替换随机密钥。更新 `source-commit.txt`；使用新的独立 `COCKPIT_IMAGE` 标签构建 `statistics` 一次，三个池必须引用同一新镜像。先构建好再停机，不改变基础组件的镜像版本。
+1. 记录当前 Release 标签及三个 Cockpit 池的镜像，给旧镜像保留单独回退标签。预先核对两个数据库、角色/权限、私有配置及聊天的备份计划。
+2. 选择已正式发布的目标版本，下载同版本安装包及校验文件到 `releases/` 的独立目录，校验后先解包到暂存目录，不覆盖正在使用的 `install/`。核对 Compose、角色环境文件、能力文件和迁移差异；预先拉取同版本 GHCR 镜像，不修改基础组件版本。源码实例的获取和构建另见[源码实例更新](deployment-source.md#源码实例的更新)。
 3. 在明确的维护窗口排空图片、聊天及管理操作，再停止 `statistics image-studio chat`；不停止或清理 New API、PostgreSQL、两套 Redis。停止写入后备份整个 `data/chat` 和私有配置，并完成数据库 dump；下方示例备份必须非空且能列出内容。
-4. 只重建 `statistics image-studio chat`。先等网页池自动迁移并健康，再启动图片和聊天池。不要运行无服务名的 `down` 或 `up --force-recreate` 波及基础组件。
+4. 按核对后的差异更新公开安装文件与运行 Compose，将 `.env` 中唯一的 `COCKPIT_IMAGE` 更新为新版本，保留其他参数与密钥并记录新标签。仅用 `--no-build --pull never --no-deps` 重建 `statistics image-studio chat`。先等网页池自动迁移并健康，再启动图片和聊天池。不要运行无服务名的 `down` 或 `up --force-recreate` 波及基础组件。
 5. 按[最小验收](deployment.md#9-登录与验收)核对登录、迁移和数据保留。聊天回退受本文末尾的事件格式兼容限制；不能用恢复旧备份无提示覆盖升级后新增数据。
 
 数据库备份示例（`STAMP` 和备份目录在同一片段中建立）：
@@ -69,15 +69,7 @@ docker exec -i <PostgreSQL容器名> pg_restore -l \
 先准备新镜像，再停止应用，避免停机期间等待构建或下载。保留 `.env`、端口、网络、协议文件和私有 override，
 不要直接覆盖环境参数。下面两种方式选一种，所有命令都在同一个实际 Compose 项目中执行。
 
-### 源码构建
-
-```bash
-docker compose build statistics image-studio
-docker compose stop statistics image-studio
-docker compose up -d --no-build --no-deps --pull never statistics image-studio
-docker compose ps
-docker compose logs --tail=100 statistics image-studio
-```
+源码项目的构建和切换步骤已移至[源码构建部署](deployment-source.md#源码实例的更新)。以下是发布镜像流程。
 
 ### 发布镜像
 

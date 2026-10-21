@@ -9,8 +9,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/pip install ruff build
 .venv/bin/python -m unittest discover -s tests
-.venv/bin/ruff check src tests
-.venv/bin/ruff format --check src tests
+.venv/bin/ruff check src tests deploy
+.venv/bin/ruff format --check src tests deploy
 node --test tests/*.cjs
 npm ci --prefix frontend/studio --ignore-scripts
 npm --prefix frontend/studio run check

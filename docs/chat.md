@@ -102,7 +102,7 @@ chmod 700 ./data/chat
 chat 服务 bind mount `./data/chat:/app/data/chat`，源目录缺失应拒绝启动，不回退 `/tmp` 或 chmod777。
 Nginx 将 `/cockpit/api/chat/` 转到 chat 池并关闭 SSE 缓冲；页面/静态资源仍走 web，不公开 data 静态目录。
 上传路径的 `client_max_body_size` 使用 `51264k`，容纳 50 MiB 文件与 multipart 头；不要放大所有 API、Skill、工具输出或上下文限制。
-准备并单独审批部署后才执行 `docker compose --profile chat up -d --build`；发布镜像需包含当前代码，旧发布镜像不能证明新增功能已上线。
+选择包含聊天组件的 Release，准备数据与配置后执行 `docker compose --profile chat pull`，再执行 `docker compose --profile chat up -d --no-build --pull never`。旧发布镜像不能通过添加 profile 获得新功能；源码构建另见[源码部署](deployment-source.md)。
 
 ### 模型能力
 

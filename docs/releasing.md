@@ -1,67 +1,48 @@
 # 发版与镜像
 
-维护者：ilove323。版本唯一来源为 `pyproject.toml`。
-Python 依赖范围使用 `requirements.txt`；工作站构建工具由 `frontend/studio/package-lock.json` 锁定。
-提交时包含生成的 `static/studio-upstream.js`，CI 校验它与源码一致；发布镜像不在启动时构建前端。
-历史发布说明统一放在 [GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)，
-仓库文档只描述当前代码与操作方法。
+维护者：ilove323。正式版本唯一来源为 `pyproject.toml`，历史发布说明保存在 [GitHub Releases](https://github.com/ilove323/new-api-cockpit/releases)。
+部署使用预构建镜像；源码构建部署另见[独立手册](deployment-source.md)。本页说明维护者如何生成和发布配套制品，不在服务器上执行安装。
 
 ## 仓库权限
 
-GitHub Actions 需获准运行，发布任务通过 `GITHUB_TOKEN` 获得 `packages:write` 和
-`contents:write`。GHCR 包需设为 public 才能匿名拉取，公开仓库不保证包自动公开。
-
-建议 `main` 禁止强制推送，并要求 CI 通过；当前只有一个维护者，
-不强制要求另一人的 PR 审批。权限、分支保护与私密漏洞报告在 GitHub 设置页启用。
+GitHub Actions 需要 `packages:write` 和 `contents:write`。GHCR 包须设为 public 才能匿名拉取，公开仓库不会自动使包公开。
+`main` 建议禁止强制推送并要求 CI 通过；当前只有一个维护者，不强制另一人的 PR 审批。
 
 ## 发布流程
 
-1. 确认当前源码、文档、Compose 与数据库迁移一致，更新 `pyproject.toml` 正式版本。
-2. 通过 PR 合并到 `main` 并通过 CI；准备发布说明，列明功能、升级要求和安全边界。
-3. 创建与版本完全匹配的 `vX.Y.Z` 标签并推送该标签。
-4. `release.yml` 复用 CI，校验版本与标签后构建 AMD64/ARM64 镜像，发布到 GHCR。
-5. 工作流创建 GitHub Release，附带配套 Compose、环境变量/Nginx 示例、图片协议模板、源库 PAT 补建 SQL 和校验和。
-   如维护者已提前创建 Release，工作流只补充或更新附件，不覆盖手写发布说明，也不重复创建 Release。
-6. GitHub Release 正文包含功能、升级、数据库与配置说明，不在当前文档目录积累按版本命名的历史文件。
+1. 确认源码、Compose、部署文档、迁移及功能范围一致，在 `pyproject.toml` 更新为新的正式版本；不能用新代码覆盖已发布标签或旧版本镜像。
+2. 通过 PR 合并到 `main` 并通过 CI，准备功能、升级、数据库及兼容性说明。
+3. 创建与版本匹配的 `vX.Y.Z` 标签并推送标签；目前仅支持正式标签，不接受预发布后缀。
+4. `release.yml` 复用 CI，校验标签与版本后构建 AMD64/ARM64 镜像，推送 `ghcr.io/ilove323/new-api-cockpit:X.Y.Z`；保留 `latest` 供发现，部署固定精确版本或 digest。
+5. 工作流执行 `deploy/build_release_bundle.py`，生成全量安装包及独立校验文件，同时保留已有 New API 接入所用的散文件附件。
+6. 工作流创建 Release 并上传制品；提前创建 Release 时仅补充附件，不覆盖手写说明。核对镜像、附件均成功发布后再交付部署地址；只创建 Release 页面不表示镜像和安装包已就绪。
 
-目前只支持 `vX.Y.Z` 正式标签，预发布标签会被拒绝。
-镜像标签包括精确版本与 `latest`；生产部署应固定精确版本或 digest。
-工作流只发布制品，不部署服务器。
+开发分支推送不发布镜像或 Release，发布工作流也不部署服务器。尚未发布的功能不能通过把现有正式镜像换上新模板获得。
+Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/package-lock.json` 锁定，提交配套生成文件，运行镜像不在启动时构建前端。
 
-开发提交推送到 `develop` 不触发普通 push CI 或正式发版；PR、`main` push、
-手动运行和发版流程按 `.github/workflows/` 中的触发条件执行。
+## 发布附件
+
+| 使用方式 | 附件 | 校验 |
+|---|---|---|
+| 新服务器全量安装 | `new-api-cockpit-vX.Y.Z-deploy.tar.gz` | 同名 `.tar.gz.sha256` |
+| 接入已有 New API | `compose.release.yml`、`default.env.example`、`nginx.conf.example`、`image-studio-capabilities.example.json`、`source_pat_function.sql` | `SHA256SUMS`，只覆盖这组散文件 |
+
+完整安装包只包含 `install/` 下的公开部署文件：
+
+- 不含 `build` 的七服务 Compose，三池共用同一 `COCKPIT_IMAGE`。
+- `release.env` 与 `release.json`：固定版本、标签和 GHCR 镜像。
+- 首次私有配置生成器、交互式管理员初始化器、建库/授权/PAT SQL。
+- HTTP 默认站和 Cockpit Nginx location、图片能力示例。
+- `migrations.txt`：由同一提交生成的监控迁移文件名清单；真正的迁移 SQL 随应用镜像分发。
+
+安装包不包含应用源码、构建 override、`.env`、真实账号、密钥、数据或部署日志。部署密钥在目标服务器首次生成，不从构建环境打包带出。
+
+`v0.3.0` 的既有附件不包含全量安装包及聊天组件；新安装方式需先发布包含这些制品的新版本，不能补传开发分支安装包来伪装旧版本兼容。
 
 ## 使用预构建镜像
 
-从目标 Release 下载全部部署附件：`compose.release.yml`、`default.env.example`、`nginx.conf.example`、
-`image-studio-capabilities.example.json`、`source_pat_function.sql` 和 `SHA256SUMS`。
-将附件放在同一目录，校验后再复制环境变量模板：
+- **全量安装：** 按[发布镜像部署](deployment.md)选择正式版本，校验安装包，直接 `pull` / `up --no-build`。
+- **接入已有 New API：** 按[已有系统接入](existing-installation.md)下载和校验散文件，填写同版本 `IMAGE_TAG` 后拉取镜像。
+- **升级：** 保留原配置、密钥、instance ID 和数据，按[升级与回退](upgrading.md)核对差异；不自动清库或重建账号。
 
-```bash
-sha256sum -c SHA256SUMS
-test -e .env || cp default.env.example .env
-chmod 600 .env
-```
-
-已有安装保留原 `.env`、连接串和密钥，按新模板逐项补充配置，不直接覆盖。
-首次部署配置数据库与现有网络，并按[监控库初始化](monitoring.md)创建独立监控库。
-需要补建用户 PAT 时，由源库表所有者安装同一 Release 的 `source_pat_function.sql` 并授权，
-不要将其作为监控库迁移执行；详见[用户与令牌管理](users.md#安装补建函数与最小权限)。
-图片池需要协议文件与源库读权限；使用同一 Release 的协议模板，按[图片池配置](existing-installation.md#生图工作站请求池)填写并只读挂载后再启动。模板中的示例渠道并非可直接使用的上游配置。
-
-```ini
-IMAGE_TAG=<与配置模板对应的正式版本>
-```
-
-```bash
-docker compose -f compose.release.yml up -d
-docker compose -f compose.release.yml ps
-curl --fail-with-body http://127.0.0.1:8091/healthz
-curl --fail-with-body http://127.0.0.1:8092/healthz
-```
-
-当前 Compose 包含 `statistics` 页面/调度池、`image-studio` 图片请求池和独立的 `image-studio-receipts` Redis。
-两个应用服务使用同一版本镜像，只有页面池执行余额和配额定时器。
-镜像、配置和操作文档必须来自同一个 Release；测试开发分支时按[部署文档](deployment.md)从源码构建，
-不要混用开发分支的配置与正式镜像。
-升级与回退遵循[升级说明](upgrading.md)，不会通过发版自动清空监控库。
+`IMAGE_TAG=X.Y.Z` 用于已有系统接入模板；完整安装使用安装包生成的 `COCKPIT_IMAGE=ghcr.io/ilove323/new-api-cockpit:X.Y.Z`。两套模板和参数不混用。

@@ -45,8 +45,8 @@ jobs:
         with:
           node-version: "22"
       - run: pip install . ruff build
-      - run: ruff check src tests
-      - run: ruff format --check src tests
+      - run: ruff check src tests deploy
+      - run: ruff format --check src tests deploy
       - run: python -m unittest discover -s tests
       - run: |
           while IFS= read -r -d '' file; do
