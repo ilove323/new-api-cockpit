@@ -46,6 +46,7 @@ from new_api_cockpit.platform.identity import Principal, RequestAccess
 from new_api_cockpit.platform.host import HostServices
 from new_api_cockpit.composition import register_image, register_chat
 from new_api_cockpit.features.chat import http as chat_http
+from new_api_cockpit.features.account_mcp import http as account_mcp_http
 
 from new_api_cockpit.report import (
     TZ,
@@ -86,6 +87,8 @@ USER_ENDPOINTS = {
 
 
 USER_ENDPOINTS |= image_http.USER_ENDPOINTS | chat_http.USER_ENDPOINTS
+# This endpoint has its own PAT-only boundary; browser sessions do not grant it.
+USER_ENDPOINTS.add(account_mcp_http.ENDPOINT)
 
 
 class JSONProvider(DefaultJSONProvider):
@@ -261,6 +264,11 @@ def authenticate():
         return jsonify(error="该实例只处理图片请求。"), 404
     if role == "chat" and request.endpoint not in chat_http.API_ENDPOINTS | {"health"}:
         return jsonify(error="该实例只处理聊天请求。"), 404
+    if request.endpoint == account_mcp_http.ENDPOINT:
+        # Keep normal-user PATs OUT of request_identity()/administrator APIs.
+        # The MCP handler revalidates PATs/scopes through official own-account
+        # endpoints, without accepting cookies, JWTs, or requested identities.
+        return None
     if request.endpoint in chat_http.USER_ENDPOINTS:
         if os.environ.get("CHAT_ENABLED", "false").lower() != "true":
             return jsonify(error="聊天功能未启用。", code="CHAT_NOT_FOUND"), 404
@@ -390,6 +398,8 @@ def headers(response):
             response.set_data(app.json.dumps(body))
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    if request.endpoint == account_mcp_http.ENDPOINT and response.status_code == 401:
+        response.headers["WWW-Authenticate"] = 'Bearer realm="cockpit-account-mcp"'
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
     )
@@ -1313,6 +1323,7 @@ def feature_write(header, content_type):
 feature_host = HostServices(feature_access, feature_write, lambda: load_site_name())
 register_image(app, feature_host)
 register_chat(app, feature_host, verify_session)
+app.register_blueprint(account_mcp_http.create_blueprint())
 
 
 def run_development():

@@ -4,6 +4,8 @@
 
 ## 1. 运行请求
 
+当前界面不区分普通聊天和 Agent，默认完整助手（内部兼容值 `mode:"files"`）。新请求中的引用附件都由服务器读取并校验完整正文，记录 `attachment_mode:"server-text-v1"` 供历史重建，工具调用不是附件分析的前置条件。已确认聊天协议默认提供文件/联网工具，不要求逐模型声明；运维明确关闭工具时不阻断附件正文。旧 API `mode:"chat"` 保留无工具兼容。超限在派发前拒绝，不截断或自动重试。详见[附件正文](../../chat.md#附件正文与按需工具)。
+
 `POST /cockpit/api/chat/conversations/{cid}/runs` 保留原必填字段，新增可选字段：
 
 > 最新页面默认显式提交 `candidate_count:1`、`context_strategy:"adaptive"`、`auto_memory:true`，文件与联网模式提交 `web_enabled:true`（服从站点能力限制），不再提供四个选择控件。下列 API 缺省值保持兼容，不等同于当前页面默认行为；旧多候选记录仍可选择后续分支。见[前端契约](ui.md)。
@@ -107,3 +109,18 @@ run summary 新增 `candidate_count,selected_candidate,main_model_requests,aux_m
 旧程序可能不认识新增事件/字段。升级与降级先停写、一致备份，使用兼容二进制或恢复升级前数据；不能盲目换回旧镜像继续写扩展日志。
 
 补充资源边界：adaptive 来源覆盖最多 16384 轮且 UUID 元信息最多 640 KiB，与 recent 选择上限 1024 轮分开；超出明确 413，保留原始历史且不派发收费调用。达到三次主动压缩后，若当前窗口仍在硬输入预算内则继续主调用并给出提示；只有硬预算不够才停止，不能因75%主动阈值误终止本可继续的运行。
+
+## 文档与图像附件兼容
+
+文件 DTO 的字段和 `file.added` 事件结构不变；上传 MIME 与扩展名及真实解析格式一致，输出仍只允许文本。`server-text-v1` 保留为服务端读取引用的兼容标记，内部 `attachment_texts` 现在可携带 `{text,images}`，不接受客户端注入该字段。事件不保存派生正文或 Base64；按同一不可变原件重建历史，图片保留于用户消息的多模态内容。
+
+三种协议使用 Chat `image_url`、Responses `input_image` 和 Anthropic `image/source`；只允许服务器产生的有界 JPEG data URI，不支持传入任意远程图片 URL。文本上下文计量不把 Base64 当成正文；每张图预留 4096 上下文字节，实际 wire JSON 仍单独限制为 4 MiB，实际用量不由预留值推算。
+
+生产解析子进程移除凭据环境、关闭继承描述符，限制 256 MiB 地址空间、CPU、文件输出和时间；PDFium 使用独立进程避免线程不安全，Office ZIP/XML 有展开与实体限制。默认 PDFium wheel 不启用 V8/XFA，不运行 JavaScript；Office 不运行宏、公式或外链。原件不转换、不覆盖。
+
+升级后产生的二进制文件元数据不能直接交给不认识 MIME 的旧镜像。运维回退镜像须保留文件记录读取兼容性，允许历史、原件下载与文本聊天；回退版本对二进制上传/模型引用显式返回需要升级，不伪造解析结果，不回滚聊天或数据库数据。
+
+
+### 二进制输出
+
+`write_file(name, content)` 保持双字符串参数及原有结果 DTO，四文件工具数量不变。PDF/DOCX 将 Markdown 排版；XLSX 使用 sheets/rows JSON；PNG/JPEG/WebP 使用有界画布 JSON。生成在无凭据独立进程中执行，不运行模型代码或访问模型指定路径/URL；生成后二进制必须通过真实解析校验才提交 `file.added(kind=output)`，MIME 与扩展名一致。输出内容描述 64 KiB，生成文件 4 MiB，同名版本与持久化 `(run_id,call_id)` 去重不变。旧纯文本记录完全兼容；回退镜像必须识别新二进制输出 MIME，保留读取、历史与下载，不回灌聊天或数据库。参见[聊天说明](../../chat.md#生成可下载文件)。

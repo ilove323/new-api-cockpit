@@ -44,6 +44,7 @@ dist/
 # Generated data and runtime files
 *.xlsx
 *.xls
+!tests/fixtures/chat-media/example.xls
 *.csv
 *.log
 *.pid

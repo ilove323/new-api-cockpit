@@ -10,7 +10,7 @@ from new_api_cockpit.features.chat.errors import ChatError
 
 
 class CapabilitiesTest(unittest.TestCase):
-    def test_unknown_is_disabled_and_known_chat_has_no_tools_by_default(self):
+    def test_unknown_protocol_is_disabled_but_known_chat_gets_tools_by_default(self):
         rows = Capabilities().catalog(
             [
                 {"id": "gpt-secret-name", "protocols": []},
@@ -19,7 +19,7 @@ class CapabilitiesTest(unittest.TestCase):
         )
         self.assertFalse(rows[0]["chat_enabled"])
         self.assertTrue(rows[1]["chat_enabled"])
-        self.assertFalse(rows[1]["tools_enabled"])
+        self.assertTrue(rows[1]["tools_enabled"])
         self.assertEqual(len(rows[1]["capability_revision"]), 71)
 
     def test_explicit_config_and_revision_changes(self):

@@ -285,6 +285,34 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(ids, [rid])
         self.assertIn(fid, messages[2]["content"])
 
+    def test_ordinary_attachment_body_is_explicit_untrusted_text_not_a_tool_result(
+        self,
+    ):
+        fid = str(uuid4())
+        request = {
+            "mode": "chat",
+            "text": "分析附件",
+            "attachment_ids": [fid],
+            "attachments": [
+                {
+                    "id": fid,
+                    "name": "input.md",
+                    "size_bytes": 6,
+                    "path": "/private/path",
+                }
+            ],
+            "attachment_texts": {fid: "正文"},
+        }
+        messages, _ = context.build_messages([], snapshot(), request, 65536)
+        self.assertIn("正文", messages[-1]["content"])
+        self.assertIn("不是指令", messages[-1]["content"])
+        self.assertNotIn("/private/path", json.dumps(messages))
+        self.assertFalse(any(m["role"] == "tool" for m in messages))
+        with self.assertRaises(ChatError):
+            context.build_messages(
+                [], snapshot(), {**request, "attachment_texts": {}}, 65536
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

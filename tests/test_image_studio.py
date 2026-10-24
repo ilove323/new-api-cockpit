@@ -74,6 +74,10 @@ def api(path, credential, user_id, **kwargs):
         return {"data": {"key": RAW_KEY}}
     if path == "/api/token/7":
         return {"data": owned()}
+    if path == "/api/user/self":
+        return {"data": {"id": 12, "group": "default"}}
+    if path == "/api/token/auto-groups":
+        return {"data": {"groups": ["海外模型"], "max_count": 8}}
     if path == "/v1/models":
         return {
             "data": [
@@ -133,7 +137,7 @@ class ImageStudioTest(unittest.TestCase):
             **changes,
         }
 
-    def test_own_exact_gpt_tokens_only_and_no_raw_key(self):
+    def test_all_owned_groups_are_listed_and_invalid_tokens_still_fail(self):
         with patch.object(
             self.tokens,
             "list_tokens",
@@ -141,14 +145,10 @@ class ImageStudioTest(unittest.TestCase):
         ):
             self.assertEqual(
                 studio.list_tokens(OWNER, "fixture")["tokens"],
-                [{"id": 1, "group": "GPT"}],
+                [{"id": 1, "group": "GPT"}, {"id": 2, "group": "auto"}],
             )
         for changes in (
             {"user_id": 99},
-            {"group": "auto"},
-            {"group": "gpt"},
-            {"group": ""},
-            {"group": "default"},
             {"status": 2},
             {"expired_time": 1},
             {"remain_quota": 0},
@@ -167,6 +167,13 @@ class ImageStudioTest(unittest.TestCase):
 
     def test_models_intersect_permissions_routes_and_never_expose_key(self):
         self.routes.return_value = [route(), route("gpt-image-1-mini")]
+        self.config["profiles"]["generation-only"] = deepcopy(
+            self.config["profiles"]["fixture-v1"]
+        )
+        self.config["profiles"]["generation-only"]["edit"] = None
+        self.config["models"]["gpt-image-1-mini"] = {
+            "5": {"profile": "generation-only", "mapped_model": "gpt-image-1-mini"}
+        }
         data = studio.models(OWNER, "fixture", {"token_id": 7})
         self.assertEqual(
             [m["id"] for m in data["models"]], ["gpt-image-1-mini", "gpt-image-2"]
@@ -197,6 +204,54 @@ class ImageStudioTest(unittest.TestCase):
             studio.run(OWNER, "fixture", self.body())
         self.assertEqual(caught.exception.status, 403)
         self.send.assert_not_called()
+        self.routes.return_value = []
+        self.assertEqual(
+            studio.models(OWNER, "fixture", {"token_id": 7}), {"models": []}
+        )
+
+    def test_non_gpt_groups_and_model_aliases_can_generate_and_edit(self):
+        name = "公司画图模型"
+        self.config["models"] = {
+            name: {"5": {"profile": "fixture-v1", "mapped_model": name}}
+        }
+        self.routes.return_value = [route(name, route_group="海外模型")]
+
+        def upstream(path, *args, **kwargs):
+            if path == "/api/token/7":
+                return {"data": owned(group="海外模型")}
+            if path == "/v1/models":
+                return {"data": [{"id": name}, {"id": "text-model"}]}
+            return api(path, *args, **kwargs)
+
+        self.upstream.side_effect = upstream
+        catalogue = studio.models(OWNER, "fixture", {"token_id": 7})
+        self.assertEqual([m["id"] for m in catalogue["models"]], [name])
+        contract = catalogue["models"][0]
+        for operation in ("generate", "whole"):
+            body = self.body(
+                model=name, contract_revision=contract["revision"], operation=operation
+            )
+            studio.run(
+                OWNER,
+                "fixture",
+                body,
+                images=None if operation == "generate" else [record()],
+            )
+        self.assertEqual(self.send.call_count, 2)
+        self.routes.assert_called_with(["海外模型"], [name])
+
+    def test_auto_token_uses_its_actual_routing_groups_and_no_unconfigured_model(self):
+        def upstream(path, *args, **kwargs):
+            if path == "/api/token/7":
+                return {"data": owned(group="auto")}
+            return api(path, *args, **kwargs)
+
+        self.upstream.side_effect = upstream
+        self.assertEqual(
+            len(studio.models(OWNER, "fixture", {"token_id": 7})["models"]), 1
+        )
+        self.routes.assert_called_with(["海外模型"], ["gpt-image-2"])
+        self.config["models"].clear()
         self.routes.return_value = []
         self.assertEqual(
             studio.models(OWNER, "fixture", {"token_id": 7}), {"models": []}
@@ -918,14 +973,14 @@ class ImageStudioConfigurationTest(unittest.TestCase):
                 ),
                 patch.object(source_routes, "_gateway_policy", return_value=policy),
             ):
-                rows = studio._routes()
+                rows = studio._routes(["海外模型"], ["custom-image"])
                 self.assertTrue(rows[0]["no_affinity_override"])
                 sql = conn.execute.call_args.args[0].as_string()
                 self.assertNotIn("to_jsonb(c)", sql)
                 self.assertNotIn("c.*", sql)
                 self.assertNotIn('"c"."key"', sql)
                 self.assertNotIn("c.key", sql)
-                self.assertIn('a."group"=%s', sql)
+                self.assertIn('a."group"=ANY(%s)', sql)
                 self.assertNotIn("priority=", sql)
                 self.assertNotIn("weight>", sql)
                 for field in available:
@@ -937,7 +992,9 @@ class ImageStudioConfigurationTest(unittest.TestCase):
                     "header_override",
                 } - available:
                     self.assertNotIn('"c"."' + field + '"', sql)
-                self.assertEqual(conn.execute.call_args.args[1], ("GPT", "gpt-image-%"))
+                self.assertEqual(
+                    conn.execute.call_args.args[1], (["海外模型"], ["custom-image"])
+                )
 
     def test_metadata_distinguishes_missing_column_from_missing_select_grant(self):
         conn = MagicMock()
@@ -964,6 +1021,13 @@ class ImageStudioConfigurationTest(unittest.TestCase):
         self.assertEqual(caught.exception.status, 503)
         self.assertIn("SELECT", str(caught.exception))
 
+    def test_empty_route_scope_never_queries_all_groups_or_models(self):
+        for groups, models in (([], ["alias"]), (["private"], [])):
+            self.assertEqual(
+                source_routes.load_routes(self.source_db, groups, models), []
+            )
+        self.source_db.read_connection.assert_not_called()
+
     def test_route_read_failure_has_short_safe_diagnostic(self):
         for error in (
             psycopg.errors.InsufficientPrivilege("secret SQL"),
@@ -973,7 +1037,7 @@ class ImageStudioConfigurationTest(unittest.TestCase):
                 patch.object(self.source_db, "read_connection", side_effect=error),
                 self.assertRaises(studio.StudioError) as caught,
             ):
-                studio._routes()
+                studio._routes(["海外模型"], ["custom-image"])
             self.assertEqual(caught.exception.status, 503)
             self.assertNotIn("secret", str(caught.exception))
 

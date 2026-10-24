@@ -947,6 +947,10 @@ def _arguments(name, args, context):
         _url(args["url"])
         if name == "download_url":
             _filename(args["name"])
+            if (
+                "." + args["name"].rsplit(".", 1)[1].lower()
+            ) not in config.TEXT_EXTENSIONS:
+                raise ValueError()
     return dict(args)
 
 

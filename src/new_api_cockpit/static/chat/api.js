@@ -54,6 +54,7 @@
       files: (cid, options) => request(`${conv(cid)}/files`, options),
       upload: (cid, file, clientId, options) => { const body = new FormData(); body.append('file', file); body.append('client_file_id', id(clientId)); return request(`${conv(cid)}/files`, {timeoutMs: 210000, ...options, method: 'POST', body}); },
       download: (cid, fid, options) => request(`${conv(cid)}/files/${id(fid)}/download`, {...options, kind: 'blob'}),
+      deleteUpload: (cid, fid, options) => request(`${conv(cid)}/files/${id(fid)}`, {...options, method: 'DELETE', body: {confirm: true}}),
       start: (cid, body, options) => request(`${conv(cid)}/runs`, {...options, method: 'POST', body, kind: 'run'}),
       run: (cid, rid, options) => request(run(cid, rid), options),
       cancel: (cid, rid, options) => request(`${run(cid, rid)}/cancel`, {...options, method: 'POST', body: {}}),

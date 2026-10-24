@@ -231,8 +231,8 @@ print(json.dumps(modules))
                 else:
                     self.assertEqual(service.run(ACCESS, None, body)["images"], [])
                 paid.assert_called_once()
-            tokens.list_models.assert_called_once_with(ACCESS, 7, group="GPT")
-            tokens.lease_key.assert_called_once_with(ACCESS, 7, group="GPT")
+            tokens.list_models.assert_called_once_with(ACCESS, 7)
+            tokens.lease_key.assert_called_once_with(ACCESS, 7)
             self.assertEqual(order, ["lease", "claim", "send", "finish", "release"])
             self.assertFalse(active)
 

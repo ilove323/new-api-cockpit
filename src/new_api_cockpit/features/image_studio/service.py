@@ -22,7 +22,7 @@ def configure(tokens: TokenProvider, source_db: SourceDb):
     global _dependencies
     if not all(
         callable(getattr(tokens, name, None))
-        for name in ("list_tokens", "list_models", "lease_key")
+        for name in ("list_tokens", "list_models", "lease_key", "routing_groups")
     ) or not callable(getattr(source_db, "read_connection", None)):
         raise TypeError("Image Studio requires TokenProvider and SourceDb")
     _dependencies = (tokens, source_db)
@@ -50,14 +50,14 @@ def _access(user, credential=None):
     )
 
 
-def _routes():
-    return source_routes.load_routes(_providers()[1])
+def _routes(groups, models):
+    return source_routes.load_routes(_providers()[1], groups, models)
 
 
 def list_tokens(user, credential=None):
-    rows = _providers()[0].list_tokens(_access(user, credential), group="GPT")
+    rows = _providers()[0].list_tokens(_access(user, credential))
     return {
-        "tokens": [row for row in rows if row["group"] == "GPT"],
+        "tokens": rows,
         "token_manager_path": "/keys",
     }
 
@@ -94,9 +94,8 @@ def _discover(user, credential, body):
     # Adapter-owned list_models already validates ownership/status and computes
     # /v1/models intersected with strict token model_limits. No raw KEY escapes it.
     try:
-        entries = _providers()[0].list_models(
-            _access(user, credential), target, group="GPT"
-        )
+        access = _access(user, credential)
+        entries = _providers()[0].list_models(access, target)
     except ValueError as exc:
         # Stable, non-secret adapter diagnostics retain the old image-specific
         # errors without importing an integration implementation/exception.
@@ -118,14 +117,14 @@ def _discover(user, credential, body):
     ):
         raise StudioError("New API 图片模型目录响应无效。", 502)
     config = _configuration()
-    routes = _routes()
     authorized = {v["id"] for v in entries}
+    configured = sorted(authorized & config["models"].keys())
+    groups = _providers()[0].routing_groups(access, target)
+    routes = _routes(groups, configured)
     names = {
         route["model"]
         for route in routes
-        if isinstance(route["model"], str)
-        and route["model"].startswith("gpt-image-")
-        and route["model"] in authorized
+        if isinstance(route["model"], str) and route["model"] in configured
     }
     return {"models": [_contract(name, routes, config) for name in sorted(names)]}
 
@@ -163,17 +162,15 @@ def parse_request(body):
     if not isinstance(body, dict) or set(body) != required:
         raise StudioError("图片请求字段缺失或包含不允许的字段。")
     token_id({"token_id": body["token_id"]})
-    if not image_contracts._text(body["model"]) or not body["model"].startswith(
-        "gpt-image-"
-    ):
-        raise StudioError("请选择有效的 gpt-image 模型。")
+    if not image_contracts._text(body["model"]):
+        raise StudioError("请选择有效的图片模型。")
     prompt = body["prompt"]
     if not isinstance(prompt, str) or len(prompt) > 32000 or "\x00" in prompt:
-        raise StudioError("修改说明最多 32000 个字符，且不能包含空字符。")
+        raise StudioError("提示词最多 32000 个字符，且不能包含空字符。")
     try:
         prompt.encode("utf-8")
     except UnicodeError:
-        raise StudioError("修改说明含无效的 Unicode 字符。") from None
+        raise StudioError("提示词含无效的 Unicode 字符。") from None
     if not isinstance(body["request_id"], str) or not re.fullmatch(
         r"[A-Za-z0-9_-]{8,128}", body["request_id"]
     ):
@@ -206,7 +203,7 @@ def parse_request(body):
     if not prompt and (
         intent["operation"] == "generate" or not intent["has_annotations"]
     ):
-        raise StudioError("请输入修改说明或添加指导标注；只有选区不能提交。")
+        raise StudioError("请输入提示词或添加指导标注；只有选区不能提交。")
     return {
         **body,
         "prompt": prompt,
@@ -333,14 +330,14 @@ def _compiled_prompt(body, operation):
         encoded = prompt.encode("utf-8")
     except UnicodeError:
         raise StudioError(
-            "整理后的修改说明含无效 Unicode 字符。",
+            "整理后的提示词含无效 Unicode 字符。",
             details={"category": "input", "param": "prompt"},
         ) from None
     # Budget the compiled instructions, not only the raw text. Never truncate
     # user instructions to make an otherwise invalid paid request fit.
     if len(prompt) > 32000 or len(encoded) > 128000 or "\x00" in prompt:
         raise StudioError(
-            "加入指导图和参考用途说明后超过长度限制，请缩短修改说明（最多 32000 字符、128000 UTF-8 字节）；原文未截断。",
+            "加入指导图和参考用途说明后超过长度限制，请缩短提示词（最多 32000 字符、128000 UTF-8 字节）；原文未截断。",
             details={"category": "input", "param": "prompt"},
         )
     return prompt
@@ -353,7 +350,7 @@ def run(user, credential, body, *, images=None, mask=None):
     access = _access(user, credential)
     user = access.principal.as_user()
     catalogue = _discover(access, None, {"token_id": body["token_id"]})
-    with _providers()[0].lease_key(access, body["token_id"], group="GPT") as key:
+    with _providers()[0].lease_key(access, body["token_id"]) as key:
         selected = next(
             (m for m in catalogue["models"] if m["id"] == body["model"]), None
         )
@@ -404,7 +401,14 @@ def run(user, credential, body, *, images=None, mask=None):
         # A fresh source/config read closes drift during KEY discovery/file validation.
         # New API cannot atomically lock routing with our POST; deployment must keep
         # its in-memory channel cache synchronized with these source settings.
-        latest = _contract(body["model"], _routes(), _configuration())
+        latest = _contract(
+            body["model"],
+            _routes(
+                _providers()[0].routing_groups(access, body["token_id"]),
+                [body["model"]],
+            ),
+            _configuration(),
+        )
         if latest["revision"] != body["contract_revision"]:
             raise _refresh()
         digest = image_receipts.digest_request(body, images=images, mask=mask)

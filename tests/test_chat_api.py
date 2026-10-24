@@ -11,6 +11,8 @@ from uuid import uuid4
 from new_api_cockpit.auth import LoginRequired
 from new_api_cockpit.features.chat import config
 from new_api_cockpit.features.chat.workspace import Workspace
+from new_api_cockpit.integrations.new_api.personal_tokens import TokenError
+from new_api_cockpit.integrations.new_api.token_provider import TokenProvider
 from chat_fixtures import access, body, create, make_service
 
 host = importlib.import_module("new_api_cockpit.app")
@@ -90,6 +92,58 @@ class ChatApiTest(unittest.TestCase):
             self.assertEqual(self.api("/conversations").status_code, 404)
         with patch.dict(os.environ, {"CHAT_ENABLED": "false"}):
             self.assertEqual(self.api("/conversations").status_code, 404)
+
+    def test_catalogue_rate_limit_is_not_reported_as_a_permission_error(self):
+        with patch.object(
+            self.tokens,
+            "list_models",
+            side_effect=TokenError("private upstream details", 429),
+        ) as call:
+            response = self.api("/models", "POST", json={"token_id": 7})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json["code"], "CHAT_UPSTREAM_RATE_LIMIT")
+        self.assertNotIn("权限", response.json["error"])
+        self.assertNotIn("private", str(response.json))
+        self.assertEqual(call.call_count, 1)
+
+    def test_repeated_http_catalogue_reads_do_not_exhaust_the_secret_read_limit(self):
+        calls = []
+
+        def upstream(path, credential, uid, **kwargs):
+            calls.append(path)
+            if path == "/api/token/7":
+                return {
+                    "data": dict(
+                        id=7,
+                        user_id=12,
+                        status=1,
+                        expired_time=-1,
+                        remain_quota=100,
+                        unlimited_quota=False,
+                        group="auto",
+                        key="xxxx********xxxx",
+                        model_limits_enabled=False,
+                    )
+                }
+            if path == "/api/token/7/key":
+                if calls.count(path) > 1:
+                    raise TokenError("rate limited", 429)
+                return {"data": {"key": "x" * 48}}
+            if path == "/v1/models":
+                return {
+                    "data": [
+                        {"id": "test-chat", "supported_endpoint_types": ["openai"]}
+                    ]
+                }
+            self.fail("Unexpected upstream path")
+
+        self.service.token_provider = TokenProvider(upstream)
+        for _ in range(24):
+            response = self.api("/models", "POST", json={"token_id": 7})
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertTrue(response.json["models"][0]["chat_enabled"])
+        self.assertEqual(calls.count("/api/token/7/key"), 1)
+        self.assertFalse(self.stream.calls)
 
     def test_every_user_and_admin_can_only_see_their_own_chat_and_files(self):
         fid = str(uuid4())
@@ -340,8 +394,69 @@ class ChatApiTest(unittest.TestCase):
                     )
                     self.assertEqual(response.status_code, 401, (path, method))
                     count += 1
-            self.assertEqual(count, 25)
+            self.assertEqual(count, 26)
             pat.assert_not_called()
+
+    def test_attachment_delete_is_confirmed_owner_only_idempotent_and_tombstones_history(
+        self,
+    ):
+        fid = str(uuid4())
+        self.service.upload(
+            self.actor.principal, self.cid, fid, "report.md", b"original"
+        )
+        path = f"/conversations/{self.cid}/files/{fid}"
+        self.assertEqual(
+            self.api(path, "DELETE", json={"confirm": False}).status_code, 400
+        )
+        self.assertEqual(
+            self.api(path, "DELETE", json={"confirm": True, "user_id": 99}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.api(
+                path + "?scope_id=other", "DELETE", json={"confirm": True}
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.delete(
+                "/cockpit/api/chat" + path,
+                json={"confirm": True},
+                headers=self.headers(Origin="https://other.test"),
+            ).status_code,
+            403,
+        )
+        other_cid = create(self.service, self.actor)
+        self.assertEqual(
+            self.api(
+                f"/conversations/{other_cid}/files/{fid}",
+                "DELETE",
+                json={"confirm": True},
+            ).status_code,
+            404,
+        )
+        old_actor = self.actor
+        for actor in (access(13), access(99, role=100)):
+            self.actor = actor
+            self.assertEqual(
+                self.api(path, "DELETE", json={"confirm": True}).status_code, 404
+            )
+        self.actor = old_actor
+        before = self.api(f"/conversations/{self.cid}/events").json["events"]
+        response = self.api(path, "DELETE", json={"confirm": True})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertTrue(response.json["file"]["deleted_at"])
+        self.assertEqual(
+            self.api(path, "DELETE", json={"confirm": True}).json, response.json
+        )
+        self.assertEqual(self.api(path + "/download").status_code, 410)
+        self.assertEqual(
+            self.api(f"/conversations/{self.cid}/events").json["events"], before
+        )
+        self.assertTrue(
+            self.api(f"/conversations/{self.cid}/files").json["files"][0]["deleted_at"]
+        )
+        self.assertEqual(self.stream.calls, [])
 
 
 if __name__ == "__main__":

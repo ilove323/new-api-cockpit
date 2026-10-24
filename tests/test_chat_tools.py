@@ -150,13 +150,14 @@ class ToolsTest(unittest.TestCase):
                 self.assertFalse(self.call(name, args)["ok"])
         self.assertEqual(self.ws.calls, [])
 
-    def test_no_paths_hidden_files_binary_extensions_or_control_characters(self):
+    def test_no_paths_hidden_files_unsupported_extensions_or_control_characters(self):
         for name in (
             "../a.txt",
             "/a.txt",
             "a\\b.txt",
             ".env",
-            "a.pdf",
+            "a.doc",
+            "a.xls",
             "a.zip",
             "a.txt\x00",
             "x\n.txt",

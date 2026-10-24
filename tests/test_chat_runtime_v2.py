@@ -30,7 +30,8 @@ class CapabilitiesV2Test(unittest.TestCase):
             [e["protocol"] for e in entries[1:]],
             ["responses", "anthropic", "responses"],
         )
-        self.assertTrue(all(not e["tools_enabled"] for e in entries))
+        self.assertFalse(entries[0]["tools_enabled"])
+        self.assertTrue(all(e["tools_enabled"] for e in entries[1:]))
 
     def test_explicit_extended_protocol_limits_reasoning_and_native_compact(self):
         with tempfile.TemporaryDirectory() as directory:

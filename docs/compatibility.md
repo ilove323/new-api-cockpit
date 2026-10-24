@@ -38,6 +38,9 @@ KEY 编辑依赖官方令牌接口，自动分组选项依赖其 `auto_groups` �
 Token 单价可能留空，但消费金额仍取日志，不能用当前单价冒充历史价格。
 金额单位和 quota 换算必须与实际站点一致。
 
+账户 MCP 另按 rc.46 的用户 API PAT 认证及 `profile:read` / `usage:read` 权限核对，支持新式 nap_ PAT，并由上游执行撤销、到期和旧 PAT 退役策略。
+不因本地源库仍保存旧 PAT 就绕过上游鉴权。使用不同认证方式的旧版本需先评估兼容性，详见[账户 MCP](mcp.md)。
+
 缓存字段和模型语义见[统计口径](calculation.md)。自定义 fork 改动数据库、
 配额单位或缓存语义时，须以虚构样本验证后接入。
 
@@ -50,7 +53,7 @@ Anthropic 类型 14 使用 `/v1/messages`，其他渠道使用 `/v1/chat/complet
 管理员目录按文本能力筛选；普通用户接口仅返回本人可用模型名，不提供文本能力声明。测试前以本人专用 KEY 再核对模型权限；对应渠道不接受上述协议时直接报错，不切换协议重试。
 Claude 必需的 `max_tokens` 由 New API 常规转发按配置补齐，请求体透传模式需由上游提供默认值，见[智力测试](intelligence.md)。
 
-生图工作站通过本人令牌接口获取 GPT KEY，使用 `/v1/models` 核对模型授权；生成和编辑分别调用 `/v1/images/generations` 与 `/v1/images/edits`。
+生图工作站通过本人令牌接口获取本人 KEY，使用 `/v1/models` 核对模型授权；生成和编辑分别调用 `/v1/images/generations` 与 `/v1/images/edits`。
 路由契约额外读取 `channels.type/model_mapping/base_url/setting/settings/param_override/header_override`，只投影必要字段与摘要，不读取渠道 KEY。
 `options` 中仅核对全局透传开关、渠道亲和启用状态及是否存在影响图片的覆盖规则。源列存在却无读取权限时停止派发，不将缺权限当作默认值。
 当前协议编译器按 rc.40 OpenAI adaptor 的重构/透传行为实现，不以 `type=1` 推断图片编辑能力。

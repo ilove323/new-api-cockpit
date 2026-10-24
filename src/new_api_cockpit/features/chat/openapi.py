@@ -31,10 +31,15 @@ RUN = _obj(
             "maxItems": 3,
             "uniqueItems": True,
         },
-        "mode": {"type": "string", "enum": ["chat", "files"]},
+        "mode": {
+            "type": "string",
+            "enum": ["chat", "files"],
+            "description": "界面默认 files 完整助手，chat 仅作旧 API 无工具请求兼容。两者均由服务器读取引用附件正文；不要求逐模型工具声明。",
+        },
         "text": CONTENT,
         "attachment_ids": {
             "type": "array",
+            "description": "仅当前聊天的文件 ID；两种模式均可引用。附件正文与历史一起计入上下文预算，过大在模型调用前拒绝，不截断。",
             "items": UUID,
             "maxItems": 8,
             "uniqueItems": True,
@@ -117,12 +122,18 @@ def paths():
         (
             "/conversations/{cid}/files",
             "post",
-            "上传UTF-8文本",
+            "上传文本、PDF、Word、Excel或图片附件（单文件不超过50 MiB）",
             _obj(
                 {"client_file_id": UUID, "file": {"type": "string", "format": "binary"}}
             ),
         ),
         ("/conversations/{cid}/files/{fid}/download", "get", "本人聊天附件下载", None),
+        (
+            "/conversations/{cid}/files/{fid}",
+            "delete",
+            "删除本人上传附件；历史保留文件名和删除标记，不撤回已发送内容",
+            _obj({"confirm": {"type": "boolean", "const": True}}),
+        ),
         ("/conversations/{cid}/runs", "post", "发起有限收费轮次；永不自动重试", RUN),
         ("/conversations/{cid}/runs/{rid}", "get", "查看运行状态，不续跑", None),
         (

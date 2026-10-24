@@ -1,0 +1,4 @@
+example.xls is an original synthetic test fixture.
+apache-poi-test.doc is from Apache POI, licensed under Apache-2.0.
+Source: https://github.com/apache/poi/blob/trunk/test-data/document/test.doc
+License: https://github.com/apache/poi/blob/trunk/LICENSE

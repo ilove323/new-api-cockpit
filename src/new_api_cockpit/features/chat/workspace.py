@@ -5,7 +5,7 @@ import re
 import time
 from uuid import uuid4
 
-from . import config
+from . import config, media, outputs
 from .errors import ChatError
 from .fs import canonical_json
 from .schemas import identifier, integer, text, id_list
@@ -61,7 +61,7 @@ class Workspace:
         files = [
             f
             for f in self.store.files(self.scope, lease=self.lease)
-            if kind == "all" or f["kind"] == kind
+            if not f.get("deleted_at") and (kind == "all" or f["kind"] == kind)
         ]
         result = {"ok": True, "files": [], "next_offset": None, "total": len(files)}
         for entry in files[offset : offset + 50]:
@@ -82,7 +82,8 @@ class Workspace:
         identifier(file_id)
         integer(start_line, 1)
         integer(max_lines, 1, config.TOOL_READ_MAX_LINES)
-        _, raw = self.store.read_file(self.scope, file_id, lease=self.lease)
+        entry, raw = self.store.read_file(self.scope, file_id, lease=self.lease)
+        raw = self._readable(entry, raw)
         deadline = time.monotonic() + config.TOOL_DEADLINE_SECONDS
         result = {
             "ok": True,
@@ -141,7 +142,11 @@ class Workspace:
         known = {f["id"] for f in entries}
         if set(ids) - known:
             raise ChatError("文件不存在。", 404, "CHAT_NOT_FOUND")
-        entries = [f for f in entries if not ids or f["id"] in ids]
+        entries = [
+            f
+            for f in entries
+            if not f.get("deleted_at") and (not ids or f["id"] in ids)
+        ]
         result = {
             "ok": True,
             "matches": [],
@@ -162,6 +167,7 @@ class Workspace:
             _, raw = self.store.read_file(self.scope, entry["id"], lease=self.lease)
             result["scanned_files"] += 1
             result["scanned_bytes"] += len(raw)
+            raw = self._readable(entry, raw)
             for number, line in enumerate(raw.decode("utf-8").splitlines(), 1):
                 if time.monotonic() >= deadline:
                     result["truncated"] = True
@@ -177,6 +183,19 @@ class Workspace:
                         result["truncated"] = True
                         return result
         return result
+
+    @staticmethod
+    def _readable(entry, raw):
+        if entry["mime"].startswith("image/"):
+            return (
+                "图片文件："
+                + entry["name"]
+                + "。图片不是 UTF-8 文本，请将该文件引用到消息中，由模型视觉读取；不要仅凭文件名推断图像内容。\n"
+            ).encode()
+        if entry["mime"] != media.TEXT_MIME:
+            value = media.extract(entry["name"], raw)
+            return value["text"].encode()
+        return raw
 
     @tool
     def write_file(
@@ -226,12 +245,19 @@ class Workspace:
         if key in writes:
             entry = files[writes[key]]
         else:
+            # Render only after durable call-ID conflict/dedup checks. Models
+            # supply inert content/specifications, never binary bytes or code.
+            rendered = (
+                outputs.generate(name, content)
+                if source_tool == "write_file"
+                else content
+            )
             # Runner normally wrote tool.call first. Direct callers still get
             # durable (rid,call_id) deduplication, not an in-memory-only cache.
             if call is None:
                 if runs[self.run_id]["tool_calls"] >= config.MAX_TOOL_CALLS:
                     raise ChatError("本轮工具次数已达上限。", 409, "CHAT_RUN_LIMIT")
-                self.store.normalize_file(name, content, "output")
+                self.store.normalize_file(name, rendered, "output")
                 self.store.append(
                     self.scope,
                     "tool.call",
@@ -242,7 +268,7 @@ class Workspace:
             entry = self.store._add_file(
                 self.scope,
                 name,
-                content,
+                rendered,
                 str(uuid4()),
                 "output",
                 lease=self.lease,

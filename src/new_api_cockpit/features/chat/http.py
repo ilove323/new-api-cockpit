@@ -23,6 +23,7 @@ API_ENDPOINTS = frozenset(
         "events",
         "files",
         "file_download",
+        "file_delete",
         "runs",
         "run",
         "cancel_run",
@@ -221,6 +222,20 @@ def create_blueprint(host, service_factory):
                 return jsonify(file=result), status
             finally:
                 upload.close()
+
+    @blueprint.delete(
+        "/cockpit/api/chat/conversations/<cid>/files/<fid>", endpoint="file_delete"
+    )
+    def delete_file(cid, fid):
+        principal, cid = scope(cid)
+        query()
+        body = json_body(host)
+        schemas.object_fields(body, {"confirm"})
+        if body["confirm"] is not True:
+            raise ChatError("请确认删除附件。")
+        return jsonify(
+            file=service().delete_upload(principal, cid, schemas.identifier(fid))
+        )
 
     @blueprint.get(
         "/cockpit/api/chat/conversations/<cid>/files/<fid>/download",

@@ -4,7 +4,7 @@ import os
 import time
 from uuid import uuid4
 
-from . import config, schemas, working_context
+from . import attachments, config, schemas, working_context, file_deletions
 from .capabilities import Capabilities
 from .errors import ChatError
 from .ports import SessionVerifier, TokenProvider
@@ -48,8 +48,16 @@ class ChatService:
             raise
         except ValueError as exc:
             status = getattr(exc, "status", 503)
+            if status == 429:
+                raise ChatError(
+                    "New API 请求过于频繁，请稍后再试。",
+                    429,
+                    "CHAT_UPSTREAM_RATE_LIMIT",
+                ) from None
             raise ChatError(
-                "无法使用所选本人令牌，请检查状态和权限。",
+                "无法使用所选本人令牌，请检查状态和权限。"
+                if status < 500
+                else "New API 暂时无法读取令牌或模型信息，请稍后再试。",
                 status,
                 "CHAT_TOKEN_FORBIDDEN" if status < 500 else "CHAT_UPSTREAM_ERROR",
             ) from None
@@ -154,6 +162,9 @@ class ChatService:
         info, data = self.store.read_file(self._scope(principal, cid), fid)
         return data, info
 
+    def delete_upload(self, principal, cid, fid):
+        return self.store.delete_upload(self._scope(principal, cid), fid)
+
     def _history(self, scope):
         events, after, until = [], 0, None
         while True:
@@ -202,13 +213,17 @@ class ChatService:
             capability = self.capabilities.select(
                 rows, body["model"], body["capability_revision"], body["mode"]
             )
+            lease.file_deletion_signature = file_deletions.signature(self.store, scope)
             files = {
                 entry["id"]: entry for entry in self.store.files(scope, lease=lease)
             }
             for fid in body["attachment_ids"]:
                 if fid not in files:
                     raise ChatError("附件不存在。", 404, "CHAT_NOT_FOUND")
-                self.store.read_file(scope, fid)
+                if files[fid].get("deleted_at"):
+                    raise ChatError(
+                        "附件已删除，请取消引用。", 410, "CHAT_FILE_DELETED"
+                    )
             rid = str(uuid4())
             snapshot = self.user_context.freeze_context(
                 access.principal, cid, rid, body["context_revision"], body["skill_ids"]
@@ -216,6 +231,15 @@ class ChatService:
             for item in [*snapshot["profiles"], *snapshot["skills"]]:
                 validate_credentials(item["content"], access.credential)
             history = self._history(scope)
+            attachment_texts = attachments.read_texts(
+                self.store,
+                scope,
+                files,
+                body,
+                history,
+                capability["policy"],
+                lease=lease,
+            )
             previous = next(
                 (
                     event
@@ -242,6 +266,8 @@ class ChatService:
                 **body,
                 "protocol": capability["protocol"],
                 "attachments": [files[fid] for fid in body["attachment_ids"]],
+                "attachment_texts": attachment_texts,
+                "attachment_mode": "server-text-v1",
             }
             saved, saved_ref = None, None
             binding = {
@@ -249,8 +275,20 @@ class ChatService:
                 for key in ("protocol", "model", "token_id", "capability_revision")
             }
             if body.get("context_strategy") == "adaptive":
+                latest_delete = max(
+                    (f.get("deleted_at", "") for f in files.values()), default=""
+                )
+                accepted_at = {
+                    e["run_id"]: e["at"] for e in history if e["type"] == "run.accepted"
+                }
                 for event in reversed(history):
                     if event["type"] != "context.compacted":
+                        continue
+                    # Includes a run already in flight when deletion occurred.
+                    if (
+                        latest_delete
+                        and accepted_at.get(event["run_id"], "") <= latest_delete
+                    ):
                         continue
                     candidate = self.store.read_working_context(
                         scope, event["data"]["checkpoint"], lease=lease
@@ -288,6 +326,11 @@ class ChatService:
                         "context_snapshot": reference,
                         "context_from_run_ids": included,
                         "protocol": capability["protocol"],
+                        **(
+                            {"attachment_mode": "server-text-v1"}
+                            if body["attachment_ids"]
+                            else {}
+                        ),
                         **(
                             {"options": schemas.run_options(body)}
                             if schemas.run_options(body)

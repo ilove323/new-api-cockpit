@@ -747,7 +747,7 @@ class Runner:
             )
             if run.context_plan is not None:
                 self._apply_context_plan(run, run.context_plan)
-            if run.body["mode"] == "chat":
+            if run.body["mode"] == "chat" or not run.policy["tools"]:
                 count = run.body.get("candidate_count", 1)
                 if run.policy.get("protocol", "chat_completions") == "chat_completions":
                     self._generate(run, run.messages, candidates=count)

@@ -97,13 +97,28 @@ def _gateway_policy(conn):
     }
 
 
-def load_routes(source_db):
-    """Read every GPT priority/retry path with explicit, quoted column access.
+def load_routes(source_db, groups, models):
+    """Read the selected token's priority/retry paths, never a named group.
 
     Do not select c.*, to_jsonb(c), KEY, raw header/setting/proxy values. Only
     optional known columns found by metadata inspection enter this SQL. Absent
     rc.40 pass-through flags/options have the upstream's false default.
     """
+    for values in (groups, models):
+        if (
+            not isinstance(values, list)
+            or len(values) > 256
+            or any(
+                not isinstance(v, str)
+                or not 1 <= len(v) <= 256
+                or v != v.strip()
+                or any(ord(c) < 32 or ord(c) == 127 for c in v)
+                for v in values
+            )
+        ):
+            raise StudioError("图片路由查询范围无效。", 503, "IMAGE_CONTRACT_SOURCE")
+    if not groups or not models:
+        return []
     try:
         with source_db.read_connection() as conn:
             gateway_policy = _gateway_policy(conn)
@@ -131,6 +146,7 @@ def load_routes(source_db):
 
             projections = [
                 sql.SQL("a.model"),
+                sql.SQL('a."group" AS route_group'),
                 sql.SQL("a.channel_id"),
                 sql.SQL("c.type"),
             ]
@@ -164,10 +180,10 @@ def load_routes(source_db):
             )
             query = sql.SQL(
                 "SELECT {} FROM abilities a JOIN channels c ON c.id=a.channel_id "
-                'WHERE a."group"=%s AND a.model LIKE %s AND a.enabled=true AND c.status=1 '
-                "ORDER BY a.model,a.channel_id LIMIT 10001"
+                'WHERE a."group"=ANY(%s) AND a.model=ANY(%s) AND a.enabled=true AND c.status=1 '
+                'ORDER BY a.model,a.channel_id,a."group" LIMIT 10001'
             ).format(sql.SQL(",").join(projections))
-            rows = conn.execute(query, ("GPT", "gpt-image-%")).fetchall()
+            rows = conn.execute(query, (groups, models)).fetchall()
     except psycopg.errors.InsufficientPrivilege:
         raise StudioError(
             "源库角色需要图片路由配置和指定 options 的只读权限。",

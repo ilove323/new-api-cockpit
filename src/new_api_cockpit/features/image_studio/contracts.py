@@ -248,12 +248,7 @@ def validate_configuration(value):
         if enabled != (channel["mode"] == "pass-through"):
             _fail("转发模式与透传前置条件矛盾")
     for model, bindings in value["models"].items():
-        if (
-            not _text(model)
-            or not model.startswith("gpt-image-")
-            or not isinstance(bindings, dict)
-            or not bindings
-        ):
+        if not _text(model) or not isinstance(bindings, dict) or not bindings:
             _fail("模型绑定无效")
         for channel_id, binding in bindings.items():
             _keys(binding, {"profile", "mapped_model"})
@@ -345,6 +340,7 @@ def _route(model, row, config):
         k: row.get(k)
         for k in (
             "channel_id",
+            "route_group",
             "type",
             "priority",
             "weight",
@@ -489,7 +485,9 @@ def _common(operations, *, edit):
 
 def model_contract(model, routes, config):
     profiles, material, reasons = [], [], []
-    for row in sorted(routes, key=lambda r: r["channel_id"]):
+    for row in sorted(
+        routes, key=lambda r: (r["channel_id"], r.get("route_group", ""))
+    ):
         profile, source, reason = _route(model, row, config)
         profiles.append(profile)
         material.append(source)
@@ -573,5 +571,5 @@ def compile_prompt(prompt, intent, *, strategy):
     for index, role in enumerate(intent["reference_roles"], 3 if guide else 2):
         lines.append(f"第{index}张图为{ROLE_NAMES[role]}，仅按该用途参考，不替代主图。")
     if prompt:
-        lines.append("用户补充修改要求：\n" + prompt)
+        lines.append("用户提示词：\n" + prompt)
     return "\n".join(lines)

@@ -14,7 +14,7 @@ const api = require(path.join(root, 'static/studio-domain.js'));
 const SECRET = 'sk-fixture-secret-never-render';
 const tokens = [{id: 1, name: '工作 KEY', group: 'GPT', key_masked: 'sk-ab****yz', usable: true},
   {id: 2, name: '已停用', group: 'GPT', usable: false, unavailable_reason: '额度不足'},
-  {id: 3, name: '不能列出', group: 'default', usable: true},
+  {id: 3, name: '海外生图 KEY', group: '海外模型', usable: true},
   {id: 4, name: '备用 KEY', group: 'GPT', key_masked: SECRET, usable: true}];
 const parameters = overrides => ({sizes:['auto','1024x1024','1536x1024','1024x1536'],custom_size:false,
   qualities:['auto','low','medium','high'],formats:['png','jpeg','webp'],backgrounds:['auto','opaque','transparent'],
@@ -240,10 +240,10 @@ test('modal switch retains candidate focus fallback and blocks document image pa
   await h.event('cockpit-auth-changed');assert.equal(h.el('preview').open,false);assert.equal(h.el('preview').hidden,true);
   assert.equal(h.el('preview-result').src,undefined);assert.equal(h.el('preview-source').src,undefined);
 });
-test('catalog is own GPT only, masked, explicit model selection, zero inference on boot', async () => {
+test('catalog lists all owned groups, masks keys and never generates on boot', async () => {
   const h = await harness();
-  assert.equal(h.calls.length, 1); assert.equal(h.el('token').children.length, 4);
-  assert.ok(!h.dom().includes(SECRET)); assert.ok(!h.dom().includes('不能列出')); assert.equal(h.el('token-manager').href, '/keys');
+  assert.equal(h.calls.length, 1); assert.equal(h.el('token').children.length, 5);
+  assert.ok(!h.dom().includes(SECRET)); assert.ok(h.dom().includes('海外生图 KEY')); assert.equal(h.el('token-manager').href, '/keys');
   assert.equal(h.el('token').children[2].disabled, true);
   await h.choose(); assert.equal(h.paid().length, 0);
   assert.equal(h.el('model').children[0].value, '');
@@ -438,7 +438,7 @@ test('auth switch clears images, prompts, references, candidates, URLs and pendi
   const urls = h.created.map(x => x.url), pending = deferred(); h.handler = async () => pending.promise;
   const submitting = h.el('form').fire('submit'); await settle(); const call = h.paid().at(-1);
   await h.event('cockpit-auth-changed'); await submitting;
-  assert.equal(h.destroyed, true); assert.equal(h.el('prompt').value, ''); assert.equal(h.el('annotation-text').value, '');
+  assert.equal(h.destroyed, true); assert.equal(h.el('prompt').value, '');
   assert.equal(h.el('references').children.length, 0); assert.equal(h.el('candidates').children.length, 0);
   assert.ok(urls.every(x => h.revoked.includes(x))); assert.equal(h.el('submit').disabled, true);
   pending.resolve(h.result(call.data)); await settle(); assert.equal(h.el('candidates').children.length, 0);
@@ -485,13 +485,25 @@ test('engine controls use the frozen API, scoped shortcuts do not run twice or s
   const h = await harness(); await h.choose(); await h.upload();
   for (const tool of h.tools) await tool.fire('click');
   for (const id of ['undo', 'redo', 'fit', 'zoom-in', 'zoom-out', 'clear-mask', 'clear-guides']) await h.fire(id);
-  await h.fire('brush-size', 'input', '128'); await h.fire('stroke-width', 'input', '8'); await h.fire('color', 'input', '#112233'); await h.fire('annotation-text', 'input', '这里改为蓝色');
-  for (const name of ['setTool', 'setBrushSize', 'setColor', 'setStrokeWidth', 'setText', 'undo', 'redo', 'fit', 'zoomBy', 'clearMask', 'clearAnnotations']) assert.ok(h.engineCalls.some(x => x.name === name), name);
+  await h.fire('brush-size', 'input', '128'); await h.fire('stroke-width', 'input', '8'); await h.fire('color', 'input', '#112233');
+  for (const name of ['setTool', 'setBrushSize', 'setColor', 'setStrokeWidth', 'undo', 'redo', 'fit', 'zoomBy', 'clearMask', 'clearAnnotations']) assert.ok(h.engineCalls.some(x => x.name === name), name);
+  assert.equal(h.el('annotation-text'), undefined); assert.equal(h.engineCalls.some(x => x.name === 'setText'), false);
   const count = h.engineCalls.filter(x => x.name === 'undo').length;
   await h.fire('dropzone', 'keydown', undefined, {key: 'z', ctrlKey: true, defaultPrevented: true});
   await h.fire('dropzone', 'keydown', undefined, {key: 'z', ctrlKey: true, target: new Element('textarea')});
   assert.equal(h.engineCalls.filter(x => x.name === 'undo').length, count);
   await h.fire('dropzone', 'keydown', undefined, {key: 'z', ctrlKey: true}); assert.equal(h.engineCalls.filter(x => x.name === 'undo').length, count + 1);
+});
+test('prompt and canvas text have separate roles without a sidebar text input', async () => {
+  assert.match(html, />提示词 /); assert.doesNotMatch(html + source, /补充说明|annotation-text|text-control/);
+  const h = await harness(); await h.choose();
+  assert.equal(h.el('prompt-help').textContent, '描述要生成的画面');
+  await h.upload(); assert.equal(h.el('prompt-help').textContent, '描述要修改的内容');
+  await h.tools.find(el => el.dataset.tool === 'text').fire('click');
+  assert.equal(h.el('text-help').hidden, false); assert.match(h.el('canvas-help').textContent, /点击画布输入文字/);
+  h.change({hasAnnotations: true});
+  assert.equal(h.el('prompt-help').textContent, '可留空；与画布标注一起发给模型');
+  assert.equal(h.el('prompt').required, false);
 });
 test('paste ignores text inputs; drag/drop and image paste import only, without inference', async () => {
   const h = await harness(); await h.choose(); const blob = image();
@@ -522,4 +534,16 @@ test('route input restrictions prevent unsupported PNG and oversized exported fi
     await h.fire('form','submit');assert.equal(h.paid().length,0);
     if(changes.max_bytes) assert.match(h.el('request-status').textContent,/大小/);
   }
+});
+
+test('custom image model names and non-GPT tokens survive selection and submission', async () => {
+  const custom=profile('公司画图模型');
+  const h=await harness({catalogTokens:[{id:9,name:'生图 KEY',group:'auto',usable:true}],catalogModels:[custom]});
+  await h.fire('token','change','9');
+  assert.ok(h.el('model').children.some(x=>x.value===custom.id));
+  await h.fire('model','change',custom.id);await h.fire('prompt','input','白底蓝色圆形');
+  assert.equal(h.el('submit').disabled,false);
+  await h.fire('form','submit');
+  assert.equal(h.paid().length,1);assert.equal(h.paid()[0].data.token_id,9);assert.equal(h.paid()[0].data.model,custom.id);
+  assert.equal(api.modelProfile({...custom,id:'bad\nname'}),null);
 });

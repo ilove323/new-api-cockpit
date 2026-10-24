@@ -451,7 +451,7 @@ IMAGE_STUDIO_SCHEMAS = {
             "id": integer(1),
             "name": text(),
             "key_masked": text("脱敏摘要；不返回模型 KEY 原值。"),
-            "group": choice("GPT"),
+            "group": text("令牌实际分组，不限制名称。"),
             "status": integer(),
             "expired_time": {
                 "type": "integer",
@@ -643,10 +643,10 @@ IMAGE_STUDIO_SCHEMAS = {
         {
             "token_id": integer(1, maximum=2147483647),
             "model": text(
-                "所选本人 GPT KEY 授权的精确模型 ID。",
+                "所选本人 KEY 授权且已配置图片协议的精确模型 ID。",
                 minLength=1,
                 maxLength=256,
-                pattern=r"^gpt-image-[^\x00-\x1f\x7f]*$",
+                pattern=r"^[^\x00-\x1f\x7f]+$",
             ),
             "prompt": text(
                 "非空提示词，不含 NUL。",
@@ -680,7 +680,7 @@ IMAGE_STUDIO_SCHEMAS = {
                 "精确模型 ID；普通表单字段，仅一次。",
                 minLength=1,
                 maxLength=256,
-                pattern=r"^gpt-image-[^\x00-\x1f\x7f]*$",
+                pattern=r"^[^\x00-\x1f\x7f]+$",
             ),
             "prompt": text(
                 "用户原始提示词，有指导标注时可为空；不含 NUL，仅一次。",
@@ -2046,7 +2046,7 @@ def document():
     )
     studio_auth = (
         "所有已启用用户可用，不要求管理员；接受本人浏览器会话/访问 JWT 或管理员 PAT。"
-        "仅限本人既有且自身 group 精确为 GPT 的 KEY，管理员无代用例外。"
+        "仅限本人既有 KEY，不限制分组名称，管理员无代用例外。"
         "后端重新核对归属、状态、到期、额度和模型授权；原始模型 KEY 不返回浏览器。"
     )
     studio_paid = (
@@ -2061,7 +2061,7 @@ def document():
         operation(
             "GET",
             "/cockpit/api/image-studio/tokens",
-            "列出本人 GPT KEY",
+            "列出本人 KEY",
             "生图工作站",
             ref("ImageStudioTokens"),
             description=studio_auth + "只返回脱敏摘要；不可用的令牌带原因。",
@@ -2076,7 +2076,7 @@ def document():
             example={"token_id": 23},
             header=("X-Cockpit-Studio", "1"),
             description=studio_auth
-            + "JSON 最多 1024 字节，仅接受 token_id。经官方已审计的 /api/token/{id}/key 在后台读取本人 KEY，无 PAT 补建；查询 /v1/models 不生成内容、不计模型调用费用。精确求交 GPT 启用 abilities、启用渠道、本人模型限制、KEY 的 /v1/models 计费准入和文件能力档；所有可能路由取共同操作能力。",
+            + "JSON 最多 1024 字节，仅接受 token_id。经官方已审计的 /api/token/{id}/key 在后台读取本人 KEY，无 PAT 补建；查询 /v1/models 不生成内容、不计模型调用费用。精确求交该令牌当前路由分组的启用 abilities、启用渠道、本人模型限制、KEY 的 /v1/models 计费准入和文件能力档；所有可能路由取共同操作能力。",
         ),
         operation(
             "POST",
@@ -2206,7 +2206,7 @@ def document():
         "info": {
             "title": "New API Cockpit API",
             "version": app_version,
-            "description": "管理接口使用 New API 管理员 PAT 或管理员浏览器会话；manual、intelligence 和 image-studio 接口也允许启用的普通用户会话。image-studio 仅使用本人既有 GPT KEY，管理员也不例外。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。写操作与真实计费操作须明确确认；确认头不是幂等键，认证失败不自动重放。结果不明确时查实际数据和 New API 日志，不自动重发。",
+            "description": "管理接口使用 New API 管理员 PAT 或管理员浏览器会话；manual、intelligence 和 image-studio 接口也允许启用的普通用户会话。image-studio 仅使用本人既有 KEY，管理员也不例外。PAT 不是模型调用 KEY，原值不添加 sk-。金额多为十进制字符串；balance/alert 使用 JSON number。写操作与真实计费操作须明确确认；确认头不是幂等键，认证失败不自动重放。结果不明确时查实际数据和 New API 日志，不自动重发。",
         },
         "servers": [{"url": "/", "description": "当前站点（保留协议、域名和端口）"}],
         "security": [{"adminPAT": []}, {"browserSession": []}],

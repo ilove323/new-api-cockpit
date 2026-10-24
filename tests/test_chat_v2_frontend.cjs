@@ -99,7 +99,7 @@ function descendants(node) { return node.children.flatMap(n => [n, ...descendant
 function surfaces(v2 = true) {
   const nodes = new Map();
   const doc = {getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: tag => new Node(tag), createTextNode: text => { const n = new Node('#text'); n.textContent = text; return n; }, createDocumentFragment: () => new Node('#fragment'), documentElement: {scrollHeight: 0}};
-  doc.getElementById('chat-mode').value = 'chat';
+
   if (v2) {
     const count = new Node('select'); count.value = '1'; count.append(...[1, 2, 3, 4].map(n => { const o = new Node('option'); o.value = String(n); return o; })); nodes.set('chat-candidate-count', count);
     const strategy = new Node('select'); strategy.value = 'adaptive'; nodes.set('chat-context-strategy', strategy);
@@ -114,7 +114,7 @@ test('renderer keeps candidate cards independent, folds labeled raw/summary, and
   events.splice(-1, 0, event(0, 'run.notice', {code: '<script>notice</script>', message: '![remote](https://evil.test/img) <img src=x>'}));
   events.splice(-1, 0, event(0, 'context.compacted', {mode: 'native', checkpoint: {opaque: 'SECRET-CHECKPOINT'}}), event(0, 'memory.updated', {before: 'SECRET-BEFORE', after: 'SECRET-AFTER'}));
   const runs = S.projectEvents(events).runs;
-  R.renderRuns(doc, target, runs, () => {}, {onSelectCandidate: (...args) => calls.push(args)});
+  R.renderRuns(doc, target, runs, {onSelectCandidate: (...args) => calls.push(args)});
   const nodes = descendants(target), cards = nodes.filter(n => n.dataset.candidate !== undefined);
   assert.equal(cards.length, 4);
   for (let i = 0; i < 4; i++) { assert.match(cards[i].textContent, new RegExp(`final-${i}`)); assert.doesNotMatch(cards[i].textContent, new RegExp(`final-${(i + 1) % 4}`)); }
@@ -127,11 +127,11 @@ test('renderer keeps candidate cards independent, folds labeled raw/summary, and
   const choose = nodes.find(n => n.className?.includes('chat-candidate-select')); assert.equal(choose.disabled, false);
   await choose.fire('click'); assert.deepEqual(calls, [[RID, 0]]);
   details[0].open = true;
-  R.renderRuns(doc, target, S.projectEvents(clone(events)).runs, () => {}, {onSelectCandidate() {}, selectionDisabled: true});
+  R.renderRuns(doc, target, S.projectEvents(clone(events)).runs, {onSelectCandidate() {}, selectionDisabled: true});
   assert.equal(descendants(target).find(n => n.tagName === 'DETAILS').open, true);
   assert.equal(descendants(target).filter(n => n.className?.includes('chat-candidate-select')).every(n => n.disabled), true);
   const withFollowup = [...events, event(0, 'run.accepted', {text: 'next'}, randomUUID())];
-  R.renderRuns(doc, target, S.projectEvents(withFollowup).runs, () => {}, {onSelectCandidate() {}});
+  R.renderRuns(doc, target, S.projectEvents(withFollowup).runs, {onSelectCandidate() {}});
   assert.equal(descendants(target).filter(n => n.className?.includes('chat-candidate-select')).every(n => n.disabled), true);
 });
 
@@ -150,15 +150,26 @@ test('native n counts one request, other protocols count separate requests, auxi
   assert.equal(run.usage.total_tokens, 9); assert.equal(run.requestUsage.size, 3);
   const text = R.requestUsageText(run);
   for (const name of ['主回答', '摘要', '原生压缩', '自动记忆']) assert.match(text, new RegExp(`${name} 1 次请求`));
-  assert.match(text, /自动记忆 1 次请求 · 用量未知/); assert.match(text, /单独计费/);
+  assert.equal(text, '主回答 1 次请求 · 3 Token；摘要 1 次请求 · 3 Token；原生压缩 1 次请求 · 3 Token；自动记忆 1 次请求 · 用量未知');
 });
 
-test('single-answer footer no longer labels it a candidate or claims a user explicitly toggled defaults', () => {
+test('request footer contains only the request counts and reported usage', () => {
+  assert.equal(R.requestUsageText({}), '');
+  assert.equal(R.requestUsageText(S.projectEvents(round({count: 1, terminal: false})).runs[0]), '主回答 1 次请求 · 用量未知');
+  const requests = new Map([[1, {purpose: 'main'}], [2, {purpose: 'main'}]]);
+  assert.equal(R.requestUsageText({requests, requestUsage: new Map([[1, {total_tokens: 8}]])}), '主回答 2 次请求 · 8 Token（部分）');
+});
+
+test('single-answer footer keeps real status/model/usage without context button or fixed defaults', () => {
   const {doc} = surfaces(false), target = new Node(), events = round({count: 1});
   events.find(e => e.type === 'run.accepted').data.options = {auto_memory: true, web_enabled: true, context_strategy: 'adaptive'};
-  R.renderRuns(doc, target, S.projectEvents(events).runs, () => {});
-  assert.match(target.textContent, /自适应上下文 · 自动记忆已开启 · 联网按需可用/);
+  R.renderRuns(doc, target, S.projectEvents(events).runs);
+  assert.match(target.textContent, /已完成/);
+  assert.match(target.textContent, /用量/);
+  assert.equal(descendants(target).some(n => n.tagName === 'BUTTON'), false);
+  assert.doesNotMatch(target.textContent, /查看上下文|Skills|自适应上下文|自动记忆已开启|联网按需可用/);
   assert.doesNotMatch(target.textContent, /个候选|显式开启|本轮选项/);
+  assert.doesNotMatch(target.textContent, /不是 0|辅助请求单独计费|受每轮上限约束|不是免费或隐藏重试/);
 });
 
 test('context.selected reuses a checkpoint without counting an auxiliary request, unlike newly compacted notice', () => {
@@ -224,7 +235,7 @@ test('controller always sends single/adaptive/auto-memory defaults, independent 
   for (const v2 of [false, true]) {
     const f = await fixture(t, {v2}); await submit(f); assert.equal(f.posts.length, 1);
     const body = f.posts[0];
-    assert.equal(body.candidate_count, 1); assert.equal(body.web_enabled, false); assert.equal(body.auto_memory, true); assert.equal(body.context_strategy, 'adaptive');
+    assert.equal(body.candidate_count, 1); assert.equal(body.web_enabled, true); assert.equal(body.auto_memory, true); assert.equal(body.context_strategy, 'adaptive');
   }
 });
 
@@ -234,11 +245,11 @@ test('all protocols still use one answer and default web/memory without checkbox
     // Even an obsolete/cached control cannot override the new UI defaults.
     $('chat-candidate-count').value = '4'; $('chat-context-strategy').value = 'recent';
     await $('chat-model').fire('change');
-    $('chat-mode').value = 'files'; await $('chat-mode').fire('change');
+    await $('chat-model').fire('change');
     assert.equal(f.posts.length, 0, 'Changing mode must never generate');
     await submit(f); assert.equal(f.posts[0].candidate_count, 1); assert.equal(f.posts[0].web_enabled, true); assert.equal(f.posts[0].auto_memory, true); assert.equal(f.posts[0].context_strategy, 'adaptive');
-    $('chat-mode').value = 'chat'; await $('chat-mode').fire('change'); $('chat-text').value = 'follow up'; await submit(f);
-    assert.equal(f.posts[1].web_enabled, false); assert.equal(f.posts[1].auto_memory, true); assert.equal(f.posts[1].candidate_count, 1);
+    await $('chat-model').fire('change'); $('chat-text').value = 'follow up'; await submit(f);
+    assert.equal(f.posts[1].web_enabled, true); assert.equal(f.posts[1].auto_memory, true); assert.equal(f.posts[1].candidate_count, 1);
   }
 });
 
@@ -300,11 +311,11 @@ test('Memory audit contents/undo are owner-only; proposed intent is trace-only a
   events.push(event(events.length + 1, 'context.compacted', {mode: 'native', covered_run_ids: [RID, CID], source_sha256: hash, checkpoint: {file: 'DO-NOT-RENDER-CHECKPOINT', sha256: checkpointHash, size_bytes: 50}}));
   const runs = S.projectEvents(S.mergeEvents([], events, CID)).runs, {doc} = surfaces(), target = new Node();
   for (const ownerUserId of [null, 0, 41]) {
-    R.renderRuns(doc, target, runs, () => {}, {ownerUserId, onUndoMemory() {}});
+    R.renderRuns(doc, target, runs, {ownerUserId, onUndoMemory() {}});
     assert.doesNotMatch(target.textContent, /private BEFORE|private AFTER/);
     assert.equal(descendants(target).some(n => n.className?.includes('chat-memory-undo')), false);
   }
-  R.renderRuns(doc, target, runs, () => {}, {ownerUserId: 42, onUndoMemory() {}});
+  R.renderRuns(doc, target, runs, {ownerUserId: 42, onUndoMemory() {}});
   assert.match(target.textContent, /private BEFORE/); assert.match(target.textContent, /private AFTER/);
   assert.match(target.textContent, /MEMORY v3 · 上下文 v6/); assert.match(target.textContent, /模式 native · 覆盖 2 轮/);
   assert.match(target.textContent, new RegExp(hash)); assert.match(target.textContent, new RegExp(checkpointHash));
@@ -313,13 +324,13 @@ test('Memory audit contents/undo are owner-only; proposed intent is trace-only a
   assert.equal(descendants(target).find(n => n.className?.includes('chat-memory-undo')).disabled, false);
   const trace = S.projectEvents(memoryRound({proposedOnly: true})).runs;
   assert.equal(S.ownerMemoryAudit(trace[0], 42), null);
-  R.renderRuns(doc, target, trace, () => {}, {ownerUserId: 42, onUndoMemory() {}});
+  R.renderRuns(doc, target, trace, {ownerUserId: 42, onUndoMemory() {}});
   assert.match(target.textContent, /不是 MEMORY 已写入的确认/);
   assert.doesNotMatch(target.textContent, /UNCONFIRMED-AFTER/);
   events.push(event(events.length + 1, 'memory.reverted', {after_sha256: 'a'.repeat(64), context_revision: 10, memory_revision: 4}));
   const reverted = S.projectEvents(events).runs;
   assert.equal(reverted[0].status, 'completed'); assert.equal(reverted[0].memory_reverted, true);
-  R.renderRuns(doc, target, reverted, () => {}, {ownerUserId: 42, onUndoMemory() {}});
+  R.renderRuns(doc, target, reverted, {ownerUserId: 42, onUndoMemory() {}});
   assert.equal(descendants(target).find(n => n.className?.includes('chat-memory-undo')).disabled, true);
 });
 
@@ -408,14 +419,14 @@ for (const phase of ['context', 'write']) test(`account invalidation during Memo
 test('unavailable search does not disable fetch/download defaults; unsupported adaptive never silently downgrades', async t => {
   const f = await fixture(t);
   f.app.state.config.features = {protocols: ['chat_completions', 'responses', 'anthropic'], multiple_candidates: true, auto_memory: true, context_strategies: ['recent', 'adaptive'], web: {http_fetch: true, download_url: true, web_search: false, search_backend: null, search_status: 'not_configured'}};
-  f.$('chat-mode').value = 'files'; await f.$('chat-mode').fire('change');
+  await f.$('chat-model').fire('change');
   await submit(f); assert.equal(f.posts[0].web_enabled, true);
-  f.app.state.config.features.web.search_status = 'invalid_configuration'; await f.$('chat-mode').fire('change'); f.$('chat-text').value = 'fetch without search';
+  f.app.state.config.features.web.search_status = 'invalid_configuration'; await f.$('chat-model').fire('change'); f.$('chat-text').value = 'fetch without search';
   await submit(f); assert.equal(f.posts[1].web_enabled, true);
-  f.app.state.config.features.web.web_search = true; await f.$('chat-mode').fire('change'); f.$('chat-text').value = 'search now available';
+  f.app.state.config.features.web.web_search = true; await f.$('chat-model').fire('change'); f.$('chat-text').value = 'search now available';
   await submit(f); assert.equal(f.posts[2].web_enabled, true);
   f.app.state.config.features.multiple_candidates = false; f.app.state.config.features.context_strategies = ['recent'];
-  f.$('chat-mode').value = 'chat'; await f.$('chat-mode').fire('change');
+  await f.$('chat-model').fire('change');
   assert.equal(f.$('chat-send').disabled, true); assert.match(f.$('chat-status').textContent, /暂不支持自适应上下文/);
   f.$('chat-text').value = 'must not send'; await submit(f); assert.equal(f.posts.length, 3); assert.match(f.$('chat-status').textContent, /未开启此上下文策略/);
 });
@@ -423,31 +434,51 @@ test('unavailable search does not disable fetch/download defaults; unsupported a
 test('server-disabled web/memory are never forced on; no search backend still permits fetch/download', async t => {
   const f = await fixture(t, {v2: false});
   f.app.state.config.features = {auto_memory: false, web: {http_fetch: false, download_url: false, web_search: false}};
-  f.$('chat-mode').value = 'files'; await f.$('chat-mode').fire('change');
+  await f.$('chat-model').fire('change');
   await submit(f); assert.equal(f.posts[0].auto_memory, false); assert.equal(f.posts[0].web_enabled, false);
   f.app.state.config.features = {web: {http_fetch: true, download_url: true, web_search: false, search_status: 'not_configured'}};
-  await f.$('chat-mode').fire('change'); f.$('chat-text').value = 'fetch a page'; await submit(f);
+  await f.$('chat-model').fire('change'); f.$('chat-text').value = 'fetch a page'; await submit(f);
   assert.equal(f.posts[1].web_enabled, true); assert.equal(f.posts[1].auto_memory, true);
 });
 
-test('only real model errors use status; switching to a supported mode clears that error without boilerplate', async t => {
+test('missing Agent support never disables a chat model or ordinary attachments', async t => {
   const f = await fixture(t);
   f.app.state.models[0].tools_enabled = false;
-  f.$('chat-mode').value = 'files'; await f.$('chat-mode').fire('change');
-  assert.equal(f.$('chat-send').disabled, true); assert.match(f.$('chat-status').textContent, /此模式暂无可用模型/);
-  f.$('chat-mode').value = 'chat'; await f.$('chat-mode').fire('change');
-  assert.equal(f.$('chat-send').disabled, false); assert.equal(f.$('chat-status').textContent, '');
-  f.$('chat-status').textContent = '另一项操作尚未确认'; await f.$('chat-mode').fire('change');
+  await f.$('chat-model').fire('change');
+  assert.equal(f.$('chat-model').children[0].disabled, false);
+  assert.doesNotMatch(f.$('chat-model').textContent, /工具能力/);
+  assert.equal(f.$('chat-send').disabled, false);
+  f.app.state.attachments = [RID]; f.$('chat-text').value = 'read the attached file'; await submit(f);
+  assert.equal(f.posts[0].mode, 'files'); assert.deepEqual(f.posts[0].attachment_ids, [RID]);
+  assert.equal(f.posts[0].web_enabled, true);
+  f.$('chat-status').textContent = '另一项操作尚未确认'; await f.$('chat-model').fire('change');
   assert.equal(f.$('chat-status').textContent, '另一项操作尚未确认');
 });
 
 test('template and controller remove the settings, boilerplate and key link rather than hiding or collapsing them', () => {
   const fs = require('node:fs'), path = require('node:path');
   const html = fs.readFileSync(path.join(__dirname, '../src/new_api_cockpit/templates/chat/index.html'), 'utf8');
-  assert.doesNotMatch(html, /chat-candidate-count|chat-context-strategy|chat-web-enabled|chat-auto-memory|候选回答数|主动勾选|所选上下文策略/);
+  assert.doesNotMatch(html, /id="chat-mode"|id="chat-agent-mode"|chat-candidate-count|chat-context-strategy|chat-web-enabled|chat-auto-memory|候选回答数|主动勾选|所选上下文策略/);
   const app = fs.readFileSync(path.join(__dirname, '../src/new_api_cockpit/static/chat/app.js'), 'utf8');
   assert.doesNotMatch(html + app, /chat-cost-notice|chat-defaults-info|chat-model-info|chat-runtime-details|管理我的 KEY|能力与计费说明|发送前核对协议|辅助请求合计每轮最多/);
-  assert.match(html, /id="chat-skills-open"/); assert.match(html, /id="chat-model-load"/);
+  assert.doesNotMatch(html, /id="chat-skills-open"|id="chat-skills-dialog"|id="chat-recover"/); assert.match(html, /id="chat-model-load"/);
   const controls = html.match(/<fieldset id="chat-selection"[^>]*>([\s\S]*?)<\/fieldset>/)[1];
   assert.doesNotMatch(controls, /<p\b|<details\b|<a\b/);
+});
+
+test('history renders immutable attachment cards safely, with explicit reuse/download and no forged sent message', async () => {
+  const {doc} = surfaces(false), target = new Node(), events = round({count: 1});
+  const a = {id: CID, name: '<img src=x>.md', kind: 'upload', download_path: 'https://evil.test/leak'}, b = {id: RID, name: 'unused.txt', kind: 'upload'}, output = {id: MIDS[0], name: 'out.md', kind: 'output'};
+  events.find(e => e.type === 'run.accepted').data.attachment_ids = [a.id];
+  const downloaded = [], referenced = [];
+  R.renderRuns(doc, target, S.projectEvents(events).runs, {files: [a, b, output], onDownloadFile: f => downloaded.push(f.id), onReferenceFile: f => referenced.push(f.id)});
+  const nodes = descendants(target), attachment = nodes.find(n => n.dataset.file === a.id);
+  assert.match(attachment.textContent, /<img src=x>.md/); assert.equal(nodes.some(n => ['IMG', 'SCRIPT', 'A'].includes(n.tagName)), false);
+  assert.doesNotMatch(target.textContent, /evil.test|out.md/); assert.deepEqual(downloaded, []); assert.deepEqual(referenced, []);
+  await attachment.children[0].fire('click'); await attachment.children[1].fire('click'); assert.deepEqual(downloaded, [CID]); assert.deepEqual(referenced, [CID]);
+  assert.equal(nodes.filter(n => n.className === 'chat-message chat-user').length, 1, 'unbound uploads are not invented user messages');
+  const unused = nodes.find(n => n.className === 'chat-uploaded-files'); assert.match(unused.textContent, /unused.txt/); assert.doesNotMatch(unused.textContent, /out.md/);
+  R.renderRuns(doc, target, S.projectEvents(events).runs, {files: [a, b], attachmentIds: [a.id, b.id], onReferenceFile() {}, filesDisabled: true});
+  assert.equal(descendants(target).some(n => n.className === 'chat-uploaded-files'), false);
+  assert.equal(descendants(target).filter(n => n.className?.includes('chat-reference')).every(n => n.disabled && n.attrs['aria-pressed'] === 'true'), true);
 });

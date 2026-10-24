@@ -48,6 +48,11 @@ jobs:
       - run: ruff check src tests deploy
       - run: ruff format --check src tests deploy
       - run: python -m unittest discover -s tests
+      - name: Verify account MCP with the official SDK in an isolated environment
+        run: |
+          python -m venv /tmp/cockpit-mcp-sdk
+          /tmp/cockpit-mcp-sdk/bin/pip install mcp==2.3.0
+          MCP_SDK_PYTHON=/tmp/cockpit-mcp-sdk/bin/python python -m unittest discover -s tests -p 'test_account_mcp_sdk.py'
       - run: |
           while IFS= read -r -d '' file; do
             node --check "$file" || exit 1

@@ -10,7 +10,7 @@ import copy
 import hashlib
 import json
 
-from . import config, context, protocols, schemas
+from . import config, context, protocols, schemas, media
 from .errors import ChatError
 
 VERSION = 1
@@ -98,7 +98,7 @@ def input_bytes(messages, window=None):
     This conservatively counts portable messages plus their replay DTOs (not a
     token estimator). No window uses the legacy messages-array measurement.
     """
-    return _size(
+    return media.measure(
         messages if window is None else {"messages": messages, "_window": window}
     )
 
@@ -193,7 +193,7 @@ def _safe_text(events, selected):
     ]
 
 
-def _round(events, files, binding):
+def _round(events, files, binding, attachment_texts=None):
     accepts = [e for e in events if e["type"] == "run.accepted"]
     terminals = [e for e in events if e["type"] == "run.terminal"]
     if len(accepts) != 1 or len(terminals) > 1:
@@ -210,7 +210,7 @@ def _round(events, files, binding):
             if count == 1 or status != "completed":
                 raise _invalid()
             selected = index
-    user = context._user_message(accepted, files)
+    user = context._user_message(accepted, files, attachment_texts)
     if selected is None:
         return [user], False, status, count, None
     chosen = [
@@ -237,7 +237,11 @@ def _round(events, files, binding):
         ]
         + (terminals if terminals else [])
     )
-    replay = context._history_round(canonical, files) if status == "completed" else None
+    replay = (
+        context._history_round(canonical, files, attachment_texts)
+        if status == "completed"
+        else None
+    )
     if replay is None:
         partial = _safe_text(chosen, selected)
         for message in partial:
@@ -277,7 +281,9 @@ def project_rounds(history_events, request, policy):
         for rid, events in grouped.items():
             if not any(e["type"] == "run.accepted" for e in events):
                 continue
-            messages, complete, status, count, selected = _round(events, files, binding)
+            messages, complete, status, count, selected = _round(
+                events, files, binding, request.get("attachment_texts")
+            )
             ids = events[0]["data"].get("attachment_ids", [])
             source = {"events": events, "files": [files[fid] for fid in ids]}
             rounds.append(
@@ -328,7 +334,7 @@ def _message_groups(messages):
         role = message["role"]
         if role not in {"system", "user", "assistant"}:
             raise _invalid()
-        schemas.text(message["content"], config.EXTENDED_CONTEXT_BYTES, empty=True)
+        protocols.validate_content(message["content"], role)
         calls = message.get("tool_calls", [])
         if (
             not isinstance(calls, list)
@@ -579,7 +585,7 @@ def plan(history_events, snapshot, request, policy, checkpoint=None):
         files = {f["id"]: f for f in attachments}
         if len(files) != len(attachments):
             raise _invalid()
-        current = context._user_message(request, files)
+        current = context._user_message(request, files, request.get("attachment_texts"))
         head = [
             {"role": "system", "content": context.SYSTEM_PROMPT},
             {"role": "user", "content": context.render_personal_block(snapshot)},
@@ -811,7 +817,10 @@ def plan_active(messages, policy, binding, *, window=None):
                 i
                 for i in range(len(messages) - 1, head_end - 1, -1)
                 if messages[i]["role"] == "user"
-                and not messages[i].get("content", "").startswith(SUMMARY_PREFIX)
+                and not (
+                    isinstance(messages[i].get("content"), str)
+                    and messages[i]["content"].startswith(SUMMARY_PREFIX)
+                )
             ),
             None,
         )

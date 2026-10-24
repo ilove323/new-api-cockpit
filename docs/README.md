@@ -18,6 +18,7 @@
 - 模型工具：[模型使用教程](manual.md)、[智力测试](intelligence.md)、[生图工作站](image-studio.md)。
 - [AI 助手](chat.md)：聊天、文件与联网、Skills / Memory、能力配置和隔离边界。
 - 程序接入：[API 参考](api.md)、[交互式文档](interactive-api.md)。
+- [账户 MCP](mcp.md)：用户 PAT 认证、本人余额和用量、客户端配置及安全边界。
 
 ## 开发与契约
 

@@ -5,17 +5,84 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {execFileSync} = require('node:child_process');
-const {guides, build} = require('../src/new_api_cockpit/static/manual-guides.js');
+const {guides, build, buildMcp} = require('../src/new_api_cockpit/static/manual-guides.js');
 
 const origin = 'https://fixture.test:24443';
 const options = extras => ({origin, model: 'fixture-model', ...extras});
 const content = (id, extras) => build(id, options(extras)).map(item => item.content).join('\n');
 const jsonBlock = extras => JSON.parse(build('openclaw', options(extras))[0].content);
-const titles = ['Claude Code', 'Codex', 'Cursor', 'CC Switch', 'TRAE', 'Qoder', 'Chatbox', 'OpenClaw', 'curl'];
+const titles = ['Claude Code', 'Codex', 'WorkBuddy', 'Hermes', 'Claude App', 'Cursor', 'CC Switch', 'TRAE', 'Qoder', 'Chatbox', 'OpenClaw', 'curl'];
 
-test('nine tools expose complete, immutable metadata and client protocols', () => {
+test('new clients use their documented paths and cannot confuse user PAT with model configuration', () => {
+  const work = build('workbuddy', options())[1];
+  assert.ok(work.content.includes(origin + '/v1/chat/completions'));
+  assert.match(work.content, /自定义协议.*开启/);
+  const hermes = build('hermes', options());
+  assert.equal(hermes[0].language, 'yaml');
+  assert.match(hermes[0].content, /provider: "custom"/);
+  assert.ok(hermes[0].content.includes(origin + '/v1'));
+  assert.match(hermes[1].content, /^hermes --model='fixture-model'$/);
+  const desktop = build('claude-app', options())[0].content;
+  assert.ok(desktop.includes('Gateway base URL：' + origin + '\n'));
+  assert.match(desktop, /Gateway auth scheme：Bearer/);
+  assert.ok(!desktop.includes('/v1/messages'));
+  assert.ok(guides.every(item => item.steps.length >= 5));
+});
+
+test('all clients attach each example to its operation step on every platform and protocol', () => {
+  const expected = {
+    'claude-code': {1: [0], 2: [2], 3: [1]}, codex: {2: [0], 3: [1], 5: [2]},
+    workbuddy: {2: [0], 3: [1]}, hermes: {2: [0], 4: [1]},
+    'claude-app': {2: [0], 3: [1]}, cursor: {1: [0], 2: [1], 3: [2]},
+    'cc-switch': {2: [0], 4: [1]}, trae: {2: [0]}, qoder: {2: [0], 3: [1]},
+    chatbox: {1: [0], 2: [1], 3: [2]}, openclaw: {2: [0], 3: [1]}, curl: {3: [0]},
+  };
+  for (const guide of guides) {
+    const steps = Object.fromEntries(guide.steps.flatMap((step, i) => step.snippets ? [[i + 1, step.snippets]] : []));
+    assert.deepEqual(steps, expected[guide.id], guide.id);
+    for (const protocol of guide.protocols) for (const platform of ['posix', 'powershell']) {
+      for (const target of guide.id === 'cc-switch' ? ['claude-code', 'codex'] : [undefined]) {
+        const blocks = build(guide.id, options({protocol, platform, target}));
+        const indices = guide.steps.flatMap(step => step.snippets || []).sort((a, b) => a - b);
+        assert.deepEqual(indices, blocks.map((_, i) => i), `${guide.id}/${protocol}/${platform}/${target}`);
+        for (const block of blocks) {
+          assert.equal(block.containsKey, block.content.includes('API_KEY'), `${guide.id}: only credential steps fetch KEY`);
+        }
+      }
+    }
+  }
+});
+
+test('Codex two-file setup has a nonsecret connection and independent auth.json', () => {
+  for (const platform of ['posix', 'powershell']) {
+    const result = build('codex', options({platform, key: 'copy-only-model-key'}));
+    assert.equal(result[0].containsKey, false);
+    assert.match(result[0].content, /cli_auth_credentials_store = "file"/);
+    assert.match(result[0].content, /requires_openai_auth = true/);
+    assert.doesNotMatch(result[0].content, /env_key|copy-only-model-key/);
+    assert.equal(result[1].language, 'json');
+    assert.deepEqual(JSON.parse(result[1].content), {auth_mode: 'apikey', OPENAI_API_KEY: 'copy-only-model-key'});
+    assert.equal(result[1].containsKey, true);
+    assert.equal(result[2].containsKey, false);
+  }
+});
+
+test('MCP examples contain only user-PAT placeholders, need no model/key, and preserve ports', () => {
+  const codex = buildMcp('codex', origin);
+  assert.equal(codex.containsKey, false);
+  assert.ok(codex.content.includes(origin + '/cockpit/mcp'));
+  assert.match(codex.content, /bearer_token_env_var = "NEW_API_USER_PAT"/);
+  assert.doesNotMatch(codex.content, /OPENAI_API_KEY|NEW_API_MODEL_KEY|sk-/);
+  const cursor = JSON.parse(buildMcp('cursor', origin).content);
+  assert.equal(cursor.mcpServers.newapi_account.url, origin + '/cockpit/mcp');
+  assert.equal(cursor.mcpServers.newapi_account.headers.Authorization, 'Bearer USER_API_TOKEN');
+  assert.throws(() => buildMcp('unknown', origin));
+  assert.throws(() => buildMcp('codex', 'https://fixture.test/path'));
+});
+
+test('twelve tools expose complete, immutable metadata and client protocols', () => {
   assert.deepEqual(guides.map(item => item.title), titles);
-  assert.equal(new Set(guides.map(item => item.id)).size, 9);
+  assert.equal(new Set(guides.map(item => item.id)).size, 12);
   for (const item of guides) {
     assert.equal(item.status, undefined);
     assert.ok(item.description && item.steps.length && item.notes.length && item.sources.length);
@@ -32,9 +99,10 @@ test('nine tools expose complete, immutable metadata and client protocols', () =
   assert.ok(Object.isFrozen(guides));
   assert.match(JSON.stringify(guides.find(item => item.id === 'cursor')), /Tab.*不走 BYOK/);
   assert.match(JSON.stringify(guides.find(item => item.id === 'trae')), /国际版/);
-  assert.match(JSON.stringify(guides.find(item => item.id === 'codex')), /不会自动传给/);
+  assert.match(JSON.stringify(guides.find(item => item.id === 'codex')), /auth.json/);
   const codex = guides.find(item => item.id === 'codex');
-  assert.equal(codex.steps[0].title, '合并配置');
+  assert.equal(codex.steps[0].title, '备份并找到配置目录');
+  assert.ok(codex.steps.some(step => step.title === '合并配置'));
   assert.ok(!JSON.stringify(codex.steps).includes('确认 Responses 支持'));
 });
 
@@ -168,7 +236,7 @@ test('JSON and TOML escape literals and never replace API_KEY in another field',
   assert.ok(!codex[0].content.includes(model));
   assert.equal(JSON.parse(codex[0].content.split('\n').find(line => line.startsWith('base_url = ')).slice('base_url = '.length)), origin + '/v1');
   assert.ok(!codex[0].content.includes(key));
-  assert.match(codex[0].content, /wire_api = "responses"\nenv_key = "NEW_API_MODEL_KEY"/);
+  assert.match(codex[0].content, /wire_api = "responses"\nrequires_openai_auth = true/);
   for (const id of ['cursor', 'trae', 'chatbox']) {
     const output = content(id, {model, key});
     assert.ok(output.includes(model) && output.includes(key));
@@ -203,7 +271,7 @@ test('POSIX quotes round-trip shell metacharacters using only a mocked curl buil
     assert.ok(args.includes(protocol === 'anthropic' ? 'x-api-key: ' + key : 'Authorization: Bearer ' + key));
     assert.ok(!body.model.includes(key));
   }
-  for (const [id, name] of [['claude-code', 'ANTHROPIC_API_KEY'], ['codex', 'NEW_API_MODEL_KEY']]) {
+  for (const [id, name] of [['claude-code', 'ANTHROPIC_API_KEY']]) {
     const shell = build(id, options({model, key})).find(part => part.language === 'bash').content;
     const output = execFileSync('/bin/sh', ['-c', shell + '\nprintf "%s" "$' + name + '"'], {env: {PATH: '/nonexistent'}, encoding: 'utf8'});
     assert.equal(output, key);
@@ -215,7 +283,7 @@ test('PowerShell uses single-quoted literals and version-safe curl.exe argument 
   const model = 'model-\'"\\${API_KEY}-`n';
   const psLiteral = value => "'" + value.replace(/'/g, "''") + "'";
   const codex = build('codex', options({platform: 'powershell', key, model}));
-  assert.equal(codex[1].content, '$env:NEW_API_MODEL_KEY = ' + psLiteral(key));
+  assert.equal(JSON.parse(codex[1].content).OPENAI_API_KEY, key);
   const claude = content('claude-code', {platform: 'powershell', key, model});
   assert.ok(claude.includes('$env:ANTHROPIC_API_KEY = ' + psLiteral(key)));
   assert.ok(claude.includes('claude --model=' + psLiteral(model)));
@@ -257,15 +325,15 @@ test('PowerShell typographic single quotes are escaped, not treated as shell del
   assert.equal(JSON.parse(decode(curl.split('--data-raw ')[1])).model, model);
 });
 
-test('browser module exports only guides/build and performs no UI, network or storage access', () => {
+test('browser module exports only pure builders and performs no UI, network or storage access', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/new_api_cockpit/static/manual-guides.js'), 'utf8');
   const forbidden = () => { throw new Error('side effect forbidden'); };
   const window = {};
   const context = {window, URL, fetch: forbidden, XMLHttpRequest: forbidden, setTimeout: forbidden};
   for (const name of ['document', 'navigator', 'localStorage', 'sessionStorage']) Object.defineProperty(context, name, {get: forbidden});
   vm.runInNewContext(source, context);
-  assert.deepEqual(Object.keys(window.CockpitManualGuides), ['guides', 'build']);
-  assert.equal(window.CockpitManualGuides.guides.length, 9);
+  assert.deepEqual(Object.keys(window.CockpitManualGuides), ['guides', 'build', 'buildMcp']);
+  assert.equal(window.CockpitManualGuides.guides.length, 12);
   for (const item of window.CockpitManualGuides.guides) assert.ok(window.CockpitManualGuides.build(item.id, options()).length);
   assert.ok(Object.isFrozen(window.CockpitManualGuides));
 });

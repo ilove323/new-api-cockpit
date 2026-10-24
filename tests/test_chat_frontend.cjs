@@ -31,7 +31,9 @@ test('all output versions, empty conversations and tool results survive event pr
   const files = [1, 2].map((version, index) => event(index + 1, 'file.added', {file: {id: index ? SID : MID, kind: 'output', name: 'report.md', version}}));
   const p = S.projectEvents([...files, event(3, 'tool.call', {call_id: 'call-a', name: 'read_file', arguments: {file_id: MID}}), event(4, 'tool.result', {call_id: 'call-a', name: 'read_file', ok: false, result: {code: 'TOOL_FILE_NOT_FOUND'}})]);
   assert.equal(p.files.length, 2); assert.equal(p.runs[0].tools.get('call-a').ok, false); assert.equal(S.projectEvents([]).runs.length, 0);
-  assert.match(usageText({usage: null}), /未知/); assert.match(usageText({usage: {prompt_tokens: 0, completion_tokens: 1, total_tokens: 1}, usage_complete: false}), /部分/);
+  assert.equal(usageText({usage: null}), '用量未知；费用以 New API 记录为准');
+  assert.equal(usageText({usage: {prompt_tokens: 0, completion_tokens: 1, total_tokens: 1}, usage_complete: false}), '用量部分：输入 0 / 输出 1 / 合计 1 Token；费用以 New API 记录为准');
+  assert.equal(usageText({usage: {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}, usage_complete: true}), '用量完整：输入 0 / 输出 0 / 合计 0 Token；费用以 New API 记录为准');
 });
 test('tool timeline stays interleaved with assistant messages; per-request usage deduplicates and remains partial', () => {
   const events = [event(1, 'assistant.message', {message_id: MID, text: 'before tool'}), event(2, 'tool.call', {call_id: 'a', name: 'list_files', arguments: {}}), event(3, 'tool.result', {call_id: 'a', name: 'list_files', ok: true, result: {}}), event(4, 'assistant.message', {message_id: SID, text: 'after tool'}), event(5, 'run.usage', {request_index: 1, prompt_tokens: 2, completion_tokens: 3, total_tokens: 5}), event(6, 'run.usage', {request_index: 1, prompt_tokens: 2, completion_tokens: 3, total_tokens: 5}), event(7, 'run.usage', {request_index: 2, prompt_tokens: 5, completion_tokens: 8, total_tokens: 13})];
@@ -57,11 +59,12 @@ test('run request is exact, context/Skills explicit 0..3 and capability revision
   const body = S.buildRunRequest(input); assert.equal(body.context_revision, 0); assert.deepEqual(body.skill_ids, []); assert.equal(body.expected_revision, 9); assert.equal(body.token_id, 7);
   assert.deepEqual(Object.keys(body).sort(), ['attachment_ids', 'capability_revision', 'client_request_id', 'context_revision', 'expected_revision', 'mode', 'model', 'skill_ids', 'text', 'token_id'].sort());
   assert.throws(() => S.buildRunRequest({...input, token: {id: true, usable: true}}));
-  assert.throws(() => S.buildRunRequest({...input, mode: 'files'}), /工具能力/);
+  assert.equal(S.buildRunRequest({...input, mode: 'files'}).mode, 'files');
   assert.throws(() => S.buildRunRequest({...input, skillIds: [SID, SID]}));
   assert.throws(() => S.buildRunRequest({...input, skillIds: [MID]}));
   assert.throws(() => S.buildRunRequest({...input, text: '中文a'}));
-  assert.throws(() => S.buildRunRequest({...input, attachments: [MID]}));
+  assert.deepEqual(S.buildRunRequest({...input, attachments: [MID]}).attachment_ids, [MID]);
+  assert.throws(() => S.buildRunRequest({...input, attachments: [MID, MID]}));
   assert.throws(() => S.buildRunRequest({...input, model: {...input.model, capability_revision: 'fixture'}}));
 });
 test('cursor traversal never treats has_more as complete and detects repeated cursors', () => {
@@ -209,7 +212,8 @@ test('templates reuse existing partials, include all local assets and declare ev
     const markup = base + fs.readFileSync(path.join(templateRoot, `${page}.html`), 'utf8'), ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
     assert.equal(new Set(ids).size, ids.length, `${page}: duplicate ID`);
     const source = fs.readFileSync(path.join(root, `${script}.js`), 'utf8');
-    for (const [, id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.equal(ids.includes(id), true, `${script}: missing #${id}`);
+    const optional = page === 'index' ? new Set(['chat-skills', 'chat-skills-clear', 'chat-context-refresh', 'chat-context-info', 'chat-skill-choices', 'chat-skill-order']) : new Set();
+    for (const [, id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.equal(ids.includes(id) || optional.has(id), true, `${script}: missing #${id}`);
     for (const [, asset] of markup.matchAll(/(?:src|href)="\/cockpit\/static\/chat\/([^\"]+)"/g)) assert.equal(fs.existsSync(path.join(root, asset)), true, `missing ${asset}`);
   }
 });

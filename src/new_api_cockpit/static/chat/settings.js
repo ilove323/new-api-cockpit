@@ -176,7 +176,7 @@
       scope.invalidate(); Object.assign(s, {context: null, baseline: null, draft: '', id: 'MEMORY.md', kind: 'profile', editContextRevision: 0, pending: null, busy: false, skillTab: false});
       for (const id of ['settings-content', 'settings-skill-name', 'settings-skill-description', 'settings-import-skill']) $(id).value = '';
       for (const id of ['settings-preview', 'settings-latest-content', 'settings-skill-list', 'settings-context-info', 'settings-document-info', 'settings-byte-count', 'settings-skill-count']) $(id).replaceChildren();
-      $('settings-conflict').hidden = true; $('settings-preview').hidden = true; const dialog = $('chat-dialog'); if (dialog.open) dialog.close(); dialog.replaceChildren();
+      $('settings-conflict').hidden = true; $('settings-preview').hidden = true;
       status('登录状态已变化，旧个人内容和草稿已清空。请重新载入并登录。', true); update();
     }
     for (const node of doc.querySelectorAll('[data-profile]')) node.addEventListener('click', () => selectProfile(node.dataset.profile));

@@ -177,12 +177,12 @@
     if (!meta || meta.storage_state === 'corrupt' || meta.active_run_id) throw new Error('聊天不可写或仍有运行，请先只读刷新状态。');
     if (!token?.usable || !Number.isInteger(token.id) || token.id < 1 || token.id > 2147483647) throw new Error('请选择本人可用 KEY。');
     if (!model?.chat_enabled || !model.id || !/^sha256:[0-9a-f]{64}$/.test(model.capability_revision || '')) throw new Error('请先载入并选择已确认能力的模型。');
-    if (!config?.modes?.includes(mode) || mode === 'files' && !model.tools_enabled) throw new Error('此模型未确认文件工具能力，请手动选择其他模式或模型。');
+    if (!config?.modes?.includes(mode)) throw new Error('当前服务不支持此请求，请刷新页面。');
     if (typeof text !== 'string' || !text.trim() || bytes(text) > config.limits.user_text_bytes) throw new Error('请输入非空正文，并遵守正文大小限制。');
     normalizeText(text);
     if (!context || !Number.isSafeInteger(context.context_revision)) throw new Error('请先载入个人上下文。');
     if (!Array.isArray(skillIds) || skillIds.length > context.limits.skills_per_run || new Set(skillIds).size !== skillIds.length || skillIds.some(id => !isUUID(id) || !context.skills.some(s => s.id === id))) throw new Error('已载入 Skills 不可用或超限，请打开 Skills 核对或移除。');
-    if (!Array.isArray(attachments) || attachments.length > config.limits.attachments_per_turn || new Set(attachments).size !== attachments.length || attachments.some(id => !isUUID(id)) || mode === 'chat' && attachments.length) throw new Error('附件选择无效。');
+    if (!Array.isArray(attachments) || attachments.length > config.limits.attachments_per_turn || new Set(attachments).size !== attachments.length || attachments.some(id => !isUUID(id))) throw new Error('附件选择无效。');
     if (!isUUID(requestId)) throw new Error('请求标识无效。');
     const body = {client_request_id: requestId, expected_revision: meta.revision, token_id: token.id, model: model.id, capability_revision: model.capability_revision, context_revision: context.context_revision, skill_ids: [...skillIds], mode, text, attachment_ids: [...attachments]};
     // Omission is intentionally the exact legacy DTO (including its key set).

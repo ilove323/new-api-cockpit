@@ -47,11 +47,21 @@ class ContractsTest(unittest.TestCase):
             {"text": "a" * 32769},
             {"mode": "admin"},
             {"skill_ids": ["44444444-4444-4444-8444-444444444444"] * 2},
-            {"attachment_ids": ["44444444-4444-4444-8444-444444444444"]},
+            {"attachment_ids": ["44444444-4444-4444-8444-444444444444"] * 2},
             {"capability_revision": "unknown"},
         ):
             with self.subTest(update=list(update)), self.assertRaises(ChatError):
                 schemas.parse_run(request_body(**update))
+
+    def test_ordinary_chat_accepts_attachment_ids_without_tools(self):
+        ids = ["44444444-4444-4444-8444-444444444444"]
+        self.assertEqual(
+            schemas.parse_run(request_body(attachment_ids=ids))["attachment_ids"], ids
+        )
+        with self.assertRaises(ChatError):
+            schemas.parse_run(
+                request_body(attachment_ids=ids, attachment_texts={ids[0]: "forged"})
+            )
 
     def test_credentials_are_not_in_repr(self):
         for uid, role in ((11, 1), (12, 1), (99, 100)):

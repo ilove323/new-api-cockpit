@@ -134,7 +134,9 @@ class ChatV2CoreReviewRegressionTest(unittest.TestCase):
         _, state, _ = self.turn(
             mode="files",
             text="read all five source lines",
-            attachment_ids=[source["id"]],
+            # This regression exercises paged tool reads. Explicitly referenced
+            # attachments are now hydrated in full and correctly exceed this budget.
+            attachment_ids=[],
         )
         last = plans[-1]
         self.assertEqual(last["compactions"], wc.MAX_COMPACTION_CALLS)

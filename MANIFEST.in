@@ -1,4 +1,5 @@
 recursive-include sql *.sql
+recursive-include tests/fixtures *.sql
 graft frontend/studio
 prune frontend/studio/node_modules
 include docs/image-studio-sources.md

@@ -59,7 +59,7 @@
   /** Public input is untrusted. No legacy capability or optimistic route defaults.
    * @param {any} record @returns {Model|null} */
   function modelProfile(record) {
-    if (!record || typeof record.id !== 'string' || !/^gpt-image-[^\s\x00-\x1f]{1,246}$/.test(record.id)
+    if (!record || typeof record.id !== 'string' || !record.id.length || record.id.length > 256 || record.id !== record.id.trim() || /[\x00-\x1f\x7f\uD800-\uDFFF]/u.test(record.id)
         || !/^[a-f0-9]{64}$/.test(record.revision || '')) return null;
     /** @param {any} p @returns {Parameters|null} */
     const parameters = p => {

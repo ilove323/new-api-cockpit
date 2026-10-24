@@ -74,7 +74,7 @@ FIELDS = {
     },
 }
 OPTIONAL_FIELDS = {
-    "run.accepted": {"options", "protocol"},
+    "run.accepted": {"options", "protocol", "attachment_mode"},
     "run.dispatching": {"purpose", "candidate_index", "candidate_message_ids"},
     "assistant.delta": {"candidate_index"},
     "assistant.message": {"candidate_index"},
@@ -138,7 +138,11 @@ def validate_file(value, scope):
         or name in {".", ".."}
     ):
         raise ChatError("文件名无效。")
-    if value["mime"] != "text/plain; charset=utf-8":
+    # Old text entries stay compatible. Both binary uploads and generated
+    # outputs must match their extension; original bytes are hash-verified.
+    from .media import mime_for
+
+    if value["mime"] != mime_for(name, output=value["kind"] == "output"):
         raise ChatError("文件类型无效。")
     integer(value["size_bytes"], 0, config.UPLOAD_FILE_BYTES)
     _hash(value["sha256"])
@@ -210,6 +214,11 @@ def validate_event(event, scope, sequence):
     else:
         identifier(rid)
         if kind == "run.accepted":
+            if (
+                "attachment_mode" in data
+                and data["attachment_mode"] != "server-text-v1"
+            ):
+                raise ChatError("附件正文格式无效。")
             identifier(data["client_request_id"])
             identifier(data["message_id"])
             text(data["text"], config.USER_TEXT_BYTES)
@@ -229,9 +238,7 @@ def validate_event(event, scope, sequence):
                 )
             integer(data["token_id"], 1, 2147483647)
             text(data["model"], 256)
-            if data["mode"] not in {"chat", "files"} or (
-                data["mode"] == "chat" and data["attachment_ids"]
-            ):
+            if data["mode"] not in {"chat", "files"}:
                 raise ChatError("模式无效。")
             if not re.fullmatch(
                 r"sha256:[a-f0-9]{64}", str(data["capability_revision"])

@@ -50,17 +50,38 @@ async function harness({clipboard = 'promise', handler, guides: suppliedGuides, 
   const guides = suppliedGuides || Array.from({length: 9}, (_, index) => ({
     id: `tool-${index}`, title: `工具 ${index + 1}`, description: `工具 ${index + 1} 的教程`,
     protocols: ['chat', 'responses', 'anthropic'], defaultProtocol: 'chat',
-    steps: [{title: '安装并打开工具', body: '在自己的设备上安装。\n这是配置说明，不是官方截图。'}, {title: '填写连接配置', body: '核对模型与地址后保存。'}],
+    steps: [{title: '安装并打开工具', body: '在自己的设备上安装。\n这是配置说明，不是官方截图。', snippets: [0]}, {title: '填写连接配置', body: '核对模型与地址后保存。', snippets: [1]}],
     notes: ['验证连接可能收费。'], sources: [{title: '官方文档', url: 'https://platform.openai.com/docs/overview'}],
   }));
   const defaultHandler = async url => url.endsWith('/tokens') ? response({tokens, token_manager_path: '/keys'})
     : url.endsWith('/models') ? response({models}) : response({key: SECRET});
   const h = {elements, events, calls, writes, buildCalls, timers, channels, observers, clipboardCalls, forbidden, guides,
-    handle: handler || defaultHandler, el: id => elements.get(`manual-${id}`),
+    handle: handler || defaultHandler, exampleIndex: 0,
+    example(index = this.exampleIndex) {
+      const walk = node => [node, ...node.children.flatMap(walk)];
+      const node = walk(elements.get('manual-steps')).find(node => node.id === `manual-example-${index}`);
+      return node;
+    },
+    // Compact aliases point to the actual per-step DOM nodes, not a footer UI.
+    el(id) {
+      const example = this.example(), preview = example?.children[1];
+      const aliases = {
+        'preview': preview, 'preview-help': example?.children[0],
+        'code': preview?.children[1]?.children[0],
+        'code-title': preview?.children[0]?.children[0], 'code-language': preview?.children[0]?.children[1],
+        'copy-key': example?.children[2]?.children[0], 'copy-key-label': example?.children[2]?.children[0],
+        'copy-status': example?.children[3],
+      };
+      if (Object.hasOwn(aliases, id)) {
+        const empty = new Element(); empty.hidden = true; empty.disabled = true;
+        return aliases[id] || empty;
+      }
+      return elements.get(`manual-${id}`);
+    },
     async fire(id, event = 'click', value) { if (value !== undefined) this.el(id).value = value; await this.el(id).fire(event); await settle(); },
     async choose() { await this.fire('token', 'change', '1'); await this.fire('model', 'change', 'model-one'); },
     async event(name, detail = {}) { for (const fn of events[name] || []) await fn(detail); await settle(); },
-    async tool(index) { await this.el('tools').children[index].fire('click'); await settle(); },
+    async tool(index) { this.exampleIndex = 0; await this.el('tools').children[index].fire('click'); await settle(); },
     dom() {
       const walk = node => [node.textContent, JSON.stringify(node.attrs), node.value, node.href, ...node.children.flatMap(walk)];
       return [...elements.values()].flatMap(walk).filter(Boolean).join('\n');
@@ -107,7 +128,7 @@ async function harness({clipboard = 'promise', handler, guides: suppliedGuides, 
     vm.runInNewContext(fs.readFileSync(path.join(root, 'static/manual-guides.js'), 'utf8'), ctx, {filename: 'manual-guides.js'});
     const actual = ctx.CockpitManualGuides;
     h.guides = actual.guides;
-    ctx.CockpitManualGuides = {guides: actual.guides, build(id, options) {
+    ctx.CockpitManualGuides = {guides: actual.guides, buildMcp: actual.buildMcp, build(id, options) {
       buildCalls.push({id, ...options}); return actual.build(id, options);
     }};
   }
@@ -136,6 +157,14 @@ test('template reuses the app shell, loads guides first, and omits the redundant
   assert.ok(!html.includes('manual-privacy')); assert.ok(!css.includes('.manual-privacy'));
   assert.ok(!html.includes('复制示例')); assert.ok(!source.includes('复制示例'));
   assert.ok(!html.includes('粘贴后请清理剪贴板'));
+  assert.match(html, />接入配置说明<|>服务地址<|>接口协议</);
+  for (const old of ['先分清密钥、地址和协议', '地址怎么填', '协议怎么选', 'manual-snippet', 'manual-examples']) {
+    assert.ok(!html.includes(old), old);
+  }
+  const mcpStep = html.slice(html.indexOf('<h3>添加远程 HTTP MCP</h3>'), html.indexOf('<h3>询问并核对结果</h3>'));
+  for (const id of ['manual-mcp-url', 'manual-mcp-client', 'manual-mcp-code', 'manual-mcp-copy']) {
+    assert.ok(mcpStep.includes(`id="${id}"`), `${id} belongs to MCP step 2`);
+  }
 });
 test('tokens are personal, masked, grouped and gated; selecting a disabled token cannot request models', async () => {
   const h = await harness();
@@ -162,7 +191,7 @@ test('POSTs use the required guard, safe fetch options and the global session br
   }
   assert.equal(h.timers.size, 0);
 });
-test('one copy button fills the clipboard with KEY while the preview keeps API_KEY', async () => {
+test('a step copy fills the clipboard with KEY while every preview keeps API_KEY', async () => {
   const h = await harness(); await h.choose();
   assert.equal(h.el('copy-example'), undefined);
   assert.match(h.el('code').textContent, /API_KEY/);
@@ -185,10 +214,10 @@ test('ClipboardItem promise starts writing in the click before the key response 
   pending.resolve({key: SECRET}); await copying; await settle();
   assert.match(h.writes[0], new RegExp(SECRET));
 });
-test('system, protocol and snippet selection are captured by the configuration builder', async () => {
+test('system, protocol and the clicked step are captured by the configuration builder', async () => {
   const h = await harness(); await h.choose();
   await h.fire('platform', 'change', 'powershell'); await h.fire('protocol', 'change', 'anthropic');
-  await h.fire('snippet', 'change', '1'); await h.fire('copy-key');
+  h.exampleIndex = 1; await h.fire('copy-key');
   const built = JSON.parse(h.writes[0]);
   assert.equal(built.second, true); assert.equal(built.platform, 'powershell'); assert.equal(built.protocol, 'anthropic');
   assert.equal(built.origin, 'https://models.example.test'); assert.equal(built.model, 'model-one');
@@ -256,7 +285,7 @@ test('backend key errors show safe detail, never leak an echoed KEY, and never r
   assert.match(h.el('copy-status').textContent, /令牌权限不足/); assert.ok(!h.dom().includes(SECRET));
   assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 1); assert.equal(h.writes.length, 0);
 });
-for (const transition of ['token', 'model', 'protocol', 'tool', 'platform', 'target', 'snippet', 'auth', 'logout', 'pagehide']) {
+for (const transition of ['token', 'model', 'protocol', 'tool', 'platform', 'target', 'auth', 'logout', 'pagehide']) {
   test(`late KEY cannot build or copy after ${transition} changes`, async () => {
     const h = await harness(); await h.choose();
     const pending = deferred(); h.handle = async url => url.endsWith('/key') ? {ok: true, status: 200, json: () => pending.promise} : response({models});
@@ -267,7 +296,6 @@ for (const transition of ['token', 'model', 'protocol', 'tool', 'platform', 'tar
     else if (transition === 'protocol') await h.fire('protocol', 'change', 'responses');
     else if (transition === 'tool') await h.tool(1);
     else if (transition === 'platform') await h.fire('platform', 'change', 'powershell');
-    else if (transition === 'snippet') await h.fire('snippet', 'change', '1');
     else if (transition === 'target') await h.fire('target', 'change', 'codex');
     else if (transition === 'auth') await h.event('cockpit-auth-changed');
     else if (transition === 'logout') await h.elements.get('logout').fire('click');
@@ -396,19 +424,95 @@ test('a token conflict does not log out the account; a changed session does', as
   await h.fire('copy-key');
   assert.equal(h.el('refresh-tokens').disabled, true); assert.equal(h.el('code').textContent, '');
 });
-test('the same Codex button copies TOML without reading KEY and fills KEY in the credential snippet', async () => {
+test('Codex step 2 copies TOML without reading KEY and step 3 copies auth.json with KEY', async () => {
   const h = await harness({actualGuides: true}); await h.choose();
   await h.tool(h.guides.findIndex(item => item.id === 'codex'));
   assert.equal(h.el('protocol-label').textContent, 'Codex 使用的协议');
   assert.equal(h.el('copy-key').disabled, false); assert.equal(h.el('copy-key-label').textContent, '复制配置');
   await h.fire('copy-key');
   assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 0);
-  assert.match(h.writes[0], /env_key = "NEW_API_MODEL_KEY"/); assert.ok(!h.writes[0].includes(SECRET));
-  await h.fire('snippet', 'change', '1');
+  assert.match(h.writes[0], /requires_openai_auth = true/); assert.ok(!h.writes[0].includes(SECRET));
+  h.exampleIndex = 1;
   assert.equal(h.el('copy-key-label').textContent, '复制配置（含 KEY）');
   assert.equal(h.el('copy-key').disabled, false); await h.fire('copy-key');
   assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 1);
   assert.ok(h.writes[1].includes(SECRET)); assert.ok(!h.dom().includes(SECRET));
+  assert.equal(JSON.parse(h.writes[1]).OPENAI_API_KEY, SECRET);
+  assert.equal(JSON.parse(h.el('code').textContent).OPENAI_API_KEY, 'API_KEY');
+});
+
+test('every client renders and copies all examples inside their own steps, never in a footer', async () => {
+  const h = await harness({actualGuides: true}); await h.choose();
+  for (const [index, guide] of h.guides.entries()) {
+    await h.tool(index);
+    const expected = h.ctx.CockpitManualGuides.build(guide.id, {
+      origin: h.ctx.location.origin, model: 'model-one', key: SECRET,
+      platform: 'posix', protocol: h.el('protocol').value, target: 'claude-code',
+    });
+    const previews = h.ctx.CockpitManualGuides.build(guide.id, {
+      origin: h.ctx.location.origin, model: 'model-one', platform: 'posix',
+      protocol: h.el('protocol').value, target: 'claude-code',
+    });
+    const walk = node => [node, ...node.children.flatMap(walk)];
+    for (const [stepIndex, step] of guide.steps.entries()) {
+      const nodes = walk(h.el('steps').children[stepIndex]);
+      const actual = nodes.filter(node => node.className === 'manual-step-example');
+      assert.deepEqual(actual.map(node => node.id), Array.from(step.snippets || [], i => `manual-example-${i}`), `${guide.id}/step ${stepIndex + 1}`);
+      for (const snippet of step.snippets || []) {
+        h.exampleIndex = snippet;
+        assert.equal(h.el('code').textContent, previews[snippet].content);
+        assert.equal(h.el('preview').hidden, false);
+        const count = h.calls.filter(call => call.url.endsWith('/key')).length;
+        await h.fire('copy-key');
+        assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length - count, expected[snippet].containsKey ? 1 : 0);
+        assert.equal(h.writes.at(-1), expected[snippet].content);
+        assert.equal(h.el('copy-status').textContent, '已复制。');
+        assert.ok(!h.dom().includes(SECRET));
+      }
+    }
+  }
+});
+
+test('one in-flight copy disables all step buttons and detached buttons cannot read KEY', async () => {
+  const h = await harness(); await h.choose();
+  const pending = deferred(); h.handle = async () => ({ok: true, status: 200, json: () => pending.promise});
+  const oldButton = h.el('copy-key');
+  const copying = oldButton.fire('click'); await settle();
+  h.exampleIndex = 1;
+  assert.equal(h.el('copy-key').disabled, true);
+  await h.fire('copy-key');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 1);
+  pending.resolve({key: SECRET}); await copying; await settle();
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.el('copy-status').textContent, '');
+  h.exampleIndex = 0; assert.equal(h.el('copy-status').textContent, '已复制。');
+  await h.tool(1); await oldButton.fire('click'); await settle();
+  assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 1);
+});
+
+test('an unplaced configuration cannot silently disappear or be copied from the wrong step', async () => {
+  const h = await harness({build() {
+    return [0, 1, 2].map(index => ({title: `配置 ${index}`, language: 'text', content: 'API_KEY'}));
+  }}); await h.choose();
+  assert.equal(h.el('preview').hidden, true);
+  assert.match(h.el('preview-help').textContent, /无法生成/);
+  assert.equal(h.el('copy-key').disabled, true);
+  await h.fire('copy-key');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 0);
+});
+
+test('account MCP previews and copies without model selection or reading any model KEY', async () => {
+  const h = await harness({actualGuides: true});
+  assert.ok(h.el('mcp-url').textContent.endsWith('/cockpit/mcp'));
+  assert.match(h.el('mcp-code').textContent, /NEW_API_USER_PAT/);
+  await h.fire('mcp-copy');
+  assert.match(h.writes[0], /mcp_servers.newapi_account/);
+  await h.fire('mcp-client', 'change', 'cursor');
+  await h.fire('mcp-copy');
+  assert.equal(JSON.parse(h.writes[1]).mcpServers.newapi_account.headers.Authorization, 'Bearer USER_API_TOKEN');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/key') || call.url.endsWith('/models')).length, 0);
+  assert.ok(!h.dom().includes(SECRET));
+  assert.ok(h.writes.every(value => !value.includes(SECRET)));
 });
 test('native defaults survive conflicting model metadata and tool changes', async () => {
   const h = await harness({actualGuides: true, handler: async url => url.endsWith('/models')
@@ -444,7 +548,7 @@ test('CC Switch target choice updates routing and model launch without fetching 
   assert.equal(h.buildCalls.at(-1).target, 'codex');
   await h.fire('protocol', 'change', 'responses');
   assert.match(h.el('code').textContent, /Direct/);
-  await h.fire('snippet', 'change', '1');
+  h.exampleIndex = 1;
   assert.equal(h.el('copy-key-label').textContent, '复制配置');
   assert.match(h.el('code').textContent, /^codex --model='model-one'$/);
   await h.fire('copy-key');
@@ -486,14 +590,14 @@ test('screenshot renderer rejects external images, path traversal and untrusted 
     h.guides[1].steps[0].image = image;
     await h.tool(1);
     const row = h.el('steps').children[0], body = row.children[1];
-    assert.equal(body.children.length, 2); // Only a text heading and body.
+    assert.ok(!body.children.some(node => node.tagName === 'FIGURE'));
     await h.tool(0);
   }
 });
 test('generator exceptions cannot render secrets or create a clipboard fallback', async () => {
   const h = await harness({build(id, options) {
     if (options.key !== 'API_KEY') throw new Error(`bad config ${SECRET}`);
-    return [{title: '配置', language: 'json', content: 'API_KEY'}];
+    return [{title: '配置', language: 'json', content: 'API_KEY'}, {title: '其他配置', language: 'text', content: 'API_KEY'}];
   }}); await h.choose(); await h.fire('copy-key');
   assert.equal(h.writes.length, 0); assert.ok(!h.dom().includes(SECRET)); assert.match(h.el('code').textContent, /API_KEY/);
 });
@@ -504,9 +608,9 @@ test('missing client protocols disables preview and copy without guessing chat',
   assert.equal(h.el('copy-key').disabled, true);
   assert.equal(h.el('preview').hidden, true); assert.match(h.el('protocol-help').textContent, /协议配置缺失/);
 });
-test('real content module: nine cards, every official source, both platforms and client protocols', async () => {
+test('real content module: twelve cards, every official source, both platforms and client protocols', async () => {
   const h = await harness({actualGuides: true}); await h.choose();
-  assert.equal(h.guides.length, 9); assert.equal(h.el('tools').children.length, 9);
+  assert.equal(h.guides.length, 12); assert.equal(h.el('tools').children.length, 12);
   for (const [index, item] of h.guides.entries()) {
     await h.tool(index);
     assert.equal(h.el('sources').children.length, item.sources.length, `${item.id}: every official source must pass the whitelist`);

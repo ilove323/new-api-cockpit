@@ -67,8 +67,8 @@ class ImageStudioSchemaTest(unittest.TestCase):
         )
         self.assertTrue(header["required"])
         self.assertEqual(body["properties"]["token_id"]["maximum"], 2147483647)
-        self.assertEqual(
-            self.schemas["ImageStudioToken"]["properties"]["group"]["enum"], ["GPT"]
+        self.assertNotIn(
+            "enum", self.schemas["ImageStudioToken"]["properties"]["group"]
         )
         self.assertNotIn("key", self.schemas["ImageStudioToken"]["properties"])
 

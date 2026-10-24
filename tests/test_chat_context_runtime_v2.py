@@ -274,7 +274,9 @@ class ContextRuntimeV2Test(unittest.TestCase):
         )
         self.fid = entry["id"]
         active, state, output, _ = self.turn(
-            "read all the source", mode="files", attachment_ids=[self.fid]
+            # Exercise tool-result growth, not an inline body duplicated by a tool.
+            "read all the source",
+            mode="files",
         )
         self.assertEqual(state["status"], "completed", output)
         self.assertEqual(state["main_model_requests"], 3)
@@ -339,4 +341,48 @@ class ContextRuntimeV2Test(unittest.TestCase):
                 for m in messages
                 if m.get("tool_calls")
             )
+        )
+
+    def test_deleted_attachment_invalidates_pre_deletion_compaction_checkpoint(self):
+        from uuid import uuid4
+        from unittest.mock import patch
+
+        fid = str(uuid4())
+        self.service.upload(
+            self.actor.principal,
+            self.cid,
+            fid,
+            "report.md",
+            b"PRIVATE_DELETED_CHECKPOINT_SOURCE",
+        )
+        self.turn("first::" + "u" * 6000, attachment_ids=[fid])
+        self.turn("second::" + "u" * 6000)
+        self.turn("third::" + "u" * 6000)
+        self.turn("fourth::" + "u" * 6000)
+        old_refs = {
+            e["data"]["checkpoint"]["file"]
+            for e in self.history()
+            if e["type"] == "context.compacted"
+        }
+        self.assertTrue(old_refs)
+        self.service.delete_upload(self.actor.principal, self.cid, fid)
+        original = self.service.store.read_working_context
+
+        def guarded(scope, reference, **kwargs):
+            self.assertNotIn(
+                reference["file"],
+                old_refs,
+                "checkpoint from before deletion must not be reused",
+            )
+            return original(scope, reference, **kwargs)
+
+        before = len(self.calls)
+        with patch.object(
+            self.service.store, "read_working_context", side_effect=guarded
+        ):
+            _, state, output, _ = self.turn("继续聊天")
+        self.assertEqual(state["status"], "completed", output)
+        self.assertNotIn(
+            "PRIVATE_DELETED_CHECKPOINT_SOURCE",
+            json.dumps(self.calls[before:], ensure_ascii=False),
         )

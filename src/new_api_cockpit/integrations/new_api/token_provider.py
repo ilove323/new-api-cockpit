@@ -1,12 +1,19 @@
 """Owner-only token adapter injected into independent feature modules."""
 
 from contextlib import contextmanager
+from collections import OrderedDict
+import hashlib
+import os
+import threading
+import time
 
 from . import json_client, personal_tokens
 from .personal_tokens import TokenError
 
 MAX_TOKENS = 2000
 PROTOCOLS = {"openai": "chat", "openai-response": "responses", "anthropic": "anthropic"}
+KEY_REUSE_SECONDS = 20 * 60
+KEY_CACHE_ENTRIES = 256
 
 
 class ModelKey(str):
@@ -17,6 +24,8 @@ class ModelKey(str):
 class TokenProvider:
     def __init__(self, upstream=None):
         self.upstream = upstream or json_client.upstream
+        self._keys = OrderedDict()
+        self._key_lock = threading.Lock()
 
     def list_tokens(self, access, *, group=None):
         entries, seen = [], set()
@@ -52,19 +61,105 @@ class TokenProvider:
             group=group,
         )
 
+    def routing_groups(self, access, token_id):
+        """Resolve current New API routing policy without granting model access."""
+        row = self._row(access, token_id, None)
+
+        def names(value):
+            if (
+                not isinstance(value, list)
+                or len(value) > 256
+                or any(
+                    not isinstance(g, str)
+                    or not 1 <= len(g) <= 256
+                    or g != g.strip()
+                    or any(ord(c) < 32 or ord(c) == 127 for c in g)
+                    for g in value
+                )
+            ):
+                raise TokenError("New API 路由分组信息无效。", 502)
+            return list(dict.fromkeys(value))
+
+        group = row.get("group")
+        if not isinstance(group, str):
+            raise TokenError("New API 令牌分组信息无效。", 502)
+        if not group:
+            user = self.upstream(
+                "/api/user/self", access.credential, access.principal.user_id
+            ).get("data")
+            if not isinstance(user, dict) or user.get("id") != access.principal.user_id:
+                raise TokenError("New API 用户信息无效。", 502)
+            group = user.get("group")
+        if group != "auto":
+            return names([group])
+        policy = self.upstream(
+            "/api/token/auto-groups", access.credential, access.principal.user_id
+        ).get("data")
+        if not isinstance(policy, dict):
+            raise TokenError("New API 自动分组信息无效。", 502)
+        inherited = names(policy.get("groups"))
+        selected = row.get("auto_groups")
+        if selected is None:
+            return inherited
+        selected = names(selected)
+        allowed = self.upstream(
+            "/api/user/self/groups", access.credential, access.principal.user_id
+        ).get("data")
+        maximum = policy.get("max_count")
+        if (
+            not isinstance(allowed, dict)
+            or type(maximum) is not int
+            or not 1 <= maximum <= 256
+        ):
+            raise TokenError("New API 自动分组权限信息无效。", 502)
+        return [g for g in selected if g != "auto" and g in allowed][:maximum]
+
     @contextmanager
     def lease_key(self, access, token_id, *, group=None):
-        key = ModelKey(
-            personal_tokens.key_for(
-                access.principal.as_user(),
-                access.credential,
-                {"token_id": token_id},
-                upstream=self.upstream,
-                group=group,
-            )
+        # Reuse only the secret, never authorization or model policy. Every use
+        # still reads the owner's current token; New API validates the actual
+        # key (including IP/group/model limits) on every model request.
+        row = self._row(access, token_id, group)
+        identity = (
+            os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000"),
+            access.principal.user_id,
+            token_id,
+            hashlib.sha256(access.credential.encode()).digest(),
+            hashlib.sha256(str(row.get("key", "")).encode()).digest(),
         )
+        with self._key_lock:
+            now = time.monotonic()
+            for entry, (expiry, _) in list(self._keys.items()):
+                if (
+                    expiry <= now
+                    or entry[:3] == identity[:3]
+                    and entry[4] != identity[4]
+                ):
+                    del self._keys[entry]
+            cached = self._keys.get(identity)
+            if cached is None:
+                key = ModelKey(
+                    personal_tokens.key_for(
+                        access.principal.as_user(),
+                        access.credential,
+                        {"token_id": token_id},
+                        upstream=self.upstream,
+                        group=group,
+                    )
+                )
+                self._keys[identity] = (time.monotonic() + KEY_REUSE_SECONDS, key)
+                while len(self._keys) > KEY_CACHE_ENTRIES:
+                    self._keys.popitem(last=False)
+            else:
+                _, key = cached
+            self._keys.move_to_end(identity)
         try:
             yield key
+        except ValueError as exc:
+            if getattr(exc, "status", None) in {401, 403}:
+                with self._key_lock:
+                    self._keys.pop(identity, None)
+            raise
         finally:
             key = None
 

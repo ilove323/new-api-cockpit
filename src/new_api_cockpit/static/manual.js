@@ -20,6 +20,9 @@
     previews: [], loadingTokens: false, loadingModels: false, copying: false,
   };
   const controllers = new Set();
+  // One placeholder preview and copy action per configuration step. No KEY is
+  // retained here; actual credentials exist only inside an explicit copy.
+  let examples = [];
   const text = value => typeof value === 'string' ? value : value == null ? '' : String(value);
   const element = (tag, value, className) => {
     const node = document.createElement(tag);
@@ -44,12 +47,19 @@
   const session = () => document.querySelector('meta[name="cockpit-session"]')?.content || '';
   const declared = value => Array.isArray(value) ? [...new Set(value.filter(item => Object.hasOwn(protocolNames, item)))] : [];
   const ready = () => state.active && token()?.usable === true && !!model() && !!guide()
-    && !!state.protocol && state.previews.length > 0;
+    && !!state.protocol && !!state.previews[state.snippet];
   const canClipboard = () => !!navigator.clipboard
     && (typeof navigator.clipboard.writeText === 'function'
       || (typeof navigator.clipboard.write === 'function' && typeof window.ClipboardItem === 'function'));
 
   class Cancelled extends Error {}
+  function copyMessage(value, error = false) {
+    const node = examples[state.snippet]?.status;
+    if (!node) return;
+    node.textContent = value;
+    node.hidden = !value;
+    node.classList.toggle('error', error);
+  }
   function capture() {
     return {generation: state.generation, session: session(), tokenId: state.tokenId,
       modelId: state.modelId, guideId: state.guideId, protocol: state.protocol,
@@ -77,7 +87,9 @@
     state.loadingTokens = false;
     state.loadingModels = false;
     state.copying = false;
-    message('copy-status', '');
+    for (const example of examples.filter(Boolean)) {
+      example.status.textContent = ''; example.status.hidden = true;
+    }
     if (interrupted) message('load-status', '选择已变化，读取已取消。请手动刷新令牌或读取模型。');
   }
   // One deadline covers fetch, JSON decoding, and (for copies) clipboard completion.
@@ -156,14 +168,17 @@
     $('platform').disabled = !state.active;
     $('target').disabled = !state.active;
     $('protocol').disabled = !state.active || !model() || !state.protocol;
-    $('snippet').disabled = !state.active || state.previews.length < 2;
-    const withoutKey = state.previews[state.snippet]?.containsKey === false;
-    $('copy-key').disabled = !ready() || state.copying || !canClipboard();
-    $('copy-key-label').textContent = state.copying ? '正在复制…' : withoutKey ? '复制配置' : '复制配置（含 KEY）';
-    for (const card of $('tools').children) card.disabled = !state.active;
-    if (state.active && !canClipboard() && !$('copy-status').textContent) {
-      message('copy-status', '安全剪贴板不可用，请使用 HTTPS 或本机安全页面并允许剪贴板权限。', true);
+    for (const example of examples.filter(Boolean)) {
+      const block = state.previews[example.index];
+      example.button.disabled = !ready() || !block || state.copying || !canClipboard();
+      example.button.textContent = state.copying && state.snippet === example.index ? '正在复制…'
+        : block?.containsKey === true ? '复制配置（含 KEY）' : '复制配置';
+      if (state.active && !canClipboard() && !example.status.textContent) {
+        example.status.textContent = '安全剪贴板不可用，请使用 HTTPS 或本机安全页面并允许剪贴板权限。';
+        example.status.hidden = false; example.status.classList.toggle('error', true);
+      }
     }
+    for (const card of $('tools').children) card.disabled = !state.active;
   }
   function emptyModels(label = '请先选择可用令牌') {
     state.models = [];
@@ -273,13 +288,14 @@
     });
     if (!guides.length || typeof module?.build !== 'function') message('guides-status', '教程内容暂未加载，暂时不能生成配置。请稍后重新加载页面。', true);
   }
-  // HTTPS sources for these nine tutorials only. GitHub is repository-restricted.
+  // HTTPS documentation sources only. GitHub remains repository-restricted.
   const sourceHosts = new Set([
     'learn.chatgpt.com', 'platform.openai.com', 'developers.openai.com',
     'code.claude.com', 'platform.claude.com', 'cursor.com', 'forum.cursor.com',
     'docs.trae.cn', 'docs.qoder.com', 'docs.openclaw.ai',
+    'workbuddy.cn', 'developers.cloudflare.com',
   ]);
-  const githubSources = /^\/(?:farion1231\/cc-switch|chatboxai\/chatbox|openai\/codex|anthropics\/claude-code)(?:\/|$)/i;
+  const githubSources = /^\/(?:farion1231\/cc-switch|chatboxai\/chatbox|openai\/codex|anthropics\/claude-code|NousResearch\/hermes-agent)(?:\/|$)/i;
   function sourceURL(value) {
     if (typeof value !== 'string') return '';
     try {
@@ -296,14 +312,29 @@
     if (!Array.isArray(result) || result.some(item => typeof item?.content !== 'string')) throw new Error('配置内容格式不完整。');
     return result.map(item => ({title: text(item.title) || '配置片段', language: text(item.language), content: item.content, containsKey: item.containsKey !== false}));
   }
-  function preview() {
-    const item = state.previews[state.snippet];
-    $('preview').hidden = !item;
-    $('code').textContent = item?.content || '';
-    $('code-title').textContent = item?.title || '';
-    $('code-language').textContent = item?.language || '';
-    if (item) message('preview-help', '');
-    controls();
+  function exampleView(index, help, error) {
+    const block = state.previews[index];
+    const container = element('div', undefined, 'manual-step-example');
+    container.id = `manual-example-${index}`;
+    const hint = element('p', block ? '' : help, 'hint'); hint.hidden = !!block;
+    hint.classList.toggle('error', error);
+    const preview = element('div', undefined, 'manual-preview'); preview.hidden = !block;
+    const heading = element('div', undefined, 'manual-code-heading');
+    const title = element('span', block?.title), language = element('span', block?.language, 'hint');
+    const pre = element('pre'), code = element('code', block?.content);
+    pre.tabIndex = 0; pre.setAttribute('aria-label', block?.title || '仅含占位符的配置示例');
+    heading.append(title, language); pre.append(code); preview.append(heading, pre);
+    const actions = element('div', undefined, 'manual-copy-actions');
+    const button = element('button', '复制配置（含 KEY）', 'button-primary'); button.type = 'button';
+    const status = element('p', '', 'manual-copy-status');
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.hidden = true;
+    actions.append(button); container.append(hint, preview, actions, status);
+    const view = {index, container, button, status}; examples[index] = view;
+    button.addEventListener('click', () => {
+      // Detached buttons from an earlier render cannot start a new KEY read.
+      if (examples[index] === view) return copy(index);
+    });
+    return container;
   }
   function renderGuide() {
     const item = guide(), selectedModel = model();
@@ -330,10 +361,30 @@
     $('protocol-help').textContent = item && !allowed.length ? '工具协议配置缺失，请重新加载页面。' : '';
     $('protocol-help').hidden = !$('protocol-help').textContent;
     $('protocol').value = state.protocol;
+    state.previews = [];
+    let help = '请选择上方的令牌和模型。', buildError = false;
+    if (state.active && token()?.usable === true && selectedModel && item && state.protocol) {
+      try {
+        const built = blocks(capture(), 'API_KEY');
+        const slots = (item.steps || []).flatMap(step => step.snippets || []);
+        if (slots.length !== built.length || new Set(slots).size !== built.length
+          || slots.some(index => !Number.isSafeInteger(index) || index < 0 || index >= built.length)) {
+          throw new Error('Configuration steps must contain each block exactly once');
+        }
+        state.previews = built;
+      } catch { help = '配置示例暂时无法生成；未读取真实 KEY。'; buildError = true; }
+    }
+    if (state.snippet >= state.previews.length) state.snippet = 0;
+    examples = [];
     $('steps').replaceChildren();
     for (const [index, step] of (Array.isArray(item?.steps) ? item.steps : []).entries()) {
       const row = element('li', undefined, 'manual-step'), body = element('div');
       body.append(element('h3', step.title), element('p', step.body));
+      for (const snippet of Array.isArray(step.snippets) ? step.snippets : []) {
+        if (Number.isSafeInteger(snippet) && snippet >= 0 && !examples[snippet]) {
+          body.append(exampleView(snippet, help, buildError));
+        }
+      }
       const picture = step.image, href = sourceURL(picture?.source);
       // Official screenshots are bundled static assets. No remote image load,
       // HTML injection, arbitrary path, or account data in a third-party request.
@@ -362,20 +413,7 @@
       row.append(link); $('sources').append(row);
     }
     if (!$('sources').children.length) $('sources').append(element('li', '暂无官方资料链接。'));
-    state.previews = [];
-    message('preview-help', '请选择令牌和模型。');
-    if (state.active && token()?.usable === true && selectedModel && item && state.protocol) {
-      try {
-        state.previews = blocks(capture(), 'API_KEY');
-        message('preview-help', state.previews.length ? '' : '此教程暂不提供可复制配置，请阅读步骤与官方资料。');
-      } catch { message('preview-help', '配置示例暂时无法生成；未读取真实 KEY。', true); }
-    }
-    if (state.snippet >= state.previews.length) state.snippet = 0;
-    $('snippet').replaceChildren();
-    state.previews.forEach((block, index) => $('snippet').append(option(String(index), block.title)));
-    if (!state.previews.length) $('snippet').append(option('', '暂无示例'));
-    $('snippet').value = state.previews.length ? String(state.snippet) : '';
-    preview();
+    controls();
   }
   async function writeClipboard(content, op) {
     op.assertCurrent();
@@ -394,12 +432,14 @@
     }
     op.assertCurrent();
   }
-  async function copy() {
-    if (!ready() || state.copying) return;
+  async function copy(index) {
+    if (state.copying || !state.previews[index]) return;
+    state.snippet = index;
+    if (!ready()) return;
     const withKey = state.previews[state.snippet]?.containsKey !== false;
-    if (!canClipboard()) { message('copy-status', '安全剪贴板不可用；本页不会展示真实 KEY 作为后备方案。', true); return; }
+    if (!canClipboard()) { copyMessage('安全剪贴板不可用；本页不会展示真实 KEY 作为后备方案。', true); return; }
     state.copying = true; controls();
-    message('copy-status', '正在复制…');
+    copyMessage('正在复制…');
     const snapshot = capture(), op = operation(snapshot);
     let keyError = '', copied = false;
     // Keep the key, response, build result and content out of state and the DOM.
@@ -428,11 +468,11 @@
     try {
       await writeClipboard(content, op);
       copied = true;
-      message('copy-status', '已复制。');
+      copyMessage('已复制。');
     } catch (error) {
       op.cancel();
       if (current(snapshot) && !(error instanceof Cancelled)) {
-        message('copy-status', keyError || '复制失败，请检查浏览器剪贴板权限；未展示 KEY、未自动重发。', true);
+        copyMessage(keyError || '复制失败，请检查浏览器剪贴板权限；未展示 KEY、未自动重发。', true);
       }
     } finally {
       // If clipboard refused early, the aborted KEY request can never build/copy later.
@@ -474,13 +514,8 @@
     invalidate(); state.target = $('target').value === 'codex' ? 'codex' : 'claude-code';
     state.snippet = 0; renderGuide();
   });
-  $('snippet').addEventListener('change', () => {
-    if (!state.active) return;
-    invalidate(); state.snippet = Math.max(0, Math.min(state.previews.length - 1, Number($('snippet').value) || 0)); preview();
-  });
   $('refresh-tokens').addEventListener('click', loadTokens);
   $('refresh-models').addEventListener('click', loadModels);
-  $('copy-key').addEventListener('click', copy);
   window.addEventListener('cockpit-auth-changed', () => shutdown());
   window.addEventListener('pagehide', () => shutdown('页面已离开，选择与预览已清空。返回后请重新加载页面。'));
   document.getElementById('logout')?.addEventListener('click', () => shutdown('正在退出登录，已清空选择与预览。'), {capture: true});
@@ -504,7 +539,27 @@
   }) : null;
   const sessionMeta = document.querySelector('meta[name="cockpit-session"]');
   if (sessionMeta) observer?.observe(sessionMeta, {attributes: true, attributeFilter: ['content']});
+  // Account-MCP examples are independent of the model-token selection. They
+  // contain placeholders only: never call /manual/key for a user PAT.
+  function mcpPreview() {
+    if (typeof module?.buildMcp !== 'function' || !$('mcp-code')) return;
+    try {
+      const snippet = module.buildMcp($('mcp-client').value || 'codex', location.origin);
+      $('mcp-url').textContent = new URL('/cockpit/mcp', location.origin).href;
+      $('mcp-code-title').textContent = snippet.title;
+      $('mcp-code').textContent = snippet.content;
+      $('mcp-copy-status').textContent = '';
+    } catch { $('mcp-code').textContent = '无法生成 MCP 示例，请核对站点地址。'; }
+  }
+  $('mcp-client')?.addEventListener('change', mcpPreview);
+  $('mcp-copy')?.addEventListener('click', async () => {
+    try {
+      const snippet = module.buildMcp($('mcp-client').value || 'codex', location.origin);
+      await navigator.clipboard.writeText(snippet.content);
+      $('mcp-copy-status').textContent = '已复制。请在客户端单独配置用户 API PAT；本页不会读取或填入它。';
+    } catch { $('mcp-copy-status').textContent = '复制被阻止，请手动复制占位符配置。'; }
+  });
+  mcpPreview();
   renderTools(); renderGuide();
-  if (!canClipboard()) message('copy-status', '安全剪贴板不可用，请使用 HTTPS 或本机安全页面并允许剪贴板权限。', true);
   loadTokens();
 })();

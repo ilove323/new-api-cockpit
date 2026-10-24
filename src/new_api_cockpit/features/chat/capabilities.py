@@ -160,7 +160,7 @@ class Capabilities:
             effective = {
                 "protocol": protocol,
                 "chat": chat,
-                "tools": chat and policy.get("tools", False),
+                "tools": chat and policy.get("tools", True),
                 "output_token_parameter": policy.get(
                     "output_token_parameter", "max_tokens"
                 ),
@@ -217,6 +217,4 @@ class Capabilities:
             raise ChatError(
                 "模型能力已变化，请刷新后再提交。", 409, "CHAT_CAPABILITY_CHANGED"
             )
-        if mode == "files" and not entry["tools_enabled"]:
-            raise ChatError("该模型未确认支持文件工具。", 409, "CHAT_TOOLS_UNSUPPORTED")
         return entry

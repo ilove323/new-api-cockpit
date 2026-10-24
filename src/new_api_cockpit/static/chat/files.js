@@ -12,7 +12,7 @@
   function checkUpload(file, config) {
     if (!file || !config) throw new Error('请先读取文件限制，再选择一个文件。');
     const extension = /\.[a-z0-9]+$/i.exec(file.name)?.[0].toLowerCase();
-    if (!config.allowed_file_extensions.includes(extension)) throw new Error('仅支持允许列表中的 UTF-8 文本；不支持图片、Office、PDF、压缩包。');
+    if (!config.allowed_file_extensions.includes(extension)) throw new Error('不支持此文件类型。请选择 PDF、Word、Excel、常见图片或支持的文本文件；不支持压缩包、可执行文件；不会执行宏或公式。');
     if (file.size > config.limits.upload_file_bytes) throw new Error(`单文件不能超过 ${fileSizeLabel(config.limits.upload_file_bytes)}。`);
   }
   function safeFilename(name) { return String(name || 'download.txt').replace(/[\u0000-\u001f\u007f/\\:]/g, '_').slice(0, 180) || 'download.txt'; }

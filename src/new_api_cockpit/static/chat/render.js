@@ -74,8 +74,31 @@
     return fragment;
   }
   const STATUS = {accepted: '已接受', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断'};
+  function fileIcon(doc, file) {
+    const extension = /\.([a-z0-9]+)$/i.exec(file.name)?.[1].toUpperCase().slice(0, 4) || 'TXT';
+    const icon = el(doc, 'span', extension, 'chat-file-icon'); icon.setAttribute('aria-hidden', 'true'); return icon;
+  }
+  function attachmentCard(doc, file, {onDownloadFile, onReferenceFile, onDeleteFile, attachmentIds = [], filesDisabled = false, deleteDisabled = false} = {}) {
+    const card = el(doc, 'div', null, 'chat-attachment'); card.dataset.file = file.id;
+    if (file.deleted_at) {
+      card.classList.add('chat-attachment-deleted');
+      card.append(fileIcon(doc, file), el(doc, 'span', file.name, 'chat-file-name'), el(doc, 'small', '已删除', 'hint'));
+      return card;
+    }
+    const download = button(doc, '', () => onDownloadFile?.(file), 'chat-file-entry');
+    download.setAttribute('aria-label', `下载附件 ${file.name}`); download.title = file.name; download.disabled = !onDownloadFile;
+    download.append(fileIcon(doc, file), el(doc, 'span', file.name, 'chat-file-name'));
+    const selected = attachmentIds.includes(file.id), reference = button(doc, selected ? '已引用' : '引用', () => onReferenceFile?.(file), 'button-small chat-reference');
+    reference.setAttribute('aria-label', `${selected ? '取消引用' : '引用附件'} ${file.name}`); reference.setAttribute('aria-pressed', String(selected));
+    reference.disabled = filesDisabled || !onReferenceFile; card.append(download, reference);
+    if (file.kind === 'upload' && onDeleteFile) {
+      const remove = button(doc, '删除', () => onDeleteFile(file), 'button-small danger chat-attachment-delete');
+      remove.setAttribute('aria-label', `删除附件 ${file.name}`); remove.disabled = deleteDisabled; card.append(remove);
+    }
+    return card;
+  }
   function usageText(run) {
-    if (!run.usage) return '用量未知（不是 0）；费用以 New API 记录为准';
+    if (!run.usage) return '用量未知；费用以 New API 记录为准';
     return `用量${run.usage_complete ? '完整' : '部分'}：输入 ${run.usage.prompt_tokens} / 输出 ${run.usage.completion_tokens} / 合计 ${run.usage.total_tokens} Token；费用以 New API 记录为准`;
   }
   const PURPOSE_LABELS = {main: '主回答', summary: '摘要', native_compact: '原生压缩', memory: '自动记忆'};
@@ -88,17 +111,26 @@
       const known = entries.map(([i]) => run.requestUsage?.get(i)).filter(Boolean);
       const total = known.reduce((sum, u) => sum + u.total_tokens, 0);
       return `${PURPOSE_LABELS[p]} ${entries.length} 次请求 · ${known.length ? `${total} Token${known.length < entries.length ? '（部分）' : ''}` : '用量未知'}`;
-    }).join('；') + '。辅助请求单独计费，受每轮上限约束；不是免费或隐藏重试。';
+    }).join('；');
   }
-  function renderRuns(doc, target, runs, onSnapshot, {onSelectCandidate, selectionDisabled = false, ownerUserId = null, onUndoMemory, memoryDisabled = false} = {}) {
+  function renderRuns(doc, target, runs, {onSelectCandidate, selectionDisabled = false, ownerUserId = null, onUndoMemory, memoryDisabled = false, files = [], attachmentIds = [], onReferenceFile, onDownloadFile, onDeleteFile, filesDisabled = false, deleteDisabled = false} = {}) {
     const oldDetails = new Set([...target.querySelectorAll('details[open]')].map(node => node.dataset.key));
     const fragment = doc.createDocumentFragment();
+    const fileMap = new Map(files.map(file => [file.id, file])), referenced = new Set();
+    const fileOptions = {onDownloadFile, onReferenceFile, onDeleteFile, attachmentIds, filesDisabled, deleteDisabled};
     for (const run of runs) {
       const article = el(doc, 'article', null, 'chat-run'); article.dataset.run = run.id;
       if (run.accepted) {
         const user = el(doc, 'section', null, 'chat-message chat-user');
         user.append(el(doc, 'h3', '你'), el(doc, 'div', run.accepted.text, 'chat-plain'));
-        if (run.accepted.attachment_ids?.length) user.append(el(doc, 'p', `本轮引用 ${run.accepted.attachment_ids.length} 个文件`, 'hint'));
+        if (run.accepted.attachment_ids?.length) {
+          const attachments = el(doc, 'div', null, 'chat-message-attachments');
+          for (const id of run.accepted.attachment_ids) {
+            referenced.add(id); const file = fileMap.get(id);
+            attachments.append(file ? attachmentCard(doc, file, fileOptions) : el(doc, 'span', '附件暂不可用', 'hint'));
+          }
+          user.append(attachments);
+        }
         article.append(user);
       }
       for (const entry of run.timeline) {
@@ -130,14 +162,7 @@
       const footer = el(doc, 'div', null, 'chat-run-footer');
       footer.append(el(doc, 'strong', STATUS[run.status] || '状态待确认'));
       if (run.accepted) {
-        const snapshot = run.accepted.context_snapshot;
-        footer.append(button(doc, `查看上下文 v${snapshot?.context_revision ?? '?'} · ${snapshot?.skill_ids?.length ?? 0} Skills`, () => onSnapshot(run.id), 'button-small'));
-        footer.append(el(doc, 'span', `${run.accepted.model} · ${run.accepted.mode === 'files' ? '文件助手' : '普通聊天'}`, 'hint'));
-        if (run.accepted.options) {
-          const options = run.accepted.options;
-          const count = C.candidateCount(run);
-          footer.append(el(doc, 'p', `${count > 1 ? `${count} 个历史候选 · ` : ''}${options.context_strategy === 'adaptive' ? '自适应上下文' : '最近语义轮次'} · 自动记忆${options.auto_memory ? '已开启' : '未启用'}${options.web_enabled ? ' · 联网按需可用' : ''}`, 'hint'));
-        }
+        footer.append(el(doc, 'span', run.accepted.model, 'hint'));
       }
       if (C.candidateCount(run) > 1) footer.append(el(doc, 'p', C.canSelectCandidate(runs, run.id, [...run.messages.values()].find(m => m.complete)?.candidate_index)
         ? C.selectedCandidate(run) === null ? '请选择一个候选后再发送；后续只延续所选分支。' : '后续只延续所选分支；产生后续运行后，本轮选择锁定。'
@@ -164,22 +189,16 @@
       article.append(footer); fragment.append(article);
     }
     if (!runs.length) fragment.append(el(doc, 'p', '暂无消息。新建聊天不会调用模型。', 'hint'));
+    // Keep uploads that have not appeared in a sent message reachable after
+    // removing a draft chip or reloading, without inventing a sent user message.
+    const unused = files.filter(file => file.kind === 'upload' && !file.deleted_at && !referenced.has(file.id) && !attachmentIds.includes(file.id));
+    if (unused.length) {
+      const uploads = el(doc, 'section', null, 'chat-uploaded-files'); uploads.setAttribute('aria-label', '已上传附件');
+      uploads.append(el(doc, 'h3', '已上传附件'));
+      for (const file of unused) uploads.append(attachmentCard(doc, file, fileOptions));
+      fragment.append(uploads);
+    }
     target.replaceChildren(fragment);
   }
-  function showDialog(doc, title, contents) {
-    const dialog = doc.getElementById('chat-dialog');
-    dialog.replaceChildren(el(doc, 'h2', title), ...contents, button(doc, '关闭', () => { dialog.close(); dialog.replaceChildren(); }));
-    if (!dialog.open) dialog.showModal();
-    return dialog;
-  }
-  function snapshotNodes(doc, snapshot) {
-    const nodes = [el(doc, 'p', `上下文 v${snapshot.context_revision} · 冻结时间 ${snapshot.captured_at} · ${snapshot.policy_version}`, 'hint'), el(doc, 'p', '以下是该轮不可变副本，不是当前设置。删除 Skill 或清空个人设置不会追溯删除此副本。', 'warning')];
-    for (const item of [...snapshot.profiles, ...snapshot.skills]) {
-      const details = el(doc, 'details', null, 'chat-tool');
-      details.append(el(doc, 'summary', `${item.name} · v${item.revision} · ${item.size_bytes} 字节`), el(doc, 'p', `SHA256 ${item.sha256}`, 'hint'), el(doc, 'pre', item.content || '（空文档）'));
-      nodes.push(details);
-    }
-    return nodes;
-  }
-  return {el, button, safeLink, markdown, renderRuns, usageText, requestUsageText, showDialog, snapshotNodes, STATUS};
+  return {el, button, fileIcon, attachmentCard, safeLink, markdown, renderRuns, usageText, requestUsageText, STATUS};
 });

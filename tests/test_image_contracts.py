@@ -91,6 +91,21 @@ def add_channel(config, *, channel_id="6", profile="fixture-v1"):
 
 
 class ImageContractsTest(unittest.TestCase):
+    def test_image_protocol_bindings_accept_custom_names_without_a_family_prefix(self):
+        config = configuration()
+        binding = config["models"].pop("gpt-image-2")
+        binding["5"]["mapped_model"] = "企业图像"
+        config["models"]["企业图像"] = binding
+        config = contracts.validate_configuration(config)
+        model = contracts.model_contract(
+            "企业图像", [route("企业图像", route_group="生图组")], config
+        )
+        self.assertIsNotNone(model["generation"])
+        other = contracts.model_contract(
+            "企业图像", [route("企业图像", route_group="另一个组")], config
+        )
+        self.assertNotEqual(model["revision"], other["revision"])
+
     def test_missing_configuration_never_infers_type_one_or_model_family(self):
         config = contracts.validate_configuration(contracts.EMPTY_CONFIG)
         model = contracts.model_contract("gpt-image-2", [route()], config)
@@ -419,6 +434,8 @@ class ImageContractsTest(unittest.TestCase):
         self.assertIn("第3张图为人物或物体参考", prompt)
         self.assertIn("第4张图为风格参考", prompt)
         self.assertIn("不要将指导标记画入", prompt)
+        self.assertTrue(prompt.endswith("用户提示词：\n换成红色"))
+        self.assertNotIn("补充", prompt)
         self.assertEqual(
             prompt,
             contracts.compile_prompt("换成红色", intent, strategy="reference-only"),

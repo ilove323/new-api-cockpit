@@ -16,7 +16,7 @@ import stat
 from functools import wraps
 from uuid import uuid4
 
-from . import config
+from . import config, media, file_deletions
 from .errors import ChatError
 from .fs import SafeFS, canonical_json, storage_error, utcnow
 from .locks import ConversationLease, FileLock, profile_lock
@@ -117,6 +117,7 @@ class ChatStore:
                 f"{self.prefix}/.locks/startup.lock",
                 code="CHAT_STORAGE_UNAVAILABLE",
                 status=503,
+                wait_seconds=5,
             ):
                 marker = f"{self.prefix}/storage.json"
                 expected = {"v": 1, "instance_id": self.prefix}
@@ -443,9 +444,15 @@ class ChatStore:
         # Healthy GETs are strictly read-only: taking the writer lease on every
         # poll races an otherwise valid POST. Recover only actual evidence of
         # unpublished bytes, orphan runs, or missing/stale derived state.
-        meta = self._projection(scope, state)[0]
+        meta, files, _, _, _ = self._projection(scope, state)
+        pending_delete = any(
+            f.get("deleted_at")
+            and self.fs.exists(f"{scope.path}/uploads/{f['id']}.blob")
+            for f in files.values()
+        )
         if state.storage_state == "corrupt" or (
             not state.unpublished
+            and not pending_delete
             and meta["active_run_id"] is None
             and self._projections_current(scope, state)
         ):
@@ -461,6 +468,7 @@ class ChatStore:
 
     def _projection(self, scope, state):
         meta, files, runs, requests, writes = project(scope, state.events)
+        files = file_deletions.overlay(self, scope, files)
         meta["storage_state"] = state.storage_state
         return meta, files, runs, requests, writes
 
@@ -477,7 +485,16 @@ class ChatStore:
         )
         self.fs.write_json(
             f"{scope.path}/files.json",
-            {"v": 1, "last_seq": state.seq, "entries": list(files.values())},
+            {
+                "v": 1,
+                "last_seq": state.seq,
+                # Deletions live in independent durable controls. Do not grow
+                # or rewrite historical file DTOs in the journal-derived cache.
+                "entries": [
+                    {k: v for k, v in f.items() if k != "deleted_at"}
+                    for f in files.values()
+                ],
+            },
         )
         self.fs.write_json(
             f"{scope.path}/runs.json",
@@ -576,6 +593,8 @@ class ChatStore:
                 state.storage_state = "repaired"
             lease._state = state
             meta, files, runs, _, _ = self._projection(scope, state)
+            # A crash after durable deletion intent must not retain the blob.
+            file_deletions.purge(self, scope, files)
             # Isolate unpublished immutable files. Never manufacture file.added.
             references = {"uploads": set(), "outputs": set(), "contexts": set()}
             for f in files.values():
@@ -650,6 +669,22 @@ class ChatStore:
 
     @io_guard
     def append(self, scope, event_type, data, run_id=None, *, lease):
+        if event_type == "run.accepted":
+            # Serialize acceptance with deletion intent, not with a whole run.
+            with file_deletions.lock(self, scope):
+                expected = getattr(lease, "file_deletion_signature", None)
+                if expected is not None and expected != file_deletions.signature(
+                    self, scope
+                ):
+                    raise ChatError(
+                        "附件已变化，请核对后重新发送。",
+                        409,
+                        "CHAT_ATTACHMENTS_CHANGED",
+                    )
+                return self._append(scope, event_type, data, run_id, lease=lease)
+        return self._append(scope, event_type, data, run_id, lease=lease)
+
+    def _append(self, scope, event_type, data, run_id=None, *, lease):
         lease.validate(self, scope)
         state = self._state(scope, lease=lease)
         if state.storage_state == "corrupt":
@@ -799,7 +834,7 @@ class ChatStore:
         root = self._principal(scope.principal)
         if self._deleted(scope):
             return
-        with self._with_lease(scope, lease) as lease:
+        with self._with_lease(scope, lease) as lease, file_deletions.lock(self, scope):
             state = self._state(scope, lease=lease)
             self._revision(state, expected_revision)
             if self._projection(scope, state)[0]["active_run_id"]:
@@ -1011,19 +1046,30 @@ class ChatStore:
         entry = self._projection(scope, self._state(scope, lease=lease))[1].get(file_id)
         if entry is None:
             raise not_found()
+        if entry.get("deleted_at"):
+            raise ChatError("附件已删除。", 410, "CHAT_FILE_DELETED")
         folder = "uploads" if entry["kind"] == "upload" else "outputs"
         try:
             data = self.fs.read_bytes(
                 f"{scope.path}/{folder}/{file_id}.blob", config.UPLOAD_FILE_BYTES
             )
         except FileNotFoundError:
+            if file_id in file_deletions.records(self, scope):
+                raise ChatError("附件已删除。", 410, "CHAT_FILE_DELETED") from None
             raise ChatError("文件需要修复。", 503, "CHAT_STORAGE_CORRUPT") from None
         if (
             len(data) != entry["size_bytes"]
             or hashlib.sha256(data).hexdigest() != entry["sha256"]
         ):
             raise ChatError("文件校验失败。", 503, "CHAT_STORAGE_CORRUPT")
+        if file_id in file_deletions.records(self, scope):
+            raise ChatError("附件已删除。", 410, "CHAT_FILE_DELETED")
         return dict(entry), data
+
+    @io_guard
+    def delete_upload(self, scope, file_id):
+        self._check_scope(scope)
+        return file_deletions.delete(self, scope, file_id)
 
     @io_guard
     def upload(self, scope, name, content, client_file_id, *, lease=None):
@@ -1053,10 +1099,7 @@ class ChatStore:
             or any(ord(c) < 32 or ord(c) == 127 or c in '/\\:<>"|?*' for c in name)
         ):
             raise ChatError("文件名无效。")
-        if os.path.splitext(name)[1].lower() not in config.ALLOWED_EXTENSIONS:
-            raise ChatError(
-                "仅支持允许的UTF-8文本文件。", 415, "CHAT_FILE_TYPE_UNSUPPORTED"
-            )
+        mime = media.mime_for(name, output=kind != "upload")
         try:
             raw = (
                 content.encode("utf-8") if isinstance(content, str) else bytes(content)
@@ -1064,9 +1107,14 @@ class ChatStore:
             if len(raw) > (
                 config.UPLOAD_FILE_BYTES
                 if kind == "upload"
+                else config.OUTPUT_FILE_BYTES
+                if mime != media.TEXT_MIME
                 else config.TOOL_WRITE_BYTES
             ):
                 raise ChatError("文件超过大小上限。", 413, "CHAT_FILE_TOO_LARGE")
+            if mime != media.TEXT_MIME:
+                media.extract(name, raw)
+                return raw
             if raw.startswith(b"\xef\xbb\xbf"):
                 raw = raw[3:]
             raw.decode("utf-8")
@@ -1088,6 +1136,10 @@ class ChatStore:
             digest = hashlib.sha256(raw).hexdigest()
             if fid in files:
                 original = files[fid]
+                if original.get("deleted_at"):
+                    raise ChatError(
+                        "附件已删除，请重新选择文件上传。", 410, "CHAT_FILE_DELETED"
+                    )
                 if original["sha256"] != digest or original["kind"] != kind:
                     raise ChatError("文件ID内容冲突。", 409, "CHAT_FILE_CONFLICT")
                 return dict(original)
@@ -1108,7 +1160,7 @@ class ChatStore:
                 "id": fid,
                 "kind": kind,
                 "name": name,
-                "mime": "text/plain; charset=utf-8",
+                "mime": media.mime_for(name, output=kind != "upload"),
                 "size_bytes": len(raw),
                 "sha256": digest,
                 "created_at": utcnow(),

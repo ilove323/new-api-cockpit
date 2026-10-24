@@ -163,6 +163,7 @@ def initialize(root, scheme, instance_id, subnet):
         if role != "chat":
             values.update(database)
         if role == "web":
+            values["COCKPIT_MCP_ENABLED"] = "true"
             values["NOTIFICATION_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(
                 os.urandom(32)
             ).decode()

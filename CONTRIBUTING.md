@@ -24,6 +24,17 @@ Python 依赖版本范围继续在 `requirements.txt` 维护。工作站构建�
 提交前执行 CI 中的检查，修改数据库行为需运行 PostgreSQL 集成测试。
 测试必须使用独立数据库和虚构数据，绝不使用生产凭据。
 
+账户 MCP 的协议联调使用独立 SDK 环境，不给应用增加运行时依赖，不访问真实 New API 或模型服务：
+
+```sh
+python3 -m venv /tmp/cockpit-mcp-sdk
+/tmp/cockpit-mcp-sdk/bin/pip install mcp==2.3.0
+MCP_SDK_PYTHON=/tmp/cockpit-mcp-sdk/bin/python .venv/bin/python -m unittest discover -s tests -p 'test_account_mcp_sdk.py'
+```
+
+该测试在 loopback 随机端口启动短生命周期 fixture，验证现代客户端自动回退到支持的 MCP 生命周期、列工具与两项查询。
+`test_account_mcp.py` 另验证 PAT/模型 KEY/会话边界和读权限；配置隔离 PostgreSQL 后会实际执行用户隔离、缓存归一化与时间边界 SQL。
+
 SQL 集成测试使用独立 PostgreSQL 库。在当前终端设置仅属于测试库的
 `PGHOST`、`PGPORT`、`PGUSER`、`PGPASSWORD`、`PGDATABASE` 和 `MONITOR_DATABASE_URL` 后运行：
 

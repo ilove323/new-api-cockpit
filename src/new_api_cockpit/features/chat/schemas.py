@@ -95,9 +95,7 @@ def parse_run(body):
         result["attachment_ids"], config.ATTACHMENTS_PER_TURN
     )
     result["skill_ids"] = id_list(result["skill_ids"], config.SKILLS_PER_RUN)
-    if result["mode"] not in ("chat", "files") or (
-        result["mode"] == "chat" and result["attachment_ids"]
-    ):
+    if result["mode"] not in ("chat", "files"):
         raise ChatError("聊天模式或附件无效。")
     validate_options(result)
     return result

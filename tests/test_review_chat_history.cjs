@@ -77,7 +77,7 @@ async function fixture(t) {
     return {events: clone(events), until_seq: high, next_after_seq: next, has_more: next < high};
   };
   const api = {
-    config: async () => ({modes: ['chat'], allowed_file_extensions: ['.txt'], limits: {user_text_bytes: 32768, attachments_per_turn: 8, title_chars: 80, event_page_max: 200}}),
+    config: async () => ({modes: ['chat', 'files'], allowed_file_extensions: ['.txt'], limits: {user_text_bytes: 32768, attachments_per_turn: 8, title_chars: 80, event_page_max: 200}}),
     tokens: async () => ({tokens: [{id: 7, usable: true}]}),
     context: async () => ({context_revision: 0, skills: [], limits: {skills_per_run: 3}}),
     conversations: async () => ({conversations: [clone(meta)], total: 1, has_more: false, next_cursor: null}),

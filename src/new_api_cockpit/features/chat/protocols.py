@@ -7,7 +7,7 @@ with opaque provider state; no state is decrypted, guessed, or logged here.
 import json
 import re
 
-from . import config
+from . import config, media
 from .errors import ChatError
 from .transport import _SSE, _bad_stream, _strict_json
 
@@ -48,8 +48,8 @@ def _arguments(value):
 def validate_window(value):
     """A native compact result is an entire input window, not one hidden item.
 
-    This text-only client accepts documented message/function/reasoning/compact
-    items. Unknown server tools and media fail closed, never disappear silently.
+    Accept documented message/function/reasoning/compact items and bounded
+    server-derived data images. Unknown tools and remote media fail closed.
     Return the original JSON structure after validation, preserving its order.
     """
     if not isinstance(value, list) or not 1 <= len(value) <= 8192:
@@ -104,6 +104,22 @@ def validate_window(value):
                     if not isinstance(block, dict):
                         raise _bad_stream()
                     btype = block.get("type")
+                    if btype == "input_image" and item["role"] == "user":
+                        if set(block) - {"type", "image_url", "detail"}:
+                            raise _bad_stream()
+                        validate_content(
+                            [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": block.get("image_url"),
+                                        "detail": block.get("detail", "auto"),
+                                    },
+                                }
+                            ],
+                            "user",
+                        )
+                        continue
                     field = "refusal" if btype == "refusal" else "text"
                     allowed = {"type", field} | (
                         {"annotations", "logprobs"} if btype == "output_text" else set()
@@ -720,6 +736,39 @@ class AnthropicSSE(_SSE):
             raise _bad_stream()
 
 
+def validate_content(value, role):
+    if isinstance(value, str):
+        _string(value, config.EXTENDED_CONTEXT_BYTES)
+        return value
+    if (
+        role != "user"
+        or not isinstance(value, list)
+        or not 1 <= len(value) <= config.IMAGE_COUNT_MAX + 1
+    ):
+        raise _bad_stream()
+    for part in value:
+        if not isinstance(part, dict):
+            raise _bad_stream()
+        if part.get("type") == "text" and set(part) == {"type", "text"}:
+            _string(part["text"], config.EXTENDED_CONTEXT_BYTES)
+        elif part.get("type") == "image_url" and set(part) == {"type", "image_url"}:
+            image = part["image_url"]
+            if (
+                not isinstance(image, dict)
+                or set(image) != {"url", "detail"}
+                or image["detail"] != "auto"
+                or not isinstance(image["url"], str)
+                or not image["url"].startswith("data:image/jpeg;base64,")
+            ):
+                raise _bad_stream()
+            media.validate_image_part(
+                {"mime": "image/jpeg", "data": image["url"].split(",", 1)[1]}
+            )
+        else:
+            raise _bad_stream()
+    return value
+
+
 def _portable_messages(messages):
     if not isinstance(messages, list) or not messages:
         raise ChatError("模型消息无效。")
@@ -733,8 +782,8 @@ def _portable_messages(messages):
             raise ChatError("模型消息无效。")
         if set(message) - {"role", "content", "tool_calls", "tool_call_id", "_native"}:
             raise ChatError("模型消息字段无效。")
-        _string(message.get("content", ""), config.EXTENDED_CONTEXT_BYTES)
         role = message["role"]
+        validate_content(message.get("content", ""), role)
         if "tool_call_id" in message:
             if role != "tool":
                 raise ChatError("工具消息无效。")
@@ -952,7 +1001,19 @@ def _wire_body(protocol, body):
                 )
                 continue
             if message.get("content") or not message.get("tool_calls"):
-                inputs.append({"role": role, "content": message.get("content", "")})
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    content = [
+                        {"type": "input_text", "text": p["text"]}
+                        if p["type"] == "text"
+                        else {
+                            "type": "input_image",
+                            "image_url": p["image_url"]["url"],
+                            "detail": "auto",
+                        }
+                        for p in content
+                    ]
+                inputs.append({"role": role, "content": content})
             for call in message.get("tool_calls", []):
                 inputs.append(
                     {
@@ -1007,9 +1068,24 @@ def _wire_body(protocol, body):
                 ]
                 role = "user"
             else:
+                value = message.get("content", "")
                 content = (
-                    [{"type": "text", "text": message["content"]}]
-                    if message.get("content")
+                    [
+                        {"type": "text", "text": p["text"]}
+                        if p["type"] == "text"
+                        else {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": p["image_url"]["url"].split(",", 1)[1],
+                            },
+                        }
+                        for p in value
+                    ]
+                    if isinstance(value, list)
+                    else [{"type": "text", "text": value}]
+                    if value
                     else []
                 )
                 for call in message.get("tool_calls", []):

@@ -5,3 +5,8 @@ openpyxl>=3.1,<4
 cryptography>=44,<47
 Pillow==12.3.0
 redis>=5.2,<7
+defusedxml==0.7.1
+pypdfium2==5.14.0
+xlrd==2.0.2
+reportlab==4.5.1
+python-docx==1.2.0

@@ -50,6 +50,12 @@ def upstream(
         sock = connection.sock
         sock.settimeout(max(0.01, deadline - time.monotonic()))
         with connection.getresponse() as response:
+            if response.status == 429:
+                raise ManualError(
+                    "New API 请求过于频繁，请稍后再试。",
+                    429,
+                    reason="rate_limited",
+                )
             if response.status in {401, 403, 404}:
                 message = (
                     "所选令牌不可用或受 IP 限制，无法查询模型；请检查令牌设置。"

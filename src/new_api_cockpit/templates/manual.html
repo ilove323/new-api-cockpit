@@ -28,6 +28,18 @@
       <dl id="manual-token-details" class="manual-token-details" hidden></dl>
       <p id="manual-load-status" role="status" aria-live="polite">正在读取本人令牌…</p>
       <p id="manual-empty" class="manual-notice" hidden>没有可用令牌？请先到 <a href="/keys">New API 的令牌管理</a> 创建或启用自己的令牌，再回来刷新。</p>
+      <p class="hint"><a href="#manual-basics-title">接入配置说明</a> · <a href="#manual-mcp-title">查询本人余额和用量的 MCP</a></p>
+    </section>
+
+    <section class="page-panel manual-basics" aria-labelledby="manual-basics-title">
+      <h2 id="manual-basics-title">接入配置说明</h2>
+      <dl class="manual-definitions">
+        <div><dt>模型调用 KEY</dt><dd>从上方“本人令牌”选择，通常以 sk- 开头。用来配置下方客户端并调用模型，消费记在你的账户。页面只显示占位符，明确点击含 KEY 复制按钮才读取该令牌。</dd></div>
+        <div><dt>用户 API 访问令牌（PAT）</dt><dd>从 <a href="/security">New API 的“安全与访问”</a> 创建，供账户 MCP 查询本人余额和用量。它不是模型 KEY；新式 PAT 通常以 nap_ 开头。不要互换，也不要把管理权限交给客户端。</dd></div>
+        <div><dt>服务地址</dt><dd>各客户端的地址格式不同：有的填站点根地址，有的需要 /v1，有的要填完整接口路径。示例按当前站点的地址和端口生成，按对应步骤填写即可，无需再补 /v1。</dd></div>
+        <div><dt>接口协议</dt><dd>本站提供 Chat、Responses 和 Anthropic Messages 接口。按教程选择客户端支持的协议，模型也须支持该接口，不能只凭模型名称判断。读取模型列表不会生成内容；连接测试、任务和对话按实际用量计费。</dd></div>
+        <div><dt>配置文件</dt><dd>修改前保留备份，只合并需要的字段，不覆盖整份配置。文件名不要多出 .txt 后缀；JSON 不支持注释和尾随逗号，TOML 顶层字段放在表头之前。保存后完全退出客户端再打开。</dd></div>
+      </dl>
     </section>
 
     <section class="page-panel" aria-labelledby="manual-tools-title">
@@ -46,15 +58,31 @@
       <p id="manual-protocol-help" class="warning" hidden></p>
 
       <ol id="manual-steps" class="manual-steps" aria-label="配置步骤"></ol>
-      <section class="manual-examples" aria-labelledby="manual-example-title">
-        <div class="page-heading"><h3 id="manual-example-title">配置示例</h3><label for="manual-snippet"><span class="sr-only">选择配置片段</span><select id="manual-snippet" disabled><option value="">暂无示例</option></select></label></div>
-        <p id="manual-preview-help" class="hint">请选择令牌和模型。</p>
-        <div id="manual-preview" class="manual-preview" hidden><div class="manual-code-heading"><span id="manual-code-title"></span><span id="manual-code-language" class="hint"></span></div><pre tabindex="0" aria-label="仅含占位符的配置示例"><code id="manual-code"></code></pre></div>
-        <div class="manual-copy-actions"><button id="manual-copy-key" class="button-primary" type="button" disabled>{{ icon('key-round') }}<span id="manual-copy-key-label">复制配置（含 KEY）</span></button></div>
-        <p id="manual-copy-status" role="status" aria-live="polite"></p>
-      </section>
       <section class="manual-extra" aria-labelledby="manual-notes-title"><h3 id="manual-notes-title">使用前留意</h3><ul id="manual-notes"></ul></section>
       <section class="manual-extra" aria-labelledby="manual-sources-title"><h3 id="manual-sources-title">官方资料</h3><ul id="manual-sources"></ul></section>
+    </section>
+
+    <section class="page-panel manual-mcp" aria-labelledby="manual-mcp-title">
+      <div class="page-heading"><div><h2 id="manual-mcp-title">账户 MCP：查询本人余额与用量</h2><p class="hint">独立于模型接入，不需要选择上方的模型令牌，也不会调用收费模型。</p></div></div>
+      <ol class="manual-steps">
+        <li class="manual-step"><span class="manual-step-number">1</span><div><h3>创建最小权限的用户 API PAT</h3><p>打开 <a href="/security">安全与访问</a>，创建本人的 API 访问令牌。勾选 profile:read（读取本人资料和余额）与 usage:read（读取本人用量），设置合理有效期。不授予管理或写权限。本页不读取、代建或展示你的 PAT。</p></div></li>
+        <li class="manual-step"><span class="manual-step-number">2</span><div><h3>添加远程 HTTP MCP</h3><p>选择支持 Streamable HTTP 及自定义 Bearer 凭据的客户端，地址使用本步的 /cockpit/mcp，不是 /v1。Authorization 为 Bearer 加你的用户 PAT。不支持自定义请求头、只支持 OAuth 的客户端不能直接使用此静态 PAT 配置。</p>
+            <dl class="manual-definitions"><div><dt>本网站 MCP 地址</dt><dd><code id="manual-mcp-url">/cockpit/mcp</code></dd></div></dl>
+            <label for="manual-mcp-client">配置示例<select id="manual-mcp-client"><option value="codex">Codex · config.toml</option><option value="cursor">Cursor · MCP JSON</option></select></label>
+            <div class="manual-preview"><div class="manual-code-heading"><span id="manual-mcp-code-title">账户 MCP 配置</span><span class="hint">只含占位符，不会填入模型 KEY</span></div><pre tabindex="0" aria-label="账户 MCP 配置，仅含用户 PAT 占位符"><code id="manual-mcp-code"></code></pre></div>
+            <div class="manual-copy-actions"><button id="manual-mcp-copy" type="button">复制 MCP 配置（不含真实凭据）</button></div>
+            <p id="manual-mcp-copy-status" role="status" aria-live="polite"></p>
+            <details><summary>Codex 的 NEW_API_USER_PAT 怎么设置？</summary><p>这是账户 MCP 的专用凭据，与 auth.json 中调用模型的 OPENAI_API_KEY 分开。以下在你自己的终端交互输入 PAT，不把明文写入历史；配置后从同一终端启动 Codex。桌面或 IDE 需通过其受信任的启动环境提供该变量，终端变量不会自动传给已打开的桌面进程。</p><pre tabindex="0"># macOS / Linux（Bash / Zsh）
+printf '请输入用户 API PAT: '; read -r -s NEW_API_USER_PAT; printf '\n'; export NEW_API_USER_PAT
+
+# Windows PowerShell
+$env:NEW_API_USER_PAT = [System.Net.NetworkCredential]::new('', (Read-Host '用户 API PAT' -AsSecureString)).Password</pre></details>
+        </div></li>
+        <li class="manual-step"><span class="manual-step-number">3</span><div><h3>询问并核对结果</h3><p>保存配置后重连 MCP，确认能看到 get_balance 和 get_usage。可询问“我的余额还剩多少”“今天用了多少 Token”。默认查询北京时间今天到现在；自定义时间区间最长 31 天，结束时刻不包含。无论账号是不是管理员，都只能查自己的数据。</p></div></li>
+      </ol>
+
+      <p class="manual-notice">MCP 只返回本人账户和消费汇总，不提供充值、修改额度、读取模型 KEY、查看他人或读取提示词的工具。金额沿用 Cockpit 的 quota / 500000 账面单位，不自动换汇；按模型最多列出 20 项，总计仍覆盖全部模型。撤销或过期的 PAT 下次请求即失效。请通过 HTTPS 使用远程 MCP。</p>
+      <p class="hint">本服务兼容 2025-03-26、2025-06-18 和 2025-11-25 协议，采用 <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener noreferrer">MCP Streamable HTTP</a> 的 JSON 响应方式，不提供旧式 SSE 地址或 OAuth 登录。</p>
     </section>
 
     <section class="page-panel manual-faq" aria-labelledby="manual-faq-title">
@@ -64,6 +92,8 @@
       <details><summary>401 / 403：登录或权限问题</summary><p>401 时重新登录；403 时检查所选令牌是否有该模型的权限及 IP 限制。切换账号后请重新加载本页，不要继续使用旧配置。</p></details>
       <details><summary>404 / model not found：地址、模型或协议不匹配</summary><p>模型名称要与列表一致，包含大小写。检查工具要求的是根地址、/v1 地址还是完整接口路径；按教程选择协议。</p></details>
       <details><summary>429 / 额度不足 / 连接超时</summary><p>检查令牌额度、账户余额及服务限制，稍后再手动操作。超时不代表请求未到达；请先核对工具记录和用量，不要反复发送。</p></details>
+      <details><summary>Codex 还是要求登录，或配置文件没生效</summary><p>确认 config.toml 和 auth.json 位于同一个 CODEX_HOME，默认是 ~/.codex；config.toml 顶层设置 cli_auth_credentials_store = "file"，提供商表内设置 requires_openai_auth = true。auth.json 使用严格 JSON，OPENAI_API_KEY 中是模型 KEY。备份旧登录后再更换认证文件，检查项目配置、环境变量、启动参数和组织策略是否覆盖了设置。</p></details>
+      <details><summary>MCP 报 401 / 403，模型 KEY 明明能用</summary><p>模型 KEY 与用户 API PAT 是两种凭据。401 检查 PAT 是否有效、是否被撤销、是否误填了 sk- 模型 KEY 或网页登录 JWT；403 检查 profile:read 和 usage:read 权限、账号启用状态及同源限制。不要在 URL 查询参数或工具参数中传 PAT、用户 ID 或上游地址。</p></details>
       <details><summary>剪贴板不可用</summary><p>使用 HTTPS 或本机的安全页面，并允许浏览器访问剪贴板。若复制被阻止，可手动选中预览中的配置复制，再在工具内填写 KEY。</p></details>
     </section>
     <noscript><p class="manual-notice">此页面需要启用 JavaScript 才能读取本人令牌和生成配置。可先前往 <a href="/keys">New API 的令牌管理</a>。</p></noscript>

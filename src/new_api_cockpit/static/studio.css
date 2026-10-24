@@ -225,7 +225,7 @@
 
 /* In-place text follows the upstream canvas font and line-box geometry. */
 .studio-canvas { position: relative; }
-.studio-inline-text { position: absolute; z-index: 2; margin: 0; padding: 0; border: 1px dashed #2563eb; background: #ffffffb8; resize: none; min-height: 0; min-width: 0; max-width: none; outline: none; overflow: hidden; border-radius: 0; white-space: pre; }
+.studio-inline-text { position: absolute; z-index: 2; margin: 0; padding: 0; border: 0; background: transparent; resize: none; min-height: 0; min-width: 0; max-width: none; outline: 1px dashed #2563eb; overflow: hidden; border-radius: 0; white-space: pre; font-weight: 400; letter-spacing: normal; }
 .studio-mark-guide-eraser { transform: rotate(-35deg); border: 2px solid currentColor; border-radius: 3px; width: 15px; height: 12px; }
 
 .studio-preview-zoom { display: flex; align-items: center; gap: 4px; }

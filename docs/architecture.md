@@ -26,7 +26,7 @@ statistics：网页与调度容器
 image-studio：独立同步请求池
   ├─ 监控 PostgreSQL：跨进程并发锁，不新增工作站表
   ├─ image-studio-receipts：隔离 Redis，短期派发回执
-  └─ New API 图片 API：本人 GPT KEY；结果只返回浏览器
+  └─ New API 图片 API：本人 KEY；结果只返回浏览器
 
 可选 /cockpit/api/chat/ 前缀
         |
@@ -65,7 +65,8 @@ chat：独立有限运行池（默认关闭）
 | `runtime.py`、`gunicorn_conf.py`、`timers.py`、`quota_timer.py` | 启动迁移、进程生命周期、两种内置调度与健康检查 |
 | `quality.py`、`quality.sql`、`static/quality.js` | 只读渠道尝试去重、当前标签对比、结果分类、性能健康、耗时分位数和历史价格查询 |
 | `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、本人专用 KEY 复用与自适应沙箱预览，不保存结果 |
-| `manual.py`、`static/manual*.js` | 本人令牌和模型查询、九类工具的接入教程、脱敏预览及显式含 KEY 复制，不生成内容或保存凭据 |
+| `manual.py`、`static/manual*.js` | 本人令牌和模型查询、十二类工具的详细接入教程、脱敏预览及显式含 KEY 复制，不生成内容或保存凭据 |
+| `features/account_mcp/` | 无状态 MCP HTTP；New API 校验本人 PAT 与权限，复用统计 SQL 并在源查询强制 user_id，仅提供本人余额和用量 |
 | `integrations/new_api/`、`platform/` | 注入式本人令牌、模型限制/目录、源库只读连接和已验证身份契约；旧personal_tokens是兼容别名 |
 | `features/image_studio/{service,contracts,source_routes,capacity,http}.py` | 生图独立业务目录与Blueprint、版本化路由契约、输入角色编译、权限复核及付费派发；旧模块兼容别名 |
 | `features/image_studio/{transport,results,receipts}.py` | 单次有界请求、安全图片结果解析和Redis去重回执，原协议/锁号保持不变 |

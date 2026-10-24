@@ -17,10 +17,12 @@ _MESSAGES = {
     "TOOL_UNKNOWN": "不支持此工具。",
     "TOOL_INVALID_ARGUMENTS": "工具参数无效。",
     "TOOL_FILE_NOT_FOUND": "文件不存在或不属于当前聊天。",
+    "TOOL_FILE_DELETED": "附件已被用户删除，不能继续读取或引用原件。",
     "TOOL_LINE_TOO_LONG": "单行内容过长，请使用分行版本。",
     "TOOL_RESULT_LIMIT": "工具结果超过大小限制。",
     "TOOL_STORAGE_LIMIT": "文件存储额度不足。",
     "TOOL_TIMEOUT": "工具执行超时。",
+    "TOOL_OUTPUT_INVALID": "文件生成失败：PDF/DOCX 的 content 用 Markdown；XLSX 用 sheets/rows JSON；图片用 width/height/elements JSON。不要写二进制、base64、HTML 或改名伪装文件。请检查格式与内容大小。",
 }
 
 
@@ -42,7 +44,7 @@ def schemas():
         ),
         (
             "read_file",
-            "分行读取当前聊天的一个UTF-8文本文件。",
+            "分行读取当前聊天的文本或 PDF/Word/Excel 提取正文；图片需在消息中引用以视觉读取。",
             {
                 "file_id": {"type": "string", "format": "uuid"},
                 "start_line": {"type": "integer", "minimum": 1},
@@ -71,7 +73,14 @@ def schemas():
         ),
         (
             "write_file",
-            "在当前聊天创建不可变的文本输出新版本，不覆盖原件或个人设置。",
+            "在当前聊天生成真实文件并加入右侧输出内容，返回下载文件ID，不覆盖原件。"
+            "txt/md/csv等文本直接写content；pdf/docx由服务器将Markdown排版为真正PDF/Word，支持标题、段落、列表、加粗、Markdown表格（最多8列、每格200字）。"
+            'xlsx的content是JSON字符串，例如 {"sheets":[{"name":"统计","rows":[["项目","金额"],["A",12],["合计",{"formula":"=SUM(B2:B2)"}]]}]}；'
+            "字符串单元格均按文本保存，公式只能显式formula对象，支持本表SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/ROUND/ROUNDUP/ROUNDDOWN/IF/ABS与四则运算，由Excel打开计算。"
+            'png/jpg/jpeg/webp为服务器绘图，content是JSON字符串，例如 {"width":800,"height":500,"background":"#FFFFFF","elements":[{"type":"text","x":30,"y":20,"text":"标题","size":28,"color":"#172033"},{"type":"rect","box":[30,90,200,300],"fill":"#2563EB"}]}；'
+            "元素支持text(x,y,text,size,color)、rect/ellipse(box:[x1,y1,x2,y2],fill,outline,width)、line(box,outline,width)，颜色#RRGGBB，64..4096像素且总像素不超过800万。"
+            "图片输出是实际像素的图表/示意绘图，不是摄影文生图接口；不伪称已调用生图模型。"
+            "禁止执行代码、访问外链/文件路径、宏或改扩展名。真实二进制上限4MiB；内容描述最多64KiB。只有工具成功才告诉用户已生成。",
             {
                 "name": {"type": "string", "minLength": 1, "maxLength": 120},
                 "content": {"type": "string", "maxLength": config.TOOL_WRITE_BYTES},
@@ -108,6 +117,7 @@ def _workspace_error(code):
         raise ChatError("文件存储暂不可用。", 503, code)
     aliases = {
         "CHAT_NOT_FOUND": "TOOL_FILE_NOT_FOUND",
+        "CHAT_FILE_DELETED": "TOOL_FILE_DELETED",
         "TOOL_RESULT_TOO_LARGE": "TOOL_RESULT_LIMIT",
         "CHAT_INVALID_REQUEST": "TOOL_INVALID_ARGUMENTS",
     }
@@ -151,7 +161,8 @@ def _summary_name(name):
 def _filename(name):
     _summary_name(name)
     if (
-        name.strip() != name
+        ("." + name.rsplit(".", 1)[1].lower()) not in config.OUTPUT_EXTENSIONS
+        or name.strip() != name
         or re.search(r'[:<>"|?*]', name)
         or name.endswith((".", " "))
         or name.startswith(".")
@@ -268,7 +279,7 @@ def _safe_result(name, result):
         validation.identifier(clean["file_id"])
         _filename(clean["name"])
         validation.integer(clean["version"], 1)
-        validation.integer(clean["size_bytes"], 0, config.TOOL_WRITE_BYTES)
+        validation.integer(clean["size_bytes"], 0, config.OUTPUT_FILE_BYTES)
         if not re.fullmatch(r"[a-f0-9]{64}", clean["sha256"]):
             raise ValueError()
         if not re.fullmatch(
@@ -345,7 +356,11 @@ def execute(name, args, workspace, run_context):
         _check(run_context)
         return _error("TOOL_RESULT_LIMIT")
     _check(run_context)
-    if time.monotonic() - started > config.TOOL_DEADLINE_SECONDS:
+    if time.monotonic() - started > (
+        config.OUTPUT_RENDER_SECONDS + config.DOCUMENT_PARSE_SECONDS
+        if name == "write_file"
+        else config.TOOL_DEADLINE_SECONDS
+    ):
         return _error("TOOL_TIMEOUT")
     try:
         return _safe_result(name, result)

@@ -73,7 +73,7 @@
     if (!state.editor) return '画布组件未加载，请刷新页面。';
     if (state.previewId) return '应用候选，或返回画布继续编辑。';
     if (state.catalogBusy) return '正在读取 KEY 与模型…';
-    if (!token()?.usable || token().group !== 'GPT') return '请选择可用的本人 GPT KEY。';
+    if (!token()?.usable) return '请选择可用的本人 KEY。';
     const m = model(); if (!m) return '请选择可用模型。';
     const mode = submissionMode(state.mode, state.info);
     const profile = operationProfile(m,mode);
@@ -113,6 +113,8 @@
     $('refresh').disabled = !state.active || state.catalogBusy;
     $('prompt').disabled = !state.active;
     $('prompt').required = mode === 'generate' || !state.info?.hasAnnotations;
+    $('prompt-help').textContent = mode === 'generate' ? '描述要生成的画面'
+      : state.info?.hasAnnotations ? '可留空；与画布标注一起发给模型' : '描述要修改的内容';
     $('prompt').placeholder = mode === 'generate' ? '主体、场景、光线、风格，以及需要改变的细节…'
       : state.info?.hasAnnotations ? '可留空，按指导标注修改；也可填写额外要求…' : '描述需要修改的内容…';
     for (const el of modes) { el.disabled = !state.active; el.setAttribute('aria-pressed', String(el.dataset.mode === state.mode)); }
@@ -128,7 +130,10 @@
     $('drawing-controls').hidden = !editable;
     $('mask-controls').hidden = !maskTools.includes(state.tool) && state.tool !== 'guide-eraser';
     $('guide-controls').hidden = !['pen','arrow','box','ellipse','text','select'].includes(state.tool);
-    $('text-control').hidden = state.tool !== 'text' && state.info?.selected?.type !== 'text';
+    $('text-help').hidden = state.tool !== 'text' && state.info?.selected?.type !== 'text';
+    $('canvas-help').textContent = editable && state.tool === 'text'
+      ? '点击画布输入文字 · 双击修改 · Ctrl / ⌘ + Enter 完成 · Esc 取消'
+      : '选区控制修改范围，标注表达修改方向';
     $('delete-guide').disabled = !state.info?.selectedId || mutating || !editable;
     $('fidelity-control').hidden = state.mode === 'create' || !operationProfile(model(),mode)?.parameters.allowed_fields.includes('input_fidelity');
     $('references-section').hidden = state.mode === 'create';
@@ -139,7 +144,7 @@
       : D.needsGuide(model(),mode,!!state.info?.hasAnnotations) ? '指导图已占用输入名额' : '当前模型不接收额外参考图');
     $('custom-size').hidden = state.inputs.size !== 'custom';
     $('compression-control').hidden = !['jpeg','webp'].includes(state.inputs.format) || !operationProfile(model(),mode)?.parameters.allowed_fields.includes('output_compression');
-    for (const id of ['brush-size', 'feather', 'color', 'stroke-width', 'annotation-text', 'clear-mask', 'clear-guides']) {
+    for (const id of ['brush-size', 'feather', 'color', 'stroke-width', 'clear-mask', 'clear-guides']) {
       $(id).disabled = mutating || !editable;
     }
     for (const id of ['size', 'quality', 'format', 'background', 'fidelity', 'width', 'height', 'compression']) {
@@ -194,19 +199,19 @@
     if (!state.active || state.catalogBusy) return;
     state.catalogBusy = true; state.tokenId = ''; state.modelId = ''; state.tokens = []; state.models = [];
     $('token').replaceChildren(option('', '正在读取 KEY…')); $('model').replaceChildren(option('', '请先选择 KEY'));
-    populateProfiles(); message('catalog-status', '正在读取本人 GPT KEY…');
+    populateProfiles(); message('catalog-status', '正在读取本人 KEY…');
     const capture = authCapture(), ticket = ++state.tokenEpoch, op = operation(capture, 15000);
     try {
       const data = await json('tokens', undefined, op); if (ticket !== state.tokenEpoch) return;
-      state.tokens = Array.isArray(data.tokens) ? data.tokens.filter(x => x.group === 'GPT' && Number.isSafeInteger(x.id) && x.id > 0)
-        .map(x => ({id: x.id, name: clean(x.name), group: 'GPT', usable: x.usable === true,
+      state.tokens = Array.isArray(data.tokens) ? data.tokens.filter(x => Number.isSafeInteger(x.id) && x.id > 0)
+        .map(x => ({id: x.id, name: clean(x.name), group: clean(x.group), usable: x.usable === true,
           masked: typeof x.key_masked === 'string' && /[*•]/.test(x.key_masked) ? x.key_masked.slice(0, 80) : '',
           reason: clean(x.unavailable_reason)})) : [];
-      $('token').replaceChildren(option('', state.tokens.some(x => x.usable) ? '请选择本人 GPT KEY' : '暂无可用 GPT KEY'),
-        ...state.tokens.map(x => { const el = option(String(x.id), `${x.name}${x.masked ? ` · ${x.masked}` : ''}${x.usable ? '' : ` · ${x.reason || '不可用'}`}`); el.disabled = !x.usable; return el; }));
+      $('token').replaceChildren(option('', state.tokens.some(x => x.usable) ? '请选择本人 KEY' : '暂无可用 KEY'),
+        ...state.tokens.map(x => { const el = option(String(x.id), `${x.name}${x.group ? ` · ${x.group}` : ''}${x.masked ? ` · ${x.masked}` : ''}${x.usable ? '' : ` · ${x.reason || '不可用'}`}`); el.disabled = !x.usable; return el; }));
       // Never accept a server-supplied arbitrary URL or return raw token fields.
       $('token-manager').href = '/keys';
-      message('catalog-status', state.tokens.some(x => x.usable) ? '' : '请到「管理我的 KEY」启用本人 GPT 分组 KEY，再刷新。');
+      message('catalog-status', state.tokens.some(x => x.usable) ? '' : '请到「管理我的 KEY」启用本人 KEY，再刷新。');
     } catch (error) {
       if (error instanceof Cancelled || !state.active) return;
       $('token').replaceChildren(option('', '读取失败，请刷新')); message('catalog-status', error.message, true);
@@ -215,7 +220,7 @@
   async function loadModels() {
     state.modelId = ''; state.models = [];
     $('model').replaceChildren(option('', '正在读取模型…')); populateProfiles();
-    if (!token()?.usable || token().group !== 'GPT') { $('model').replaceChildren(option('', '请先选择可用 KEY')); controls(); return; }
+    if (!token()?.usable) { $('model').replaceChildren(option('', '请先选择可用 KEY')); controls(); return; }
     const capture = authCapture(), ticket = ++state.tokenEpoch, tokenId = state.tokenId, op = operation(capture, 15000);
     state.catalogBusy = true; controls(); message('catalog-status', '正在读取此 KEY 的可用模型…');
     try {
@@ -224,7 +229,7 @@
       state.models = Array.isArray(data.models) ? data.models.map(modelProfile).filter(Boolean) : [];
       $('model').replaceChildren(option('', state.models.length ? '请选择可用模型' : '此 KEY 暂无可用图像模型'),
         ...state.models.map(x => option(x.id, x.id)));
-      message('catalog-status', state.models.length ? '' : '此 KEY 暂无可用图像模型，请检查权限或选择其他 KEY。');
+      message('catalog-status', state.models.length ? '' : '此 KEY 暂无已配置图片协议的可用模型，请检查模型授权或选择其他 KEY。');
     } catch (error) {
       if (error instanceof Cancelled || !state.active) return;
       $('model').replaceChildren(option('', '读取失败，请刷新')); message('catalog-status', error.message, true);
@@ -490,7 +495,7 @@
     state.tokens = []; state.models = []; state.tokenId = ''; state.modelId = ''; state.versionId = '';
     state.prompt=''; showErrorDetails(null);
     state.preparing = false; state.loadingImage = false; state.catalogBusy = false; state.uncertain = null;
-    for (const id of ['prompt', 'annotation-text', 'image-input', 'reference-input']) $(id).value = '';
+    for (const id of ['prompt', 'image-input', 'reference-input']) $(id).value = '';
     $('token').replaceChildren(option('', '请刷新页面')); $('model').replaceChildren(option('', '请刷新页面'));
     $('uncertain').hidden = true; $('uncertain-id').textContent = ''; $('uncertain-message').textContent = ''; $('elapsed').textContent = '';
     renderVersions(); renderReferences(); renderCandidates(); populateProfiles();
@@ -552,7 +557,6 @@
   bind($('feather'), 'input', () => { if (state.active && !state.preparing) { state.editor?.setFeather?.(Number($('feather').value)); $('feather-value').textContent = `${$('feather').value} px`; } });
   bind($('color'), 'input', () => { if (state.active && !state.preparing) state.editor?.setColor($('color').value); });
   bind($('stroke-width'), 'input', () => { const width = Number($('stroke-width').value); if (state.active && !state.preparing && width >= 1 && width <= 64) state.editor?.setStrokeWidth(width); });
-  bind($('annotation-text'), 'input', () => { if (state.active && !state.preparing) state.editor?.setText($('annotation-text').value); });
   for (const id of ['upload', 'empty-upload']) bind($(id), 'click', () => { if (!$(id).disabled) $('image-input').click(); });
   bind($('image-input'), 'change', async () => { const files = [...($('image-input').files || [])]; $('image-input').value = ''; await importPrimary(files); });
   bind($('add-reference'), 'click', () => { if (!$('add-reference').disabled) $('reference-input').click(); });
@@ -635,14 +639,13 @@
       if (!state.active) return; state.info = info;
       if (info.selected) {
         $('color').value = info.selected.color; $('stroke-width').value = info.selected.width;
-        if (info.selected.type === 'text') $('annotation-text').value = info.selected.text;
       }
       if (typeof info.selectionVisible === 'boolean') state.visibility.mask=info.selectionVisible;
       if (typeof info.annotationsVisible === 'boolean') state.visibility.annotations=info.annotationsVisible;
       if (info.error) message('request-status', canvasErrors[info.errorCode] || '画布操作失败，请调整选区或标注。', true);
       controls();
     }});
-    state.editor.setTool('pan'); state.editor.setBrushSize(40); state.editor.setColor('#e5484d'); state.editor.setStrokeWidth(4); state.editor.setText('');
+    state.editor.setTool('pan'); state.editor.setBrushSize(40); state.editor.setColor('#e5484d'); state.editor.setStrokeWidth(4);
     $('feather-control').hidden = typeof state.editor.setFeather !== 'function';
   } catch (error) { message('request-status', error.message, true); }
   controls(); loadTokens();

@@ -286,7 +286,7 @@ class ManualTest(unittest.TestCase):
             self.assertEqual(call.args, ("GET", "/v1/models"))
             self.assertEqual(set(call.kwargs["headers"]), {"Authorization", "Accept"})
             conn.close.assert_called_once()
-        for status in (301, 403, 500):
+        for status in (301, 403, 429, 500):
             conn = MagicMock()
             conn.getresponse.return_value.__enter__.return_value.status = status
             with (
@@ -296,6 +296,9 @@ class ManualTest(unittest.TestCase):
                 manual.upstream("/v1/models", "sk-" + RAW_KEY, 12, model_key=True)
             self.assertNotIn(RAW_KEY, str(caught.exception))
             self.assertEqual(conn.request.call_count, 1)
+            if status == 429:
+                self.assertEqual(caught.exception.status, 429)
+                self.assertEqual(caught.exception.reason, "rate_limited")
 
 
 if __name__ == "__main__":

@@ -41,6 +41,8 @@ PROTOCOL_FRAME_BYTES = 2097152
 TOOL_ARGUMENT_BYTES = 131072
 TOOL_RESULT_BYTES = 32768
 TOOL_WRITE_BYTES = 65536
+OUTPUT_FILE_BYTES = 4 * 1024 * 1024
+OUTPUT_RENDER_SECONDS = 15
 TOOL_SEARCH_SCAN_BYTES = 8388608
 TOOL_READ_MAX_LINES = 200
 TOOL_DEADLINE_SECONDS = 5
@@ -86,9 +88,36 @@ CONTEXT_MANIFEST_BYTES = 131072
 CONTEXT_SNAPSHOT_BYTES = 65536
 USER_CONTEXT_STORAGE_BYTES = 4194304
 CONTEXT_VERSIONS_PER_RESOURCE = 1
-ALLOWED_EXTENSIONS = frozenset(
+TEXT_EXTENSIONS = frozenset(
     ".txt .md .csv .json .yaml .yml .toml .xml .log .py .js .ts .jsx .tsx .html .css .sql .sh".split()
 )
+BINARY_MIMES = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+ALLOWED_EXTENSIONS = TEXT_EXTENSIONS | BINARY_MIMES.keys()
+OUTPUT_BINARY_EXTENSIONS = frozenset(".pdf .docx .xlsx .png .jpg .jpeg .webp".split())
+OUTPUT_EXTENSIONS = TEXT_EXTENSIONS | OUTPUT_BINARY_EXTENSIONS
+DOCUMENT_PARSE_SECONDS = 20
+DOCUMENT_TEXT_BYTES = EXTENDED_CONTEXT_BYTES
+DOCUMENT_MAX_PAGES = 200
+DOCUMENT_ZIP_BYTES = 64 * 1024 * 1024
+DOCUMENT_XML_BYTES = 16 * 1024 * 1024
+DOCUMENT_MAX_CELLS = 200000
+IMAGE_MAX_PIXELS = 20000000
+IMAGE_MAX_EDGE = 2048
+IMAGE_ENCODED_BYTES = 1048576
+IMAGE_COUNT_MAX = 8
+IMAGE_CONTEXT_BYTES = 4096
 
 
 @dataclass(frozen=True)

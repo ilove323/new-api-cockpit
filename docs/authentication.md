@@ -50,6 +50,13 @@ PAT 调用不携带 `X-Cockpit-Session`，JSON/确认头要求不变；服务器
 API 文档页面通过浏览器登录打开；页面内调试可用当前会话或手动输入的 PAT，所有调试请求只发送一次。
 带浏览器来源的写请求仍须同源，不提供跨域 CORS。PAT 与 JWT 均只通过 HTTPS 传递，不进入 URL 或日志。
 
+## 用户账户 MCP
+
+账户 MCP `/cockpit/mcp` 是独立例外，接受启用普通用户或管理员的本人 API PAT，但拒绝浏览器 Cookie/JWT 和模型 KEY。
+不经过管理员 PAT 的 SQL 认证，也不会让普通用户 PAT 获得任何现有管理 API 权限。
+每次向 New API 验证 `profile:read`；查用量还执行 `usage:read`，源 SQL 在聚合前绑定已验证用户 ID。
+具体约定、禁用开关和客户端配置见[账户 MCP](mcp.md)。
+
 ## 部署要求
 
 - New API 与 Cockpit 必须使用同一浏览器入口；`/cockpit/` 转发到本应用，`/api/`、`/sign-in` 等路由由 New API 处理。

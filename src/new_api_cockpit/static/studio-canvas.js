@@ -341,7 +341,7 @@
     if (!host || !doc || !K || K.version !== '10.7.1') throw fail('A host and local Konva 10.7.1 are required', 'CANVAS_UNAVAILABLE');
     const notify = typeof options.onChange === 'function' ? options.onChange : () => {};
     let disposed = false, loadSequence = 0, snapshotEpoch = 0, source = null, current = model(), revision = 0;
-    let tool = 'pan', brushSize = 40, color = '#ef4444', strokeWidth = 4, text = '标注';
+    let tool = 'pan', brushSize = 40, color = '#ef4444', strokeWidth = 4;
     let selected = null, nextObject = 0, editing = null, gesture = null, space = false, pinch = null, pinchBlocked = false;
     let hasMask = false, view = {x: 0, y: 0, scale: 1}, fitted = true;
     let selectionVisible = true, annotationsVisible = true;
@@ -496,14 +496,16 @@
         throw fail('Canvas annotation limit reached', 'COMMAND_LIMIT');
       const input = doc.createElement('textarea'); input.className = 'studio-inline-text';
       input.maxLength = 2000; input.value = record.text; input.setAttribute('aria-label', '编辑指导标注文字');
+      input.wrap = 'off'; input.rows = 1; input.spellcheck = false;
       input.addEventListener('input', () => {positionText(); changed();});
       input.addEventListener('keydown', event => {
+        if (event.isComposing) return;
         if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); finishText(true); host.focus();}
         else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
           event.preventDefault(); event.stopPropagation(); finishText(); host.focus();
         }
       });
-      input.addEventListener('blur', () => finishText());
+      input.addEventListener('blur', () => {if (editing?.input === input) finishText();});
       editing = {record, input}; selected = record.id; host.append(input);
       positionText(); renderAnnotations(); input.focus({preventScroll: true}); changed();
     }
@@ -577,7 +579,7 @@
     }
     function pointerDown(event) {
       if (disposed || !source || editable(event.target) || (event.button !== undefined && event.button !== 0 && event.button !== 1)) return;
-      if (editing) {finishText(); return;}
+      if (editing) finishText();
       event.preventDefault(); host.focus({preventScroll: true}); capture(event);
       const point = eventPoint(event); pointers.set(event.pointerId, point);
       if (pointers.size > 1) { if (pointers.size === 2) pinchStart(); return; }
@@ -607,13 +609,10 @@
       if (!inDocument(p)) return;
       if (tool === 'text') {
         const hit = annotationsVisible ? S.findTopElementAt(current.annotations.filter(a => a.type === 'text'), p, 6 / view.scale, annotationContext) : null;
-        // Existing sidebar text remains an optional insertion shortcut; blank
-        // inserts an in-place editor instead of silently doing nothing.
         const record = hit || {id: 'annotation-' + (++nextObject), type: 'text', x: p.x, y: p.y,
-          text, fontSize: S.getSketchFontSize(strokeWidth), color, width: strokeWidth};
+          text: '', fontSize: S.getSketchFontSize(strokeWidth), color, width: strokeWidth};
         releaseAll();
-        if (!hit && text.trim()) commit(model(current.masks, [...current.annotations, freezeRecord(record)], current.feather));
-        else startText(record);
+        startText(record);
         return;
       }
       gesture = {type: tool, id: 'annotation-' + (++nextObject), pointerId: event.pointerId, start: p, end: p, points: [p.x, p.y],
@@ -959,8 +958,8 @@
       setStrokeWidth(value) { alive(); finite(value, 'stroke width'); strokeWidth = clamp(value, 1, 128); const record = current.annotations.find(a => a.id === selected);
         selectedStyle({width: strokeWidth, ...(record?.type === 'text' ? {fontSize: S.getSketchFontSize(strokeWidth)} : {})}); },
       setText(value) { alive(); if (typeof value !== 'string' || value.length > 2000) throw fail('Text must be at most 2000 characters', 'INVALID_TEXT');
-        text = value; const record = current.annotations.find(a => a.id === selected);
-        if (record && record.type === 'text') selectedStyle({text}); },
+        const record = current.annotations.find(a => a.id === selected);
+        if (record && record.type === 'text') selectedStyle({text: value}); },
       setFeather(value) { loaded(); finite(value, 'feather'); if (value < 0 || value > 256) throw fail('Feather must be between 0 and 256 pixels', 'INVALID_ARGUMENT');
         cancelGesture(); if (value !== current.feather) commit(model(current.masks, current.annotations, value)); },
       deleteSelected,
