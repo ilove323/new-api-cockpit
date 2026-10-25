@@ -6,13 +6,16 @@ accept that same lease. Public dictionaries contain no internal request digest.
 """
 
 from contextlib import contextmanager
+from collections import OrderedDict
 from dataclasses import dataclass, field
 import base64
+import copy
 import hashlib
 import json
 import os
 import re
 import stat
+import threading
 from functools import wraps
 from uuid import uuid4
 
@@ -25,6 +28,7 @@ from .recovery import (
     STAMP,
     TERMINAL,
     project,
+    Projection,
     request_digest,
     scan,
     validate_event,
@@ -94,6 +98,10 @@ class Reservation:
 
 
 class ChatStore:
+    _TEXT_EVENTS = frozenset(
+        {"assistant.delta", "assistant.reasoning", "assistant.protocol"}
+    )
+
     def __init__(self, settings):
         if (
             not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", settings.instance_id)
@@ -102,6 +110,10 @@ class ChatStore:
             raise ChatError("聊天配置无效。", 503, "CHAT_CONFIG_INVALID")
         self.settings, self.prefix = settings, settings.instance_id
         self.fs = SafeFS(settings.data_dir)
+        # Validated journals only, never credentials or authorization results.
+        # A hit still opens and verifies the source inode and reads commit.json.
+        self._read_cache = OrderedDict()
+        self._read_cache_lock = threading.Lock()
         try:
             for suffix in (
                 "",
@@ -135,6 +147,8 @@ class ChatStore:
             raise
 
     def close(self):
+        with self._read_cache_lock:
+            self._read_cache.clear()
         self.fs.close()
 
     def storage_lock(self):
@@ -353,7 +367,7 @@ class ChatStore:
                     )
 
     @contextmanager
-    def _budget(self, scope, estimate, lease, kind="metadata"):
+    def _budget(self, scope, estimate, lease, kind="metadata", *, paths=None):
         temporary = None
         if lease.reservation is None:
             if lease.run:
@@ -369,15 +383,70 @@ class ChatStore:
                 if reservation.closed or reservation.remaining < estimate:
                     raise ChatError("存储预留不足。", 507, "CHAT_STORAGE_LIMIT")
                 root = self._principal(scope.principal)
-                before = self.fs.disk_usage(root)
+                before = (
+                    self.fs.disk_usage(root)
+                    if paths is None
+                    else self._file_sizes(paths)
+                )
                 try:
                     yield
                 finally:
-                    after = self.fs.disk_usage(root)
+                    after = (
+                        self.fs.disk_usage(root)
+                        if paths is None
+                        else self._file_sizes(paths)
+                    )
                     reservation._consume_locked(max(0, after - before))
         finally:
             if temporary:
                 temporary.close()
+
+    def _file_sizes(self, paths):
+        total = 0
+        for path in paths:
+            try:
+                info = self.fs.stat(path)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise storage_error()
+            total += info.st_size
+        return total
+
+    @staticmethod
+    def _journal_signature(info):
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    def _journal_identity(self, scope):
+        fd = self.fs.open_file(f"{scope.path}/events.jsonl")
+        try:
+            return self._journal_signature(os.fstat(fd))
+        finally:
+            os.close(fd)
+
+    def _cache_read(self, key, signature, state):
+        # Bound both entry count and journal bytes (decoded data is larger).
+        if (
+            state.storage_state != "ok"
+            or state.unpublished
+            or state.offset > config.READ_CACHE_BYTES
+        ):
+            return
+        with self._read_cache_lock:
+            self._read_cache[key] = (signature, state)
+            self._read_cache.move_to_end(key)
+            while (
+                len(self._read_cache) > config.READ_CACHE_ENTRIES
+                or sum(item[1].offset for item in self._read_cache.values())
+                > config.READ_CACHE_BYTES
+            ):
+                self._read_cache.popitem(last=False)
 
     def _published(self, scope):
         """Read a high-water snapshot, never infer publication from a trailing LF."""
@@ -387,6 +456,15 @@ class ChatStore:
             raise ValueError()
         integer(commit["seq"])
         integer(commit["byte_offset"], 0, config.CONVERSATION_BYTES)
+        identity = self._journal_identity(scope)
+        signature = (commit["seq"], commit["byte_offset"], identity)
+        key = (scope.user_id, scope.cid)
+        with self._read_cache_lock:
+            cached = self._read_cache.get(key)
+            if cached is not None and cached[0] == signature:
+                self._read_cache.move_to_end(key)
+                return cached[1]
+            self._read_cache.pop(key, None)
         raw = self.fs.read_bytes(
             f"{scope.path}/events.jsonl", config.CONVERSATION_BYTES
         )
@@ -401,6 +479,8 @@ class ChatStore:
             state.storage_state = "corrupt"
         state.commit_seq = commit["seq"]
         state.unpublished = len(raw) != commit["byte_offset"]
+        if identity == self._journal_identity(scope):
+            self._cache_read(key, signature, state)
         return state
 
     def _projections_current(self, scope, state):
@@ -467,7 +547,12 @@ class ChatStore:
         return state
 
     def _projection(self, scope, state):
-        meta, files, runs, requests, writes = project(scope, state.events)
+        if state.projection is None or state.projection.seq != state.seq:
+            state.projection = Projection(scope)
+            for event in state.events:
+                state.projection.apply(event)
+        meta, files, runs, requests, writes = state.projection.value()
+        meta = copy.deepcopy(meta)
         files = file_deletions.overlay(self, scope, files)
         meta["storage_state"] = state.storage_state
         return meta, files, runs, requests, writes
@@ -483,6 +568,11 @@ class ChatStore:
                 **meta,
             },
         )
+        # Stream chunks do not change the file catalogue or the conversation
+        # list. The journal+commit are authoritative; refresh those derived
+        # snapshots at the next non-chunk event (and always on recovery).
+        if state.events and state.events[-1]["type"] in self._TEXT_EVENTS:
+            return
         self.fs.write_json(
             f"{scope.path}/files.json",
             {
@@ -527,8 +617,10 @@ class ChatStore:
             entries.append(meta)
         self.fs.write_json(path, {"v": 1, "entries": entries})
 
-    def _projection_estimate(self, scope, state):
-        projected = self._projection(scope, state)
+    def _projection_estimate(self, scope, state, *, projection=None):
+        projected = (
+            self._projection(scope, state) if projection is None else projection.value()
+        )
         index = f"{self._principal(scope.principal)}/index.json"
         index_bytes = self.fs.stat(index).st_size if self.fs.exists(index) else 0
         return 32768 + 2 * (
@@ -700,19 +792,18 @@ class ChatStore:
         }
         event = json.loads(canonical_json(event))
         validate_event(event, scope, state.seq + 1)
-        proposed = LogState(
-            events=state.events + [event],
-            offset=state.offset,
-            storage_state=state.storage_state,
-        )
-        project(scope, proposed.events)
+        self._projection(scope, state)
+        proposed = state.projection.fork(event)
+        proposed.apply(event)
         line = canonical_json(event) + b"\n"
         if run_id is not None:
-            used = sum(
-                len(canonical_json(e)) + 1
-                for e in state.events
-                if e["run_id"] == run_id
-            )
+            if run_id not in lease.event_bytes:
+                lease.event_bytes[run_id] = sum(
+                    len(canonical_json(e)) + 1
+                    for e in state.events
+                    if e["run_id"] == run_id
+                )
+            used = lease.event_bytes[run_id]
             maximum = config.RUN_EVENT_BYTES - (
                 0
                 if event_type == "run.terminal"
@@ -733,8 +824,20 @@ class ChatStore:
                 raise ChatError("上下文快照版本不符。", 503, "CHAT_STORAGE_CORRUPT")
         elif event_type == "context.compacted":
             self._raw_working_context(scope, data["checkpoint"], run_id=run_id)
-        estimate = len(line) + self._projection_estimate(scope, proposed)
-        with self._budget(scope, estimate, lease):
+        chunk = event_type in self._TEXT_EVENTS
+        estimate = len(line) + (
+            32768 + 2 * len(canonical_json(proposed.meta))
+            if chunk
+            else self._projection_estimate(scope, state, projection=proposed)
+        )
+        paths = [
+            f"{scope.path}/{name}"
+            for name in ("events.jsonl", "commit.json", "meta.json")
+        ]
+        if not chunk:
+            paths.extend(f"{scope.path}/{name}.json" for name in ("files", "runs"))
+            paths.append(f"{self._principal(scope.principal)}/index.json")
+        with self._budget(scope, estimate, lease, paths=paths):
             try:
                 fd = self.fs.open_file(
                     f"{scope.path}/events.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT
@@ -759,8 +862,11 @@ class ChatStore:
                 lease.poisoned = True
                 raise storage_error(exc) from None
             state.events.append(event)
+            state.projection = proposed
             state.offset += len(line)
             state.commit_seq = state.seq
+            if run_id is not None:
+                lease.event_bytes[run_id] += len(line)
             # If projection publication fails, the event is still committed;
             # stop the caller, never rewind or replay its paid/file action.
             self._write_projections(scope, state)
@@ -846,6 +952,8 @@ class ChatStore:
                     {"v": 1, "cid": scope.cid, "deleted_at": utcnow()},
                 )
                 self._index_entry(scope)
+            with self._read_cache_lock:
+                self._read_cache.pop((scope.user_id, scope.cid), None)
             try:
                 self.fs.remove_tree(f"{root}/.trash/{scope.cid}")
             except (ChatError, OSError):
@@ -1008,16 +1116,27 @@ class ChatStore:
 
     @io_guard
     def read_events(
-        self, scope, after_seq=0, limit=config.EVENT_PAGE_MAX, until_seq=None
+        self,
+        scope,
+        after_seq=0,
+        limit=config.EVENT_PAGE_MAX,
+        until_seq=None,
+        *,
+        lease=None,
     ):
+        return self._event_page(
+            self._state(scope, lease=lease), after_seq, limit, until_seq
+        )
+
+    @staticmethod
+    def _event_page(state, after_seq=0, limit=config.EVENT_PAGE_MAX, until_seq=None):
         integer(after_seq)
         integer(limit, 1, config.EVENT_PAGE_MAX)
-        state = self._state(scope)
         until_seq = state.seq if until_seq is None else integer(until_seq)
         if not after_seq <= until_seq <= state.seq:
             raise ChatError("事件分页位置无效。")
         result, size = [], 0
-        for event in state.events[after_seq:until_seq]:
+        for event in state.events[after_seq : min(until_seq, after_seq + limit)]:
             item_size = len(canonical_json(event)) + 1
             if result and (
                 len(result) == limit or size + item_size > config.EVENT_RESPONSE_BYTES
@@ -1027,11 +1146,32 @@ class ChatStore:
             size += item_size
         last = result[-1]["seq"] if result else after_seq
         return {
-            "events": result,
+            "events": copy.deepcopy(result),
             "until_seq": until_seq,
             "next_after_seq": last,
             "has_more": last < until_seq,
             "storage_state": state.storage_state,
+        }
+
+    @io_guard
+    def sync(self, scope, after_seq=0, limit=config.EVENT_PAGE_MAX, files_revision=""):
+        """One published snapshot for recovery; never resumes a run or dispatches."""
+        if not isinstance(files_revision, str) or (
+            files_revision and not re.fullmatch(r"[0-9a-f]{64}", files_revision)
+        ):
+            raise ChatError("文件版本无效。")
+        state = self._state(scope)
+        meta, files, runs, _, _ = self._projection(scope, state)
+        file_list = list(files.values())
+        revision = hashlib.sha256(canonical_json(file_list)).hexdigest()
+        rid = meta["active_run_id"] or next(reversed(runs), None)
+        return {
+            "conversation": meta,
+            "events": self._event_page(state, after_seq, limit),
+            "run": self._run_view(scope, rid, runs[rid], state) if rid else None,
+            "files": file_list if files_revision != revision else None,
+            "files_revision": revision,
+            "required_context_revision": state.projection.context_revision,
         }
 
     @io_guard
@@ -1197,24 +1337,25 @@ class ChatStore:
 
     @staticmethod
     def _public_run(run):
-        return {k: v for k, v in run.items() if not k.startswith("_") and k != "reason"}
+        return copy.deepcopy(
+            {k: v for k, v in run.items() if not k.startswith("_") and k != "reason"}
+        )
 
     @io_guard
     def get_run(self, scope, rid, legacy_rid=None, *, lease=None):
         if legacy_rid is not None:
             scope, rid = self.open_conversation(scope, rid), legacy_rid
         rid = identifier(rid)
-        run = self._projection(scope, self._state(scope, lease=lease))[2].get(rid)
+        state = self._state(scope, lease=lease)
+        run = self._projection(scope, state)[2].get(rid)
         if run is None:
             raise not_found()
+        return self._run_view(scope, rid, run, state)
+
+    def _run_view(self, scope, rid, run, state):
         value = self._public_run(run)
         value["cancel_requested"] = self.is_cancelled(scope, rid)
-        accepted = next(
-            e
-            for e in self._state(scope, lease=lease).events
-            if e["type"] == "run.accepted" and e["run_id"] == rid
-        )
-        value["context_snapshot"] = accepted["data"]["context_snapshot"]
+        value["context_snapshot"] = copy.deepcopy(state.projection.accepted[rid])
         return value
 
     @io_guard
