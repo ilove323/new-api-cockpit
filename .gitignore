@@ -18,6 +18,7 @@ credentials/
 
 # Deployment-specific files
 DEPLOYMENT.private.md
+/SITES.local.md
 image-studio-capabilities.json
 chat-capabilities.json
 docker-compose.override.yml
