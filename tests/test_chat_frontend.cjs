@@ -135,6 +135,16 @@ test('authentication failure clears state, never falls back or retries paid requ
   const api = createAPI({scope, onAuth: () => { clears++; scope.invalidate(); }, fetch: async () => { calls++; return new Response('{"code":"AUTH_SESSION_CHANGED"}', {status: 409}); }});
   await assert.rejects(api.start(CID, {}, {onEvent() {}}), S.StaleResponse); assert.equal(calls, 1); assert.equal(clears, 1);
 });
+test('temporary authentication outages preserve the current scope and never replay a request', async () => {
+  for (const status of [429, 503]) {
+    let clears = 0, calls = 0; const scope = new S.Scope(); scope.switch(CID); const ticket = scope.ticket();
+    const api = createAPI({scope, onAuth: () => { clears++; scope.invalidate(); }, fetch: async () => {
+      calls++; return new Response(JSON.stringify({code: 'AUTH_UNAVAILABLE', error: '暂不可用'}), {status});
+    }});
+    await assert.rejects(api.start(CID, {}, {onEvent() {}}), error => error.status === status);
+    assert.equal(calls, 1); assert.equal(clears, 0); assert.equal(scope.current(ticket), true);
+  }
+});
 
 test('Skill strict frontmatter permits text only and rejects extra permissions/YAML features', () => {
   const valid = makeSkill('weekly-summary', '整理中文😀', 'read /etc/anything; <script>not executable</script>', limits);

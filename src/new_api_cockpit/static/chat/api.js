@@ -27,7 +27,9 @@
         if (!response.ok) {
           const value = await response.json().catch(() => ({})); scope.assert(ticket);
           const error = new ChatAPIError(response.status, value);
-          if (error.code.startsWith('AUTH_') || error.code === 'CHAT_SESSION_REQUIRED' || response.status === 401) { onAuth(); throw new C.StaleResponse(); }
+          // A temporary auth-service outage is not an identity change. Keep
+          // the draft/history, fail this request, and never replay a mutation.
+          if (response.status === 401 || ['AUTH_FORBIDDEN', 'AUTH_SESSION_CHANGED', 'CHAT_SESSION_REQUIRED'].includes(error.code)) { onAuth(); throw new C.StaleResponse(); }
           throw error;
         }
         if (kind === 'run') return await C.consumeRun(response, {onEvent, assertCurrent: () => scope.assert(ticket), signal: controller.signal, maxFrameBytes});

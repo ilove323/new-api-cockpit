@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
-import psycopg
 from flask import g, jsonify
 
 from new_api_cockpit import auth
@@ -51,7 +50,9 @@ def upstream(user=None, *, raw=None, error=None):
                 if raw is not None
                 else json.dumps({"success": True, "data": user or USER}).encode()
             )
-            opener.open.return_value.__enter__.return_value.read.return_value = body
+            response = opener.open.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = body
         yield opener
 
 
@@ -360,38 +361,37 @@ class AuthTest(unittest.TestCase):
                 self.assertNotIn("Set-Cookie", response.headers)
             verify.assert_not_called()
 
-    def test_pat_resolves_admin_identity_readonly_verbatim_and_without_caching(self):
-        with patch("new_api_cockpit.auth.psycopg.connect") as connect:
-            conn = connect.return_value.__enter__.return_value
-            identity = {k: USER[k] for k in ("id", "username", "role")}
-            conn.execute.return_value.fetchone.return_value = identity
-            for credential in ("sk-fixture", "fixture+/=="):
-                self.assertEqual(auth.verify_pat(credential), identity)
-                self.assertEqual(conn.execute.call_args.args[1], (credential,))
-            query, params = conn.execute.call_args.args
-            self.assertIn("access_token=%s", query)
-            self.assertIn("role>=10 AND status=1 AND deleted_at IS NULL", query)
-            self.assertIn("SELECT id,username,role", query)
-            self.assertNotIn("tokens", query)
-            self.assertIn(
-                "default_transaction_read_only=on", connect.call_args.kwargs["options"]
-            )
-            conn.execute.return_value.fetchone.return_value = None
-            with self.assertRaises(auth.LoginRequired):
-                auth.verify_pat("sk-fixture")
-            self.assertEqual(connect.call_count, 3)
-        with patch("new_api_cockpit.auth.psycopg.connect") as connect:
-            for value in (None, "", "x" * 257, "a b", "a\nb"):
+    def test_legacy_pat_requires_fresh_upstream_validation_without_sql_fallback(self):
+        identity = {k: USER[k] for k in ("id", "username", "role")}
+        with (
+            upstream() as opener,
+            patch("new_api_cockpit.auth.psycopg.connect") as connect,
+        ):
+            self.assertEqual(auth.verify_pat("fixture+/=="), identity)
+            self.assertEqual(auth.verify_pat("fixture+/=="), identity)
+            self.assertEqual(opener.open.call_count, 2)
+            connect.assert_not_called()
+        for status, exception in (
+            (401, auth.LoginRequired),
+            (403, auth.LoginForbidden),
+            (500, auth.AuthUnavailable),
+        ):
+            with (
+                upstream(
+                    error=HTTPError(
+                        "http://fixture", status, "secret", {}, io.BytesIO()
+                    )
+                ),
+                patch("new_api_cockpit.auth.psycopg.connect") as connect,
+            ):
+                with self.assertRaises(exception):
+                    auth.verify_pat("legacy-retired")
+                connect.assert_not_called()
+        with patch("new_api_cockpit.auth.account.read") as read:
+            for value in (None, "", "x" * 257, "a b", "a\nb", "sk-fixture", token()):
                 with self.assertRaises(auth.LoginRequired):
                     auth.verify_pat(value)
-            connect.assert_not_called()
-        with patch(
-            "new_api_cockpit.auth.psycopg.connect",
-            side_effect=psycopg.OperationalError("private-secret"),
-        ):
-            with self.assertRaises(auth.AuthUnavailable) as caught:
-                auth.verify_pat("fixture")
-            self.assertNotIn("private-secret", str(caught.exception))
+            read.assert_not_called()
 
     def test_non_chat_business_apis_accept_pat_and_keep_its_real_actor(self):
         """Legacy business APIs retain PATs; private chat is session-only."""

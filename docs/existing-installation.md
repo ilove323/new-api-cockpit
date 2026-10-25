@@ -221,6 +221,15 @@ JWT/PAT 按同一个真实用户 ID 共用限额，在解析 multipart/解码前
 
 由源库表所有者执行，替换实际 schema 和查询角色：
 
+使用新式管理员 `nap_` PAT 调用 Cockpit 时，还需以下权限；只授予四个验证字段，不授予令牌表写权限。旧版 New API 尚无此表时不要执行；升级创建表后再授权。网页登录及普通用户 MCP 的余额查询不依赖这项权限。
+
+```sql
+GRANT SELECT (token_hash, user_id, scopes, expires_at)
+ON TABLE public.user_access_tokens TO cockpit_reader;
+```
+
+图片路由另需：
+
 ```sql
 GRANT SELECT ("group", model, enabled, channel_id, priority, weight)
 ON TABLE public.abilities TO cockpit_reader;

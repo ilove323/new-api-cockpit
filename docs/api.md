@@ -26,7 +26,7 @@ Authorization: Bearer <New API 管理员 PAT>
 Accept: application/json
 ```
 
-PAT 对应源库 `users.access_token`，要求账号 `role >= 10`、`status = 1`、未删除。
+PAT 由 New API `/api/user/self` 验证，要求账号 `role >= 10`、`status = 1`；上游拒绝旧 PAT 后不再通过源库放行。新式 `nap_` PAT 需要 `profile:read` 和相应功能权限：报表/质量为 `log:read`；用户读取/修改为 `user:read` / `user:write`；跨用户 KEY 管理还需 `api_key:read` / `api_key:write`，查看完整 KEY 另需 `api_key:reveal`；账本读取需 `channel:read` 与 `log:read`，修改配置另需 `option:write`。未知接口默认拒绝新式 PAT；完整逐接口映射在 `pat_permissions.py`。可能补建目标 PAT 的管理详情接口需要 `user:write`，不能用只读凭据触发。
 **不是模型调用 KEY（`tokens.key`）**，不添加或剥离 `sk-` 前缀；原值里的 `+`、`/`、`=` 都保留。
 PAT 每次从数据库核对，不缓存认证结果；撤销、换 PAT、停用或降权在后续请求生效。
 PAT 不放在 URL、请求体或 Cookie，也不需要写入 Cockpit 的 `.env`。

@@ -64,6 +64,15 @@ def rpc_error(code, message, ident=None, status=200):
     ), status
 
 
+def account_error(exc, ident=None):
+    response = make_response(*rpc_error(-32001, str(exc), ident, exc.status))
+    if exc.status == 401:
+        response.headers["WWW-Authenticate"] = 'Bearer realm="cockpit-account-mcp"'
+    if exc.status == 429 and exc.retry_after is not None:
+        response.headers["Retry-After"] = exc.retry_after
+    return response
+
+
 def credential():
     authorization = request.headers.get("Authorization", "")
     scheme, _, value = authorization.partition(" ")
@@ -127,12 +136,7 @@ def create_blueprint():
             access = credential()
             user = upstream.authenticate(access)
         except upstream.AccountError as exc:
-            response = make_response(*rpc_error(-32001, str(exc), status=exc.status))
-            if exc.status == 401:
-                response.headers["WWW-Authenticate"] = (
-                    'Bearer realm="cockpit-account-mcp"'
-                )
-            return response
+            return account_error(exc)
         if request.method != "POST":
             response = make_response(
                 *rpc_error(
@@ -232,8 +236,8 @@ def create_blueprint():
                 if isinstance(exc, upstream.AccountError):
                     # Transport auth failure still means auth failure, not a
                     # cached identity or a tool-success response with old data.
-                    if exc.status in {401, 403}:
-                        return rpc_error(-32001, str(exc), ident, exc.status)
+                    if exc.status in {401, 403, 429}:
+                        return account_error(exc, ident)
                     message = str(exc)
                 else:
                     return rpc_error(-32602, str(exc), ident)
