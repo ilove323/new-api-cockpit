@@ -23,16 +23,11 @@ npx --yes --package typescript@6.0.3 tsc -p frontend/studio/tsconfig.json
 
 开发启动：`python -m new_api_cockpit.app`。
 Python 依赖版本范围继续在 `requirements.txt` 维护。工作站构建工具单独使用 `frontend/studio/package-lock.json` 锁定。
-VS Code 插件源码独立放在 `vsix/`；Docker 的 Node 构建阶段打包 VSIX，Python 包和运行镜像只携带安装包及清单，不带 Node 或 node_modules。开发检查与打包：`npm ci --prefix vsix --ignore-scripts`、`npm run --prefix vsix check`、`npm test --prefix vsix`、`npm run --prefix vsix package`。源码开发需要系统下载时执行 `npm run --prefix vsix bundle` 后重启应用。VS Code 宿主检查及虚构身份的 MCP 联调见[插件说明](vsix/README.md#开发与打包)。
+VS Code 插件源码独立放在 `vsix/`；Docker 的 Node 构建阶段打包 VSIX，Python 包和运行镜像只携带安装包及清单，不带 Node 或 node_modules。开发检查与打包：`npm ci --prefix vsix --ignore-scripts`、`npm run --prefix vsix check`、`npm test --prefix vsix`、`npm run --prefix vsix package`。源码开发需要系统下载时执行 `npm run --prefix vsix bundle` 后重启应用。VS Code 宿主检查及独立 New API 接口验证见[插件说明](vsix/README.md#开发与打包)。
 CI 的镜像任务还在实际构建结果内执行 `test_runtime_image.py`：核对已安装应用与 VSIX 版本、二进制摘要、下载鉴权及无 Node/私有构建文件。测试容器禁用网络，账户身份仅在测试进程内模拟；不属于真实站点登录验收。普通源码回归不会把本机安装误当作镜像验证。
 在只读容器内执行聊天存储回归时，给测试用 `TMPDIR` 挂载独立可写目录，并保留大于 512 MiB 的可用空间；64/128 MiB 的进程临时盘不适合作为聊天数据卷。不要为测试下调程序的磁盘安全余量。
 提交前执行 CI 中的检查，修改数据库行为需运行 PostgreSQL 集成测试。
 测试必须使用独立数据库和虚构数据，绝不使用生产凭据。
-
-KEY 配置局部更新需要配套 New API 补丁，固定基线、许可及重现命令见 [补丁说明](patches/new-api/README.md)。
-`bash patches/new-api/verify.sh` 验证补丁应用、SQLite、归属、PAT scope 和路由；
-Linux/amd64 Docker 环境可追加 `--databases`，在无网络的全新 PostgreSQL / MySQL / Redis 中验证实际行锁和预扣额度保留。
-不接收外部数据库 DSN，不连接或重启现用服务；CI 使用同一入口。
 
 账户 MCP 的协议联调使用独立 SDK 环境，不给应用增加运行时依赖，不访问真实 New API 或模型服务：
 

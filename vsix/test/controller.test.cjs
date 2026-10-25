@@ -37,6 +37,24 @@ test('other windows and a restarted controller cannot bypass the same endpoint c
   f.controller.setConnection(); f.controller.setConnection(CONNECTION); await f.controller.refresh(); assert.equal(calls, 1);
   assert.equal((await fs.readdir(f.dir)).some(name => name.endsWith('.lock')), false);
 });
+test('old MCP and new standalone site addresses share the existing refresh and 429 gate', async t => {
+  const f = await fixture(t, async () => BALANCE);
+  await f.gate.reserve(CONNECTION.endpoint);
+  assert.equal((await f.gate.reserve('https://example.com')).allowed, false);
+  await f.gate.defer(CONNECTION.endpoint, f.now() + 3600000);
+  assert.equal(await f.gate.backoff('https://example.com'), f.now() + 3600000);
+});
+test('unit metadata is reused for an hour and cleared on account changes without caching the balance', async t => {
+  const units = [];
+  const f = await fixture(t, async (_connection, _signal, _timeout, unit) => {units.push(unit); return BALANCE;});
+  await f.controller.refresh(); f.advance(60000); await f.controller.refresh();
+  assert.deepEqual(units, [undefined, 500000]);
+  f.advance(60 * 60000); await f.controller.refresh();
+  assert.deepEqual(units, [undefined, 500000, undefined]);
+  f.controller.setConnection({...CONNECTION, pat: 'nap_different_fixture_credential'});
+  f.advance(60000); await f.controller.refresh();
+  assert.deepEqual(units, [undefined, 500000, undefined, undefined]);
+});
 test('429 pauses at least 15 minutes, honors a longer Retry-After and survives restart', async t => {
   let calls = 0; let until;
   const f = await fixture(t, async () => { calls++; throw new BalanceError('请求过于频繁', 429, until); }); until = f.now() + 3600000;

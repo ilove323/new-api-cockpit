@@ -42,7 +42,7 @@ class RuntimeImageTest(unittest.TestCase):
         self,
     ):
         release = self.release
-        self.assertEqual(release.version, version("new-api-cockpit"))
+        self.assertRegex(version("new-api-cockpit"), r"^\d+\.\d+\.\d+$")
         payload = release.path.read_bytes()
         self.assertEqual(len(payload), release.size)
         self.assertEqual(hashlib.sha256(payload).hexdigest(), release.sha256)

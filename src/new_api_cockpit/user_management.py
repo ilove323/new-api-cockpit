@@ -238,18 +238,6 @@ def call_api(operator, user_id, path, *, method="GET", body=None, credential=Non
             if len(raw) > 2_000_000:
                 raise ValueError()
             result = json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        status = exc.code
-        exc.close()
-        if method == "PATCH" and status in {404, 405}:
-            raise ManagementError(
-                "KEY 已不可用或 New API 尚未支持安全修改接口；需要配套服务端更新，未使用旧接口重试。"
-            ) from None
-        if mutation:
-            raise Uncertain(
-                "New API 响应不明确；请核对实际结果，不要自动重试。"
-            ) from None
-        raise ManagementError("New API 查询失败，请检查内部连接和 PAT。") from None
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         if mutation:
             raise Uncertain(
@@ -744,26 +732,18 @@ def _perform(
                 "unlimited_quota": True,
             },
         )
-    # Spending is not a configuration conflict. Only intentional quota actions
-    # compare quota snapshots; configuration PATCH never sends those fields.
-    if before and any(
-        data.get(k) != v
-        for k, v in before.items()
-        if action == "quota" or k not in {"remain_quota", "used_quota"}
-    ):
+    # Official PUT overwrites remain_quota. Re-read immediately before update;
+    # UI must explicitly warn it cannot be atomic against concurrent inference.
+    payload = token_payload(data)
+    if before and any(data.get(k) != v for k, v in before.items()):
         raise Conflict("KEY 分组或配置已变化，请重新预览。")
     if action == "group":
         validate_group(operator, user, changes.get("group"))
-        result = api(
-            operator,
-            user["id"],
-            f"/api/token/{token_id}",
-            method="PATCH",
-            body={"group": changes["group"]},
-        )
-        return {"updated": True} if result is not None else None
-    if action == "quota":
-        payload = token_payload(data)
+        payload["group"] = changes["group"]
+        if payload["group"] != "auto":
+            payload["cross_group_retry"] = False
+            payload["auto_groups"] = []
+    elif action == "quota":
         mode = changes.get("mode")
         if mode == "unlimited":
             payload["unlimited_quota"] = True
@@ -798,22 +778,11 @@ def _perform(
         if "group" in changes:
             validate_group(operator, user, changes["group"])
         _validate_token_fields(changes)
-        if "name" in changes and (
-            not isinstance(changes["name"], str) or len(changes["name"].encode()) > 50
-        ):
+        payload.update(changes)
+        if not isinstance(payload["name"], str) or len(payload["name"].encode()) > 50:
             raise ManagementError("KEY 名称不能超过 50 字节。")
-        if "expired_time" in changes and (
-            type(changes["expired_time"]) is not int or changes["expired_time"] < -1
-        ):
+        if type(payload["expired_time"]) is not int or payload["expired_time"] < -1:
             raise ManagementError("到期时间无效。")
-        result = api(
-            operator,
-            user["id"],
-            f"/api/token/{token_id}",
-            method="PATCH",
-            body=dict(changes),
-        )
-        return {"updated": True} if result is not None else None
     else:
         raise ManagementError("KEY 操作无效。")
     result = api(operator, user["id"], "/api/token/", method="PUT", body=payload)

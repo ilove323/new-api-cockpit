@@ -1,10 +1,6 @@
 # Keep the upstream bundle intact, including whitespace inside string literals.
 src/new_api_cockpit/static/scalar-*.js -whitespace linguist-vendored
 
-# Unified-diff context prefixes are format bytes, not source indentation.
-# verify.sh checks the applied additions with git apply --whitespace=error.
-patches/new-api/*.patch -whitespace
-
 # Defense in depth for force-added local/private files in Git archives.
 *.private export-ignore
 *.private.* export-ignore

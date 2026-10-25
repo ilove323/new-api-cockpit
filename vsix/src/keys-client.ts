@@ -3,6 +3,7 @@ import { BalanceError, Connection, requestOwnJson } from './client';
 export interface ModelKey {
   id: number; name: string; group: string; masked: string; status: number;
   expired_time: number; unlimited_quota: boolean; remain_quota: number;
+  configuration?: {model_limits_enabled: boolean; model_limits: string; allow_ips: string | null; allow_user_quota_query: boolean};
 }
 export interface KeyPage {items: ModelKey[]; total: number; page: number}
 export interface GroupOption {name: string; description: string}
@@ -24,8 +25,12 @@ function readKey(raw: unknown): ModelKey {
     throw new BalanceError('KEY 列表响应不完整。');
   }
   const key = typeof raw.key === 'string' ? raw.key.replace(/^sk-/, '') : '';
+  const configuration = typeof raw.model_limits_enabled === 'boolean' && text(raw.model_limits, 32768) &&
+    (raw.allow_ips === null || typeof raw.allow_ips === 'string' && raw.allow_ips.length <= 32768) &&
+    typeof raw.cross_group_retry === 'boolean' && typeof raw.allow_user_quota_query === 'boolean'
+    ? {model_limits_enabled: raw.model_limits_enabled, model_limits: raw.model_limits, allow_ips: raw.allow_ips, allow_user_quota_query: raw.allow_user_quota_query} : undefined;
   return {id: ident(raw.id), name: raw.name, group: raw.group, masked: key ? key.length <= 8 ? 'sk-••••' : 'sk-' + key.slice(0, 4) + '••••' + key.slice(-4) : '未显示',
-    status: raw.status, expired_time: raw.expired_time, unlimited_quota: raw.unlimited_quota, remain_quota: raw.remain_quota};
+    status: raw.status, expired_time: raw.expired_time, unlimited_quota: raw.unlimited_quota, remain_quota: raw.remain_quota, configuration};
 }
 export function validateName(input: string): string {
   const value = input.trim();
@@ -42,10 +47,10 @@ export function amountToQuota(input: string, unit: number): number {
 
 export class KeysClient {
   constructor(private readonly connection: Connection) {}
-  private request(path: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', scope: string, signal: AbortSignal, body?: unknown): Promise<unknown> {
+  private request(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', scope: string, signal: AbortSignal, body?: unknown): Promise<unknown> {
     return requestOwnJson(this.connection, {path, method, scope, signal, body});
   }
-  private async write(path: string, method: 'POST' | 'PATCH' | 'DELETE', signal: AbortSignal, body?: unknown): Promise<void> {
+  private async write(path: string, method: 'POST' | 'PUT' | 'DELETE', signal: AbortSignal, body?: unknown): Promise<void> {
     try {
       const value = await this.request(path, method, 'api_key:write', signal, body);
       if (object(value) && value.success === false) throw new KeyWriteError('KEY 修改未成功，请检查分组、额度、权限或数量限制。', false);
@@ -88,16 +93,14 @@ export class KeysClient {
     if (!text(group)) throw new BalanceError('分组参数无效。');
     if (!groups.some(g => g.name === group)) throw new BalanceError('所选分组不可用，请刷新后重新选择。');
     if (key.group === group) return;
-    // PATCH is intentionally a separate method/path: an unmodified server
-    // rejects it instead of treating missing quota fields as a full PUT.
-    try {
-      await this.write('/api/token/' + ident(key.id), 'PATCH', signal, {group, cross_group_retry: false, auto_groups: null});
-    } catch (error) {
-      if (error instanceof KeyWriteError && [404, 405].includes(error.status)) {
-        throw new KeyWriteError('KEY 已不可用或 New API 尚未支持安全改组接口；需要配套服务端更新，没有改用旧接口重试。', false, error.status);
-      }
-      throw error;
-    }
+    if (!key.unlimited_quota && key.remain_quota < 0) throw new BalanceError('此 KEY 剩余额度为负，New API 不接受原额度写回；请先调整额度再切换分组，插件不会擅自改变额度。');
+    // Reuse the page queried immediately before this action, without another GET.
+    const config = key.configuration;
+    if (!config) throw new BalanceError('KEY 配置不完整，未发送修改。');
+    await this.write('/api/token/', 'PUT', signal, {
+      id: ident(key.id), name: key.name, group, expired_time: key.expired_time, remain_quota: key.remain_quota,
+      unlimited_quota: key.unlimited_quota, ...config, cross_group_retry: false, auto_groups: null
+    });
   }
   async reveal(id: number, signal: AbortSignal): Promise<string> {
     const result = success(await this.request('/api/token/' + ident(id) + '/key', 'POST', 'api_key:reveal', signal, {}));

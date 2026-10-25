@@ -10,7 +10,7 @@ GitHub Actions 需要 `packages:write` 和 `contents:write`。GHCR 包须设为 
 
 ## 发布流程
 
-1. 确认源码、Compose、部署文档、迁移及功能范围一致，在 `pyproject.toml` 更新为新的正式版本，并执行 `npm --prefix vsix version X.Y.Z --no-git-tag-version` 同步插件及锁文件。正式镜像与随附插件使用同一版本；不能用新代码覆盖已发布标签或旧版本镜像。
+1. 确认源码、Compose、部署文档、迁移及功能范围一致，在 `pyproject.toml` 更新为新的正式版本，插件需要更新时，执行 `npm --prefix vsix version A.B.C --no-git-tag-version` 同步插件及锁文件。应用和插件分别编号，发布记录明确镜像内包含的插件版本；不能用新代码覆盖已发布标签或旧版本镜像。
 2. 通过 PR 合并到 `main` 并通过 CI，准备功能、升级、数据库及兼容性说明。
 3. 创建与版本匹配的 `vX.Y.Z` 标签并推送标签；目前仅支持正式标签，不接受预发布后缀。
 4. `release.yml` 复用 CI，校验标签与版本后构建 AMD64/ARM64 镜像，推送 `ghcr.io/ilove323/new-api-cockpit:X.Y.Z`；保留 `latest` 供发现，部署固定精确版本或 digest。
@@ -26,7 +26,7 @@ Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/packag
 |---|---|---|
 | 新服务器全量安装 | `new-api-cockpit-vX.Y.Z-deploy.tar.gz` | 同名 `.tar.gz.sha256` |
 | 接入已有 New API | `compose.release.yml`、`default.env.example`、`nginx.conf.example`、`image-studio-capabilities.example.json`、`source_pat_function.sql` | `SHA256SUMS`，只覆盖这组散文件 |
-| VS Code 插件 | `new-api-cockpit-balance-X.Y.Z.vsix`、`vscode-extension.json` | 清单中的 SHA-256；安装包从发布镜像导出，不单独重建 |
+| VS Code 插件 | `new-api-cockpit-balance-A.B.C.vsix`、`vscode-extension.json` | 清单中的 SHA-256；安装包从发布镜像导出，不单独重建 |
 | 固定镜像 | `image-digest.txt` | 记录发布镜像的多架构索引 digest，可用于拉取和固定部署 |
 
 完整安装包只包含 `install/` 下的公开部署文件：
@@ -38,6 +38,8 @@ Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/packag
 - `migrations.txt`：由同一提交生成的监控迁移文件名清单；真正的迁移 SQL 随应用镜像分发。
 
 安装包不包含应用源码、构建 override、`.env`、真实账号、密钥、数据或部署日志。部署密钥在目标服务器首次生成，不从构建环境打包带出。
+
+`v0.4.1` 随附插件 `0.4.2`：插件直接调用 New API 本人账户和令牌接口，不依赖 Cockpit 或账户 MCP；KEY 改组沿用官方 PUT，不构建、发布或升级 New API 镜像。
 
 `v0.4.0` 是首次同时提供全量安装包、聊天、账户 MCP 和 VS Code 插件的正式版本。`v0.3.0` 的既有附件不包含这些组件，不能补传新版安装包来伪装旧版本兼容。
 

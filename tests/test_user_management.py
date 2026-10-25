@@ -143,8 +143,9 @@ class UserManagementTest(unittest.TestCase):
             )
         )
         payload = api.call_args.kwargs["body"]
-        self.assertEqual(api.call_args.kwargs["method"], "PATCH")
-        self.assertEqual(payload, changes)
+        self.assertEqual(payload["group"], "b")
+        for field in ("remain_quota", "unlimited_quota", "allow_ips", "expired_time"):
+            self.assertEqual(payload[field], self.token[field])
         records = [
             call.args
             for call in conn.execute.call_args_list
@@ -245,12 +246,12 @@ class UserManagementTest(unittest.TestCase):
             with self.assertRaises(manage.ManagementError):
                 manage.config_map({"x": value}, "x")
 
-    def test_group_change_patches_only_configuration_despite_concurrent_spending(self):
+    def test_group_change_preserves_latest_api_quota_and_unrelated_settings(self):
         sent = []
 
         def api(_op, _id, path, **kwargs):
-            if kwargs.get("method") == "PATCH":
-                sent.append((path, kwargs["body"]))
+            if kwargs.get("method") == "PUT":
+                sent.append(kwargs["body"])
                 return {"key": "must-not-return"}
             return {**self.token, "remain_quota": 400000}
 
@@ -265,28 +266,13 @@ class UserManagementTest(unittest.TestCase):
                 3,
                 "group",
                 {"group": "b"},
-                {"group": "a", "status": 1, "remain_quota": 500000},
+                {"group": "a", "status": 1},
             )
-        self.assertEqual(sent, [("/api/token/3", {"group": "b"})])
+        self.assertEqual(sent[0]["remain_quota"], 400000)
+        self.assertEqual(sent[0]["model_limits"], "model-a")
+        self.assertEqual(sent[0]["allow_ips"], "127.0.0.1")
+        self.assertNotIn("used_quota", sent[0])
         self.assertEqual(result, {"updated": True})
-
-    def test_configuration_edit_never_replays_quota_or_unrelated_settings(self):
-        with (
-            patch.object(manage, "token_owner", return_value=(self.user, 3)),
-            patch.object(
-                manage, "call_api", side_effect=[self.token, {"key": "not-returned"}]
-            ) as api,
-        ):
-            result = manage._perform(
-                self.operator, "token", 3, "edit", {"name": "renamed"}
-            )
-        self.assertEqual(result, {"updated": True})
-        self.assertEqual(
-            api.call_args.args, (self.operator, self.user["id"], "/api/token/3")
-        )
-        self.assertEqual(
-            api.call_args.kwargs, {"method": "PATCH", "body": {"name": "renamed"}}
-        )
 
     def test_stale_group_preview_does_not_submit(self):
         with (
@@ -565,38 +551,6 @@ class UserManagementTest(unittest.TestCase):
                 manage.call_api(self.operator, 2, "/api/token/", method="PUT", body={})
             with self.assertRaises(manage.ManagementError):
                 manage.call_api(self.operator, 2, "/api/token/3")
-
-    def test_configuration_patch_requires_patched_server_and_never_falls_back(self):
-        for code in (404, 405):
-            opener = MagicMock()
-            failure = manage.urllib.error.HTTPError(
-                "http://fixture.invalid/api/token/3", code, "fixture-secret", {}, None
-            )
-            opener.open.side_effect = failure
-            with (
-                patch.object(
-                    manage, "owner_pat", return_value="fixture-owner-pat"
-                ) as pat,
-                patch.object(
-                    manage.urllib.request, "build_opener", return_value=opener
-                ),
-                self.assertRaisesRegex(
-                    manage.ManagementError, "配套服务端更新"
-                ) as raised,
-            ):
-                manage.call_api(
-                    self.operator,
-                    2,
-                    "/api/token/3",
-                    method="PATCH",
-                    body={"group": "vip"},
-                )
-            pat.assert_called_once_with(self.operator, 2)
-            self.assertEqual(opener.open.call_count, 1)
-            request = opener.open.call_args.args[0]
-            self.assertEqual(request.method, "PATCH")
-            self.assertEqual(request.get_header("New-api-user"), "2")
-            self.assertNotIn("fixture-secret", str(raised.exception))
 
 
 if __name__ == "__main__":

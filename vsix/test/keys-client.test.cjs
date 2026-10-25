@@ -58,36 +58,26 @@ test('unavailable groups and invalid names cannot dispatch a mutation', async t 
   assert.throws(() => validateName('中'.repeat(17)));
   assert.throws(() => validateName('bad\nname'));
 });
-test('group changes send only a configuration PATCH, never a quota snapshot or unrelated restrictions', async t => {
+test('group changes read latest configuration and preserve exact quota, expiry, model and IP restrictions', async t => {
   const latest = raw({remain_quota: 1234567, expired_time: 2100000000});
   const f = await fixture(t, async ({req, reply}) => {
     if (req.url.startsWith('/api/token/?')) {reply({success: true, data: {total: 1, items: [latest]}}); return true;}
   });
   const key = (await f.client.list(1, f.signal)).items[0]; await f.client.changeGroup(key, 'auto', f.signal, GROUPS);
-  assert.deepEqual(f.calls[1].body, {group: 'auto', cross_group_retry: false, auto_groups: null});
-  assert.deepEqual(f.calls.map(c => c.method + ' ' + c.path), ['GET /api/token/?p=1&page_size=50', 'PATCH /api/token/7']);
+  const writes = f.calls.filter(c => c.method === 'PUT'); assert.equal(writes.length, 1);
+  const body = writes[0].body;
+  for (const field of ['name', 'expired_time', 'remain_quota', 'unlimited_quota', 'model_limits_enabled', 'model_limits', 'allow_ips', 'allow_user_quota_query']) assert.equal(body[field], latest[field]);
+  assert.equal(body.group, 'auto'); assert.equal(body.cross_group_retry, false); assert.equal(body.auto_groups, null);
+  for (const field of ['key', 'user_id', 'used_quota', 'status']) assert.equal(field in body, false);
+  assert.deepEqual(f.calls.map(c => c.method + ' ' + c.path), ['GET /api/token/?p=1&page_size=50', 'PUT /api/token/']);
 });
-test('group changes do not require unrelated configuration snapshots and can preserve a negative balance', async t => {
-  for (const change of [{model_limits_enabled: null}, {allow_user_quota_query: undefined}, {cross_group_retry: undefined}, {allow_ips: undefined}, {remain_quota: -10}]) {
+test('incomplete queried configurations block the group write instead of inventing defaults', async t => {
+  for (const change of [{model_limits_enabled: null}, {allow_user_quota_query: undefined}, {cross_group_retry: undefined}, {allow_ips: 1}]) {
     const f = await fixture(t, async ({req, reply}) => {
       if (req.url.startsWith('/api/token/?')) {reply({success: true, data: {total: 1, items: [raw(change)]}}); return true;}
     });
     const key = (await f.client.list(1, f.signal)).items[0];
-    await f.client.changeGroup(key, 'auto', f.signal, GROUPS);
-    assert.deepEqual(f.calls[1].body, {group: 'auto', cross_group_retry: false, auto_groups: null});
-    assert.equal(f.calls.some(c => c.method === 'PUT'), false);
-  }
-});
-test('an unpatched server rejects group changes without falling back to the unsafe full update', async t => {
-  for (const status of [404, 405]) {
-    const f = await fixture(t, async ({req, res}) => {
-      if (req.method !== 'PATCH') return false;
-      res.writeHead(status); res.end(PAT); return true;
-    });
-    const key = (await f.client.list(1, f.signal)).items[0];
-    await assert.rejects(f.client.changeGroup(key, 'auto', f.signal, GROUPS), e =>
-      e instanceof KeyWriteError && !e.uncertain && e.message.includes('配套服务端更新') && !e.message.includes(PAT));
-    assert.deepEqual(f.calls.map(c => c.method), ['GET', 'PATCH']);
+    await assert.rejects(f.client.changeGroup(key, 'auto', f.signal, GROUPS)); assert.equal(f.calls.some(c => c.method === 'PUT'), false);
   }
 });
 test('delete is one owner-scoped request; complete keys are read only by the separate explicit reveal', async t => {

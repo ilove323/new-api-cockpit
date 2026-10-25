@@ -17,12 +17,13 @@ export class AccountController {
   private generation = 0;
   private abort?: AbortController;
   private pending?: Promise<void>;
+  private quotaUnit?: {value: number; at: number};
   constructor(private readonly gate: RefreshGate, private readonly changed: () => void,
     private readonly query = fetchBalance, private readonly now = Date.now) {}
 
   setConnection(connection?: Connection): void {
     this.generation++; this.abort?.abort(); this.pending = undefined;
-    this.connection = connection;
+    this.connection = connection; this.quotaUnit = undefined;
     this.state = {endpoint: connection?.endpoint, loading: false, nextAllowedAt: 0};
     this.changed();
   }
@@ -38,8 +39,11 @@ export class AccountController {
         if (generation !== this.generation) return;
         this.state.nextAllowedAt = reservation.nextAllowedAt;
         if (!reservation.allowed) return;
-        const balance = await this.query(connection, abort.signal);
+        // Public unit metadata is read once per hour, not on every refresh.
+        const cachedUnit = this.quotaUnit && this.now() - this.quotaUnit.at < 60 * 60_000 ? this.quotaUnit : undefined;
+        const balance = await this.query(connection, abort.signal, 10_000, cachedUnit?.value);
         if (generation !== this.generation) return;
+        if (!cachedUnit) this.quotaUnit = {value: balance.quota_per_unit, at: this.now()};
         this.state.balance = balance; this.state.updatedAt = this.now(); this.state.error = undefined; this.state.authenticationFailed = false;
       } catch (error) {
         const retryAt = error instanceof BalanceError && error.status === 429 ? Math.max(error.retryAt, this.now() + 15 * 60_000) : 0;
