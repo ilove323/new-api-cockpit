@@ -44,6 +44,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+      - name: Install document rendering prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends antiword fonts-wqy-zenhei
       - run: pip install . ruff build
       - run: ruff check src tests deploy
       - run: ruff format --check src tests deploy
@@ -101,6 +105,7 @@ jobs:
         run: |
           docker run --rm --entrypoint python cockpit-ci -c "from pathlib import Path; assert not Path('/app/.git').exists(); assert not Path('/app/.env').exists(); assert not Path('/app/DEPLOYMENT.private.md').exists()"
           docker run --rm --entrypoint python cockpit-ci -c "import shutil; from pathlib import Path; from new_api_cockpit.client_downloads import vscode_release; assert vscode_release() is not None; assert shutil.which('node') is None; assert not Path('/app/vsix').exists()"
+          docker run --rm --network none --entrypoint python cockpit-ci -c "from new_api_cockpit.features.chat.outputs import generate; assert generate('report.pdf', '# 中文报告').startswith(b'%PDF-'); assert generate('chart.png', '{\"width\":64,\"height\":64,\"elements\":[{\"type\":\"text\",\"x\":0,\"y\":0,\"text\":\"中文\",\"size\":12}]}').startswith(b'\x89PNG')"
           docker run -d --name cockpit-ci -p 127.0.0.1:8091:8000 cockpit-ci
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8091/healthz; then break; fi

@@ -260,7 +260,12 @@ assert "new_api_cockpit.image_transport" not in sys.modules
             (image["width"], image["height"], image["mime"]), (8, 7, "image/png")
         )
         self.assertEqual(child.call_args.args[0][1], "-I")
-        self.assertEqual(Path(child.call_args.args[0][4]).resolve(), SOURCE.resolve())
+        # Match the imported package in both editable checkouts and installed
+        # wheels; CI and production do not run from the checkout's src folder.
+        self.assertEqual(
+            Path(child.call_args.args[0][4]).resolve(),
+            Path(transport.__file__).resolve().parents[3],
+        )
         self.assertEqual(child.call_args.kwargs["env"], {})
         self.assertNotIn(ACCESS.credential, str(child.call_args))
 

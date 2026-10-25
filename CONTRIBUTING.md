@@ -4,6 +4,8 @@
 
 使用 Python 3.12 或更高版本：
 
+Linux 源码检查还需要 `antiword` 和文泉驿正黑字体；Debian / Ubuntu 可执行 `sudo apt-get install antiword fonts-wqy-zenhei`。CI 与 Docker 安装相同依赖，PDF 和图片测试不因缺字体而跳过。镜像部署不需要在宿主机额外安装。
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
