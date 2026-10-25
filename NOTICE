@@ -3,6 +3,10 @@ Copyright 2026 ilove323
 
 Licensed under the Apache License, Version 2.0.
 
+The separately maintained QuantumNous/new-api patch is AGPL-3.0, not Apache-2.0:
+patches/new-api/token-config.patch, patches/new-api/LICENSE and patches/new-api/NOTICE.
+Upstream: https://github.com/QuantumNous/new-api
+
 Bundled Lucide icons retain their original ISC license and Feather MIT attribution:
 src/new_api_cockpit/static/LUCIDE-LICENSE.
 

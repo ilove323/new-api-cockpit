@@ -83,13 +83,13 @@ test('sequential query/write/query reuses connections, including after a drained
     res.end(JSON.stringify({success: calls.length !== 4}));
   });
   const signal = new AbortController().signal;
-  for (const method of ['GET', 'PUT', 'GET']) await requestOwnJson(connection, {
-    method, path: method === 'GET' ? '/api/token/?p=1&page_size=50' : '/api/token/', scope: 'api_key:read', signal,
-    ...(method === 'PUT' ? {body: {id: 7}} : {})
+  for (const method of ['GET', 'PATCH', 'GET']) await requestOwnJson(connection, {
+    method, path: method === 'GET' ? '/api/token/?p=1&page_size=50' : '/api/token/7', scope: 'api_key:write', signal,
+    ...(method === 'PATCH' ? {body: {group: 'auto'}} : {})
   });
   await assert.rejects(requestOwnJson(connection, {method: 'GET', path: '/api/token/?p=1&page_size=50', scope: 'api_key:read', signal}), error => error.status === 403);
   await requestOwnJson(connection, {method: 'GET', path: '/api/token/?p=1&page_size=50', scope: 'api_key:read', signal});
-  assert.deepEqual(calls, ['GET', 'PUT', 'GET', 'GET', 'GET']);
+  assert.deepEqual(calls, ['GET', 'PATCH', 'GET', 'GET', 'GET']);
   // The host fetch pool may alternate between two sockets while body reads
   // finish. It must not open a new connection for every sequential request.
   assert(sockets.size <= 2, 'five sequential requests reuse the transport pool');

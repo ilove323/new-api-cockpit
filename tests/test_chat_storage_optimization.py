@@ -110,13 +110,15 @@ class ChatStorageOptimizationTest(StorageFixture):
         self.assertIsInstance(indexed, EventIndex)
         path = f"{self.scope.path}/events.jsonl"
         with self.store.lease(self.scope):
-            fd = self.store.fs.open_file(path, os.O_RDWR | os.O_APPEND)
+            fd = self.store.fs.open_file(path, os.O_RDWR)
             try:
+                os.lseek(fd, 0, os.SEEK_END)
                 os.write(fd, b"unpublished tail")
                 self.assertEqual(indexed[0]["seq"], 1)
                 # In-place overwrite after snapshot lookup must not return
                 # unchecked bytes, even when offsets/length remain valid.
                 os.pwrite(fd, b"X", 0)
+                self.assertEqual(os.pread(fd, 1, 0), b"X")
                 self.assert_code("CHAT_STORAGE_UNAVAILABLE", lambda: indexed[0])
             finally:
                 os.close(fd)

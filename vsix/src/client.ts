@@ -73,7 +73,7 @@ export function connectionError(error: unknown): BalanceError {
 }
 
 export interface OwnRequest {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; body?: unknown;
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown;
   scope: string; signal: AbortSignal; timeout?: number;
 }
 
@@ -84,8 +84,9 @@ export async function requestOwnJson(connection: Connection, options: OwnRequest
     || method === 'GET' && /^\/api\/token\/\?p=[1-9]\d{0,3}&page_size=50$/.test(path)
     || method === 'GET' && /^\/api\/token\/[1-9]\d{0,14}$/.test(path)
     || method === 'GET' && path === '/api/user/self/groups'
-    || (method === 'POST' || method === 'PUT') && path === '/api/token/'
+    || method === 'POST' && path === '/api/token/'
     || method === 'DELETE' && /^\/api\/token\/[1-9]\d{0,14}$/.test(path)
+    || method === 'PATCH' && /^\/api\/token\/[1-9]\d{0,14}$/.test(path)
     || method === 'POST' && /^\/api\/token\/[1-9]\d{0,14}\/key$/.test(path);
   if (!allowed) throw new BalanceError('不允许的账户请求。');
   if (signal.aborted) throw new BalanceError('查询已取消。');

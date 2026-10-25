@@ -4,6 +4,7 @@ graft frontend/studio
 prune frontend/studio/node_modules
 prune vsix
 include docs/image-studio-sources.md
+recursive-include patches/new-api *.patch *.sh *.md LICENSE NOTICE
 # A graft includes untracked files too; ignore local/private configuration
 # independently of Git. Public examples are explicitly restored afterwards.
 global-exclude .env .env.* *.private *.private.* *.local *.local.*

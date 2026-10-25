@@ -18,8 +18,10 @@ KEY 读取接口需按当前身份核对归属；本页不使用公开 `/api/pri
 | abilities | 生图工作站读取 group, model, enabled, channel_id, priority, weight |
 
 用户管理还读取 `users.remark`；PAT 补建按版本存在的 `access_token_created_at` 写入创建时间。
-目标用户管理目前仍依赖可回读的旧版 owner PAT；上游退役后不能再通过补建旧 PAT 恢复这项能力。新式管理员 PAT 认证支持 `user_access_tokens(token_hash,user_id,scopes,expires_at)` 的只读验证字段，不要求读取新式令牌明文；修改这些字段/哈希算法的 fork 需单独适配。网页登录与账户 MCP 不依赖此附加表查询。
-KEY 编辑依赖官方令牌接口，自动分组选项依赖其 `auto_groups` 支持。
+跨用户 KEY 管理继续使用所属用户的 `users.access_token` PAT；目前核对的官方版本没有管理员直接管理目标用户 KEY 的接口，不能用管理员 PAT 替代此流程。
+rc.47 的源码把这种存储称为 Legacy，并由 `LegacyAccessTokenRetireAt` 管理其有效窗口；这不表示当前站点的 PAT 已失效。本次补丁不改变该设置或凭证获取方式，上游拒绝后也不绕过认证。
+新式管理员 PAT 认证支持 `user_access_tokens(token_hash,user_id,scopes,expires_at)` 的只读验证字段，不要求读取新式令牌明文；修改这些字段/哈希算法的 fork 需单独适配。网页登录与账户 MCP 不依赖此附加表查询。
+KEY 改组和配置编辑需要配套 [New API rc.47 PATCH 补丁](../patches/new-api/README.md)，原官方镜像不提供该接口。缺少补丁时拒绝改组/配置编辑，不回退到完整 PUT；查询、新建、删除和主动限额调整的原接口不变。自动分组选项依赖其 `auto_groups` 支持。
 
 消费日志为 `type=2`，`quota / 500000` 为消费金额；明细表勾选“失败请求”时读取
 `type=5`，从 `other.status_code` 读取错误码；元数据损坏或缺少可解析错误码时保留失败次数，显示“未知”。
