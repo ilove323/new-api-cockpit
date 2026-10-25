@@ -11,9 +11,9 @@
 普通用户可以打开模型使用、辅助工具和下载插件；API 文档仍仅管理员可访问，不因导航重组扩大接口权限。
 模型使用页原有的 MCP 内容已移到辅助工具，旧的 `/cockpit/manual#manual-mcp-title` 书签会转到新位置。
 
-## 从本站下载 VS Code 插件
+## VS Code 独立插件与本站下载
 
-在 **文档 → 辅助工具 → VS Code 插件与下载** 中点击“下载 VSIX”。包来自当前 Cockpit 镜像内的文件，不依赖 GitHub、市场或维护者电脑上的临时路径。
+插件 0.4.2 可独立连接 New API，不依赖 Cockpit 或账户 MCP。也可在 GitHub Release 下载 VSIX。本站提供的下载方式是在 **文档 → 辅助工具 → VS Code 插件与下载** 中点击“下载 VSIX”。包来自当前 Cockpit 镜像内的文件，不依赖 GitHub、市场或维护者电脑上的临时路径。
 版本号、文件名、大小和 SHA-256 都从镜像内的包读取，不在页面写死。稳定下载入口是 `/cockpit/downloads/vscode`，每次下载都检查登录状态，支持普通用户。
 
 1. VS Code 扩展面板 → 右上角“…” → **从 VSIX 安装**。已有旧版直接覆盖并重载窗口，账户连接保留。
@@ -26,12 +26,14 @@
 完整 KEY 仅在用户主动复制或配置客户端时读取，复用连接内存缓存，不查询模型目录或调用模型。
 
 客户端配置草稿目前限本机窗口，不猜测 SSH、WSL 或容器中的用户目录。配置文件和编辑器备份可能包含明文 KEY，不要分享、提交仓库或同步。
+余额直接读取 New API `/api/user/self`，额度单位首次读取后缓存一小时。KEY 改组使用官方 PUT；没有额外的 New API 镜像或补丁要求。应用与插件分别编号，Cockpit v0.4.1 随附插件 0.4.2。
 完整说明与排错见[VS Code 插件手册](../vsix/README.md)。
 
 ## 账户 MCP
 
 辅助工具的账户 MCP 区保留原来的配置步骤、Codex/Cursor 占位符示例和复制功能；不依赖模型令牌或模型选择，也不读取用户 PAT。
-使用本人用户 API PAT，`profile:read` 查询余额，`usage:read` 查询本人用量；不需要 KEY 管理写权限。
+使用本人用户 API PAT，`profile:read` 查询余额，`usage:read` 查询本人用量；还提供与插件一致的 KEY 列表、可用分组、申请、删除、改组和密钥读取，分别需要 `api_key:read` / `api_key:write` / `api_key:reveal`。仅查询余额时无须授予 KEY 权限。
+用量查询只在 MCP 提供；Claude/Codex 配置草稿只在插件提供，MCP 不生成或写入客户端配置。
 服务地址为本站 `/cockpit/mcp`，不是模型的 `/v1`。具体协议、时间/金额口径和接入示例见[账户 MCP](mcp.md)。
 
 ## 构建与打包

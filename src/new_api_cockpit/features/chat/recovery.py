@@ -1,6 +1,7 @@
 """Validation and deterministic projections; recovery never dispatches a model."""
 
 from dataclasses import dataclass, field
+import copy
 import hashlib
 import re
 
@@ -446,6 +447,7 @@ class LogState:
     storage_state: str = "ok"
     tail: bytes = b""
     commit_seq: int = 0
+    projection: "Projection | None" = field(default=None, repr=False, compare=False)
 
     @property
     def seq(self):
@@ -469,7 +471,9 @@ def scan(raw, scope):
         state.events.append(event)
         state.offset += len(line)
     try:
-        project(scope, state.events)
+        state.projection = Projection(scope)
+        for event in state.events:
+            state.projection.apply(event)
     except (ValueError, TypeError, KeyError):
         # Locate the first invalid transition in O(n log n), not O(n squared).
         low, high = 0, len(state.events)
@@ -481,29 +485,69 @@ def scan(raw, scope):
             except (ValueError, TypeError, KeyError):
                 high = mid - 1
         state.events = state.events[:low]
+        state.projection = None
         state.offset = sum(len(line) for line in raw.splitlines(keepends=True)[:low])
         state.storage_state = "corrupt"
     return state
 
 
-def project(scope, events, check=False):
-    meta = {
-        "id": scope.cid,
-        "title": f"记录待修复 {scope.cid[:8]}",
-        "created_at": "1970-01-01T00:00:00Z",
-        "updated_at": "1970-01-01T00:00:00Z",
-        "revision": 0,
-        "last_seq": 0,
-        "message_count": 0,
-        "active_run_id": None,
-        "last_run_status": None,
-        "storage_state": "ok",
-        "last_selection": None,
-        "loaded_skill_ids": [],
-    }
-    files, runs, requests, messages, calls, writes = {}, {}, {}, set(), {}, {}
-    user_messages = set()
-    for event in events:
+class Projection:
+    """Incremental committed-state projection; fork before validating a write."""
+
+    def __init__(self, scope):
+        meta = {
+            "id": scope.cid,
+            "title": f"记录待修复 {scope.cid[:8]}",
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "revision": 0,
+            "last_seq": 0,
+            "message_count": 0,
+            "active_run_id": None,
+            "last_run_status": None,
+            "storage_state": "ok",
+            "last_selection": None,
+            "loaded_skill_ids": [],
+        }
+        files, runs, requests, messages, calls, writes = {}, {}, {}, set(), {}, {}
+        user_messages = set()
+        self.meta = meta
+        self.files = files
+        self.runs = runs
+        self.requests = requests
+        self.messages = messages
+        self.calls = calls
+        self.writes = writes
+        self.user_messages = user_messages
+        self.accepted = {}
+        self.context_revision = 0
+        self.seq = 0
+
+    def fork(self, event):
+        value = copy.copy(self)
+        value.meta = self.meta.copy()
+        value.files = self.files.copy()
+        value.runs = self.runs.copy()
+        value.requests = self.requests.copy()
+        value.messages = self.messages.copy()
+        value.calls = self.calls.copy()
+        value.writes = self.writes.copy()
+        value.user_messages = self.user_messages.copy()
+        value.accepted = self.accepted.copy()
+        rid = event["run_id"]
+        if rid in value.runs:
+            value.runs[rid] = copy.deepcopy(value.runs[rid])
+        return value
+
+    def apply(self, event):
+        meta = self.meta
+        files = self.files
+        runs = self.runs
+        requests = self.requests
+        messages = self.messages
+        calls = self.calls
+        writes = self.writes
+        user_messages = self.user_messages
         kind, data, rid = event["type"], event["data"], event["run_id"]
         meta.update(
             updated_at=event["at"], revision=event["seq"], last_seq=event["seq"]
@@ -553,6 +597,7 @@ def project(scope, events, check=False):
                 "aux_model_requests": 0,
             }
             requests[data["client_request_id"]] = rid
+            self.accepted[rid] = data["context_snapshot"]
             messages.add(data["message_id"])
             user_messages.add(data["message_id"])
             meta["active_run_id"] = rid
@@ -583,6 +628,7 @@ def project(scope, events, check=False):
                 raise ChatError("自动记忆变更不能撤销。")
             run["memory_reverted"] = True
             run["last_seq"] = event["seq"]
+            self.context_revision = data["context_revision"]
         elif kind == "file.added":
             value = data["file"]
             if value["id"] in files:
@@ -669,22 +715,33 @@ def project(scope, events, check=False):
                 ):
                     raise ChatError("自动记忆缺少匹配的意向记录。")
                 run["memory_updated"] = audit["changed"]
+                self.context_revision = audit["after"]["context_revision"]
             elif kind == "run.terminal":
                 run.update(data)
                 meta.update(active_run_id=None, last_run_status=data["status"])
-    meta["message_count"] = len(messages)
-    for run in runs.values():
-        if run["status"] not in TERMINAL:
-            usage = run["_usage"]
-            run["usage"] = (
-                {
-                    k: sum(v[k] for v in usage.values())
-                    for k in ("prompt_tokens", "completion_tokens", "total_tokens")
-                }
-                if usage
-                else None
-            )
-            run["usage_complete"] = (
-                bool(run["model_requests"]) and len(usage) == run["model_requests"]
-            )
-    return meta, files, runs, requests, writes
+        meta["message_count"] = len(messages)
+        for run in [runs[event["run_id"]]] if event["run_id"] in runs else []:
+            if run["status"] not in TERMINAL:
+                usage = run["_usage"]
+                run["usage"] = (
+                    {
+                        k: sum(v[k] for v in usage.values())
+                        for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+                    }
+                    if usage
+                    else None
+                )
+                run["usage_complete"] = (
+                    bool(run["model_requests"]) and len(usage) == run["model_requests"]
+                )
+        self.seq = event["seq"]
+
+    def value(self):
+        return self.meta, self.files, self.runs, self.requests, self.writes
+
+
+def project(scope, events, check=False):
+    state = Projection(scope)
+    for event in events:
+        state.apply(event)
+    return state.value()

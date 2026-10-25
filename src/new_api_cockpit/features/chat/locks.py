@@ -89,7 +89,7 @@ class ConversationLease:
         self.closed = False
         self.reservation = None
         self._locks = []
-        self.run_event_bytes = 0
+        self.event_bytes = {}
         self._state = None
         root = f"{store.prefix}/.locks"
         try:

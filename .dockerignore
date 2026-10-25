@@ -2,6 +2,7 @@
 /data/
 .env.*
 DEPLOYMENT.private.md
+SITES.local.md
 docker-compose.override.yml
 image-studio-capabilities.json
 chat-capabilities.json

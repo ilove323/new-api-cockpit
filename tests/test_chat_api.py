@@ -93,14 +93,61 @@ class ChatApiTest(unittest.TestCase):
         with patch.dict(os.environ, {"CHAT_ENABLED": "false"}):
             self.assertEqual(self.api("/conversations").status_code, 404)
 
+    def test_recovery_snapshot_is_one_scoped_read_and_omits_unchanged_files(self):
+        scope = self.service.store.open_conversation(self.actor.principal, self.cid)
+        self.service.store.upload(
+            scope, "fixture.txt", b"read-only fixture", str(uuid4())
+        )
+        self.identity.reset_mock()
+        with patch.object(
+            self.service.store, "_published", wraps=self.service.store._published
+        ) as read:
+            first = self.api(f"/conversations/{self.cid}/sync?after_seq=0&limit=1")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual(self.identity.call_count, 1)
+        value = first.json
+        self.assertTrue(value["events"]["has_more"])
+        self.assertEqual(
+            value["events"]["until_seq"], value["conversation"]["last_seq"]
+        )
+        self.assertEqual(len(value["files"]), 1)
+        self.assertIsNone(value["run"])
+        self.assertIsNone(value["context"])
+        query = f"after_seq={value['conversation']['last_seq']}&files_revision={value['files_revision']}"
+        second = self.api(f"/conversations/{self.cid}/sync?{query}")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json["events"]["events"], [])
+        self.assertIsNone(second.json["files"])
+        self.assertEqual(self.stream.calls, [])
+        self.service.delete_upload(
+            self.actor.principal, self.cid, value["files"][0]["id"]
+        )
+        third = self.api(f"/conversations/{self.cid}/sync?{query}")
+        self.assertEqual(third.status_code, 200)
+        self.assertNotEqual(third.json["files_revision"], value["files_revision"])
+        self.assertTrue(third.json["files"][0]["deleted_at"])
+
+    def test_recovery_snapshot_rejects_bad_cursor_or_other_owners_without_dispatch(
+        self,
+    ):
+        for query in ("after_seq=999", "files_revision=bad", "limit=0", "unknown=1"):
+            self.assertEqual(
+                self.api(f"/conversations/{self.cid}/sync?{query}").status_code, 400
+            )
+        self.actor = access(99)
+        self.assertEqual(self.api(f"/conversations/{self.cid}/sync").status_code, 404)
+        self.assertEqual(self.stream.calls, [])
+
     def test_catalogue_rate_limit_is_not_reported_as_a_permission_error(self):
         with patch.object(
             self.tokens,
             "list_models",
-            side_effect=TokenError("private upstream details", 429),
+            side_effect=TokenError("private upstream details", 429, retry_after="1800"),
         ) as call:
             response = self.api("/models", "POST", json={"token_id": 7})
         self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["Retry-After"], "1800")
         self.assertEqual(response.json["code"], "CHAT_UPSTREAM_RATE_LIMIT")
         self.assertNotIn("权限", response.json["error"])
         self.assertNotIn("private", str(response.json))
@@ -394,7 +441,7 @@ class ChatApiTest(unittest.TestCase):
                     )
                     self.assertEqual(response.status_code, 401, (path, method))
                     count += 1
-            self.assertEqual(count, 26)
+            self.assertEqual(count, 27)
             pat.assert_not_called()
 
     def test_attachment_delete_is_confirmed_owner_only_idempotent_and_tombstones_history(

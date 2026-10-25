@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 export interface Connection { endpoint: string; pat: string }
 export interface Balance {
   user: { id: number; username: string };
@@ -25,9 +23,10 @@ export function normalizeEndpoint(input: string): string {
     throw new BalanceError('请使用 HTTPS；HTTP 仅允许本机回环地址。');
   }
   if (!['', '/', '/cockpit', '/cockpit/', '/cockpit/mcp', '/cockpit/mcp/'].includes(url.pathname)) {
-    throw new BalanceError('请填写站点首页地址或 /cockpit/mcp 地址，不是模型 API 地址。');
+    throw new BalanceError('请填写 New API 站点首页地址，不是模型 API 地址。');
   }
-  return url.origin + '/cockpit/mcp';
+  // Accept saved Cockpit addresses on upgrade, but never call their MCP path.
+  return url.origin;
 }
 
 export function normalizePat(input: string): string {
@@ -46,11 +45,12 @@ export function retryAfter(value: string | undefined, now = Date.now()): number 
 }
 
 function httpError(status: number, retry: string | undefined, scope: string): BalanceError {
+  if (scope === 'public' && [401, 403].includes(status)) return new BalanceError('New API 公开状态接口被拒绝，无法读取额度单位。', status);
   if (status === 401) return new BalanceError('用户 API PAT 无效、已过期或已撤销，请重新配置连接。', status);
   if (status === 403) return new BalanceError('PAT 需要 ' + scope + ' 权限；请同时检查账号状态。', status, 0, scope);
   if (status === 429) return new BalanceError('请求过于频繁（HTTP 429），请稍后再试。', status, retryAfter(retry));
   if (status >= 300 && status < 400) return new BalanceError('站点返回重定向，请填写最终的 HTTPS 地址。', status);
-  if (status === 404) return new BalanceError(scope.startsWith('api_key:') ? 'KEY 接口或记录不存在，请检查 New API 版本并刷新列表。' : '未找到账户查询服务，请检查地址和 Cockpit 的 MCP 开关。', status);
+  if (status === 404) return new BalanceError(scope.startsWith('api_key:') ? 'KEY 接口或记录不存在，请检查 New API 版本并刷新列表。' : '未找到 New API 账户接口，请检查站点地址。', status);
   return new BalanceError('账户查询暂不可用（HTTP ' + status + '）。', status);
 }
 
@@ -80,7 +80,7 @@ export interface OwnRequest {
 export async function requestOwnJson(connection: Connection, options: OwnRequest): Promise<unknown> {
   const endpoint = normalizeEndpoint(connection.endpoint), pat = normalizePat(connection.pat);
   const {method, path, signal, scope, timeout = 10_000} = options;
-  const allowed = method === 'POST' && path === '/cockpit/mcp'
+  const allowed = method === 'GET' && (path === '/api/user/self' || path === '/api/status')
     || method === 'GET' && /^\/api\/token\/\?p=[1-9]\d{0,3}&page_size=50$/.test(path)
     || method === 'GET' && /^\/api\/token\/[1-9]\d{0,14}$/.test(path)
     || method === 'GET' && path === '/api/user/self/groups'
@@ -100,11 +100,10 @@ export async function requestOwnJson(connection: Connection, options: OwnRequest
     const response = await fetch(url, {
       method, signal: abort.signal, redirect: 'manual', credentials: 'omit',
       headers: {
-        Authorization: 'Bearer ' + pat,
+        ...(path === '/api/status' ? {} : {Authorization: 'Bearer ' + pat}),
         'Cache-Control': 'no-store',
-        Accept: path === '/cockpit/mcp' ? 'application/json, text/event-stream' : 'application/json',
+        Accept: 'application/json',
         ...(options.body === undefined ? {} : {'Content-Type': 'application/json'}),
-        ...(path === '/cockpit/mcp' ? {'MCP-Protocol-Version': '2025-11-25'} : {}),
         'User-Agent': 'new-api-cockpit-vscode/' + (require('../package.json') as {version: string}).version
       },
       ...(options.body === undefined ? {} : {body: JSON.stringify(options.body)})
@@ -142,28 +141,40 @@ export async function requestOwnJson(connection: Connection, options: OwnRequest
 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-const amount = (value: unknown): value is string => typeof value === 'string' && /^-?\d{1,32}(?:\.\d{1,12})?$/.test(value);
+const signedInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value);
 
-export async function fetchBalance(connection: Connection, signal: AbortSignal, timeout = 10_000): Promise<Balance> {
-  // Dedicated client for Cockpit's stateless endpoint: one read-only tool call,
-  // no model API, credential lookup, initialize, tool discovery or retry.
-  const verified = {endpoint: normalizeEndpoint(connection.endpoint), pat: normalizePat(connection.pat)};
-  const id = randomUUID();
-  const value = await requestOwnJson(verified, {path: '/cockpit/mcp', method: 'POST', scope: 'profile:read', signal, timeout,
-    body: {jsonrpc: '2.0', id, method: 'tools/call', params: {name: 'get_balance', arguments: {}}}});
-  if (!record(value) || value.jsonrpc !== '2.0' || value.id !== id || value.error || !record(value.result)) {
-    throw new BalanceError('账户查询协议响应无效，请检查 Cockpit 版本。');
+function quotaAmount(quota: number, unit: number): string {
+  // Divide integer quota exactly; do not round through floating-point money.
+  const value = BigInt(quota), divisor = BigInt(unit), absolute = value < 0n ? -value : value;
+  const whole = absolute / divisor;
+  let remainder = absolute % divisor, fraction = '';
+  while (remainder && fraction.length < 64) {
+    remainder *= 10n; fraction += (remainder / divisor).toString(); remainder %= divisor;
   }
-  if (value.result.isError) throw new BalanceError('账户余额暂不可查询，请稍后刷新。');
-  const data = value.result.structuredContent;
-  if (!record(data) || !record(data.user) || !integer(data.user.id) || data.user.id < 1 ||
-      typeof data.user.username !== 'string' || !data.user.username || data.user.username.length > 128 || /[\u0000-\u001f\u007f]/.test(data.user.username) ||
-      !amount(data.remaining_amount) || !amount(data.used_amount) || !integer(data.request_count) ||
-      !integer(data.quota_per_unit) || data.quota_per_unit < 1 || typeof data.amount_unit !== 'string' || data.amount_unit.length > 256) {
+  if (remainder) throw new BalanceError('站点额度单位无法精确换算，未显示为零。');
+  return (value < 0n ? '-' : '') + whole.toString() + (fraction ? '.' + fraction : '');
+}
+
+export async function fetchBalance(connection: Connection, signal: AbortSignal, timeout = 10_000, knownQuotaPerUnit?: number): Promise<Balance> {
+  const verified = {endpoint: normalizeEndpoint(connection.endpoint), pat: normalizePat(connection.pat)};
+  const deadline = Date.now() + timeout;
+  const value = await requestOwnJson(verified, {path: '/api/user/self', method: 'GET', scope: 'profile:read', signal, timeout});
+  const data = record(value) && value.success === true ? value.data : undefined;
+  if (!record(data) || !integer(data.id) || data.id < 1 ||
+      typeof data.username !== 'string' || !data.username || data.username.length > 128 || /[\u0000-\u001f\u007f]/.test(data.username) ||
+      !signedInteger(data.quota) || !signedInteger(data.used_quota) || !integer(data.request_count) || !integer(data.status)) {
     throw new BalanceError('账户余额数据不完整，未显示为零。');
   }
-  return {user: {id: data.user.id, username: data.user.username}, remaining_amount: data.remaining_amount,
-    used_amount: data.used_amount, request_count: data.request_count, quota_per_unit: data.quota_per_unit, amount_unit: data.amount_unit};
+  if (data.status !== 1) throw new BalanceError('账户已禁用，请检查账户状态。', 403);
+  let unit = knownQuotaPerUnit;
+  if (unit === undefined) {
+    const status = await requestOwnJson(verified, {path: '/api/status', method: 'GET', scope: 'public', signal, timeout: Math.max(1, deadline - Date.now())});
+    unit = record(status) && status.success === true && record(status.data) ? status.data.quota_per_unit as number : undefined;
+  }
+  if (!integer(unit) || unit < 1) throw new BalanceError('New API 未返回有效的额度单位，未显示为零。');
+  return {user: {id: data.id, username: data.username}, remaining_amount: quotaAmount(data.quota, unit),
+    used_amount: quotaAmount(data.used_quota, unit), request_count: data.request_count, quota_per_unit: unit,
+    amount_unit: '账面单位（quota / ' + unit + '），未做货币或汇率转换'};
 }
 
 export function formatAmount(value: string): string {

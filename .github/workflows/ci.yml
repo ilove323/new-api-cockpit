@@ -48,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends antiword fonts-wqy-zenhei
-      - run: pip install . ruff build
+      - run: pip install . ruff build 'setuptools>=77'
       - run: ruff check src tests deploy
       - run: ruff format --check src tests deploy
       - run: python -m unittest discover -s tests
@@ -88,8 +88,6 @@ jobs:
           printf 'obsolete build output\n' > vsix/dist/obsolete-module.js
           npm test --prefix vsix
           test ! -e vsix/dist/obsolete-module.js
-        env:
-          COCKPIT_PYTHON: python
       - run: npm run --prefix vsix package
       - run: node vsix/scripts/export-download.cjs
       - run: pip install --no-deps --force-reinstall .
@@ -116,6 +114,13 @@ jobs:
           curl -fsS http://127.0.0.1:8091/cockpit/login >/dev/null
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/api/auth/session)" = 401
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/downloads/vscode)" = 401
+      - name: Verify the installed image download without external services
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true --tmpfs /tmp:size=64m,mode=1777 \
+            --mount "type=bind,source=$PWD/tests,target=/image-tests,readonly" \
+            -e COCKPIT_TEST_RUNTIME_IMAGE=1 -e PYTHONPATH=/image-tests \
+            --entrypoint python cockpit-ci -m unittest test_runtime_image -v
       - if: always()
         run: docker logs cockpit-ci || true
 

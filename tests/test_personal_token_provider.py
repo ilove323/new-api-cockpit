@@ -2,6 +2,7 @@
 
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+import threading
 from unittest.mock import patch
 
 from new_api_cockpit.integrations.new_api.token_provider import TokenProvider
@@ -117,7 +118,7 @@ class TokenProviderTest(unittest.TestCase):
                 pass
         self.assertEqual(self.calls.count("/api/token/7/key"), 1)
         self.assertEqual(self.calls.count("/v1/models"), 30)
-        self.assertGreaterEqual(self.calls.count("/api/token/7"), 60)
+        self.assertEqual(self.calls.count("/api/token/7"), 61)
         self.assertNotIn("x" * 48, repr(self.provider._keys))
 
     def test_warm_cache_still_checks_owner_status_group_and_current_model_limits(self):
@@ -172,6 +173,42 @@ class TokenProviderTest(unittest.TestCase):
             )
         self.assertTrue(all(row == rows[0] for row in rows))
         self.assertEqual(self.calls.count("/api/token/7/key"), 1)
+
+    def test_cold_and_warm_catalogue_have_fixed_request_budgets(self):
+        self.provider.list_models(self.access, 7)
+        self.assertEqual(
+            self.calls,
+            ["/api/token/7", "/api/token/7/key", "/api/token/7", "/v1/models"],
+        )
+        self.calls.clear()
+        self.provider.list_models(self.access, 7)
+        self.assertEqual(self.calls, ["/api/token/7", "/v1/models"])
+
+    def test_unrelated_warm_key_is_not_blocked_by_a_slow_secret_read(self):
+        self.provider.list_models(self.access, 7)
+        blocked, release = threading.Event(), threading.Event()
+        original = self.provider.upstream
+
+        def delayed(path, *args, **kwargs):
+            if path == "/api/token/8":
+                return {"data": {**self.row, "id": 8}}
+            if path == "/api/token/8/key":
+                blocked.set()
+                if not release.wait(5):
+                    raise AssertionError("test latch timed out")
+                return {"data": {"key": "y" * 48}}
+            return original(path, *args, **kwargs)
+
+        self.provider.upstream = delayed
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cold = pool.submit(self.provider.list_models, self.access, 8)
+            try:
+                self.assertTrue(blocked.wait(2))
+                warm = pool.submit(self.provider.list_models, self.access, 7)
+                self.assertTrue(warm.result(timeout=2))
+            finally:
+                release.set()
+            self.assertTrue(cold.result(timeout=2))
 
     def test_failed_secret_reads_are_not_cached_or_retried_and_revoked_keys_are_evicted(
         self,

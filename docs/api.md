@@ -26,7 +26,7 @@ Authorization: Bearer <New API 管理员 PAT>
 Accept: application/json
 ```
 
-PAT 对应源库 `users.access_token`，要求账号 `role >= 10`、`status = 1`、未删除。
+PAT 由 New API `/api/user/self` 验证，要求账号 `role >= 10`、`status = 1`；上游拒绝旧 PAT 后不再通过源库放行。新式 `nap_` PAT 需要 `profile:read` 和相应功能权限：报表/质量为 `log:read`；用户读取/修改为 `user:read` / `user:write`；跨用户 KEY 管理还需 `api_key:read` / `api_key:write`，查看完整 KEY 另需 `api_key:reveal`；账本读取需 `channel:read` 与 `log:read`，修改配置另需 `option:write`。未知接口默认拒绝新式 PAT；完整逐接口映射在 `pat_permissions.py`。可能补建目标 PAT 的管理详情接口需要 `user:write`，不能用只读凭据触发。
 **不是模型调用 KEY（`tokens.key`）**，不添加或剥离 `sk-` 前缀；原值里的 `+`、`/`、`=` 都保留。
 PAT 每次从数据库核对，不缓存认证结果；撤销、换 PAT、停用或降权在后续请求生效。
 PAT 不放在 URL、请求体或 Cookie，也不需要写入 Cockpit 的 `.env`。
@@ -809,7 +809,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
 ## 模型使用（本人令牌）
 
 账户 MCP 使用独立路径 `/cockpit/mcp`、JSON-RPC 和用户 API PAT，不复用管理员 REST API 或模型 KEY；
-提供 `get_balance`、`get_usage` 两个本人只读工具，详见[账户 MCP](mcp.md)。
+提供 `get_balance`、`get_usage` 及本人 KEY 列表、分组、申请、删除、改组、密钥读取共八项工具，详见[账户 MCP](mcp.md)。不提供配置草稿或跨用户操作。
 
 | 方法 | 地址 | 用途 |
 | --- | --- | --- |
@@ -935,6 +935,7 @@ Skill/Memory 的版本与快照见[个人上下文契约](design/ai-assistant-v1
 | `PATCH` | `/cockpit/api/chat/conversations/{cid}` | 版本检查后改名 |
 | `DELETE` | `/cockpit/api/chat/conversations/{cid}` | 确认删除聊天及附件/快照 |
 | `GET` | `/cockpit/api/chat/conversations/{cid}/events` | 按已提交高水位分页读取完整历史 |
+| `GET` | `/cockpit/api/chat/conversations/{cid}/sync` | 同一高水位的状态、首批增量、文件版本及必要的 Memory 上下文更新 |
 | `GET` | `/cockpit/api/chat/conversations/{cid}/files` | 所有上传和输出版本 |
 | `POST` | `/cockpit/api/chat/conversations/{cid}/files` | 上传单个文本、PDF、Word、Excel 或图片附件 |
 | `GET` | `/cockpit/api/chat/conversations/{cid}/files/{fid}/download` | 经本人鉴权的附件或生成文件下载 |
@@ -955,5 +956,13 @@ Skill/Memory 的版本与快照见[个人上下文契约](design/ai-assistant-v1
 
 聊天列表必须继续取 next_cursor 直到 has_more=false；事件也按 after_seq/until_seq分页。
 断线、刷新、401或停止后只能GET恢复记录，不重放旧POST。历史不依赖旧KEY仍有效。
+
+新版配置返回 `features.recovery_snapshot: true` 时，优先使用 `sync`，不要再分别查询元数据、运行和文件。
+查询参数：`after_seq` 为已接收序号（初次为 0），`limit` 为每页条数（1–200），
+`files_revision` 为上次返回的 64 位小写十六进制文件版本（初次省略），`context_revision` 为已载入的个人上下文版本。
+响应包含 `conversation`、`events`、`run`、`files`、`files_revision` 和 `context`。
+`events` 沿用事件分页格式；若 `has_more=true`，继续用 `/events` 读取，固定本次的 `until_seq`。
+`files: null` 表示文件列表未变化，不表示清空；`context: null` 表示没有需要补取的聊天 Memory 上下文更新。
+返回有效 `Retry-After` 时，自动查询须等到该时间之后；恢复接口不创建收费轮次。
 
 当前页面没有模式选择，默认使用完整助手请求（内部兼容值 `mode: "files"`，按站点配置启用 `web_enabled`）。两种旧 API 模式均允许 `attachment_ids`；新请求都由服务器读取本人当前聊天中引用文件的正文，历史通过服务端记录的 `attachment_mode: "server-text-v1"` 重建，不依赖工具调用才能获得正文。`mode: "chat"` 仅保留旧 API 无工具请求兼容；完整助手默认提供文件和联网工具，不因缺少逐模型工具声明禁用模型。运维明确关闭工具时保留正文附件分析。正文及历史计入上下文预算，超限在派发前返回 `413 / CHAT_ATTACHMENTS_TOO_LARGE` 或 `CHAT_CONTEXT_TOO_LARGE`，不自动截断或重试。客户端不能传正文映射、`attachment_mode`、物理路径或指定其他所有者。

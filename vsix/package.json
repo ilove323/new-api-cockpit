@@ -1,8 +1,8 @@
 {
   "name": "new-api-cockpit-balance",
   "displayName": "New API Cockpit 账户与 KEY",
-  "description": "查看账户余额、管理本人 KEY，生成 Claude Code 与 Codex 待保存配置草稿。",
-  "version": "0.4.0",
+  "description": "独立连接 New API 查看余额、管理本人 KEY，生成 Claude Code 与 Codex 待保存配置草稿。",
+  "version": "0.4.2",
   "publisher": "ilove323",
   "license": "Apache-2.0",
   "engines": {

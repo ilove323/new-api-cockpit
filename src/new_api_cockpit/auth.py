@@ -1,19 +1,20 @@
-"""Validate browser sessions via New API and administrator PATs via source SQL.
+"""Validate sessions and PATs through New API; SQL can only narrow PAT grants.
 
 JWT payload parsing only filters transport/type. Session authorization requires
 New API /api/user/self; Cockpit never signs credentials or reads Redis sessions.
 """
 
 import base64
+import hashlib
 import json
-import os
 import time
-from http.client import HTTPException
-from urllib import error, request
-from urllib.parse import urlsplit
+from urllib import request  # noqa: F401 -- retained transport patch point
 
 import psycopg
 from psycopg.rows import dict_row
+
+from .integrations.new_api import account
+from .integrations.new_api.account import NoRedirect  # noqa: F401
 
 COOKIE_NAME = "cockpit_access"
 COOKIE_PATH = "/cockpit"
@@ -29,12 +30,32 @@ class LoginForbidden(ValueError):
 
 
 class AuthUnavailable(RuntimeError):
-    pass
+    def __init__(self, message, *, status=503, retry_after=None):
+        super().__init__(message)
+        self.status, self.retry_after = status, retry_after
 
 
-class NoRedirect(request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
+class VerifiedPat(dict):
+    """Only the public actor is serializable; grants stay request-local."""
+
+    def __init__(self, user, scopes=None):
+        super().__init__((key, user[key]) for key in ("id", "username", "role"))
+        self.scopes = scopes
+
+
+def _upstream_user(credential):
+    try:
+        return account.read("/api/user/self", credential)
+    except account.AccountError as exc:
+        if exc.status == 401:
+            raise LoginRequired("登录凭据无效、已过期或已撤销。") from None
+        if exc.status == 403:
+            raise LoginForbidden("凭据权限不足或账号不可用。") from None
+        raise AuthUnavailable(
+            "New API 认证服务暂不可用，请稍后重试。",
+            status=429 if exc.status == 429 else 503,
+            retry_after=exc.retry_after,
+        ) from None
 
 
 def session_claims(token):
@@ -76,41 +97,7 @@ def session_claims(token):
 
 def verify_session(token, *, allow_user=False):
     claims = session_claims(token)
-    base = os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000").rstrip("/")
-    parsed = urlsplit(base)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.netloc
-        or parsed.username is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise AuthUnavailable("New API 登录服务配置无效。")
-    req = request.Request(
-        base + "/api/user/self",
-        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-    )
-    try:
-        # No ambient HTTP proxy, redirects, cookies, passwords or PAT substitution.
-        opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
-        with opener.open(req, timeout=5) as response:
-            raw = response.read(65537)
-            if len(raw) > 65536:
-                raise ValueError()
-            body = json.loads(raw)
-    except error.HTTPError as exc:
-        status = exc.code
-        exc.close()
-        if status == 401:
-            raise LoginRequired("登录已失效，请重新登录。") from None
-        if status == 403:
-            raise LoginForbidden("当前账号没有管理权限。") from None
-        raise AuthUnavailable("New API 登录服务暂不可用，请稍后重试。") from None
-    except (error.URLError, OSError, ValueError, HTTPException):
-        raise AuthUnavailable("New API 登录服务暂不可用，请稍后重试。") from None
-    if not isinstance(body, dict) or body.get("success") is not True:
-        raise AuthUnavailable("New API 登录服务返回异常，请稍后重试。")
-    user = body.get("data")
+    user = _upstream_user(token)
     if (
         not isinstance(user, dict)
         or type(user.get("id")) is not int
@@ -135,17 +122,29 @@ def verify_session(token, *, allow_user=False):
 
 
 def verify_pat(value):
-    """Resolve the PAT's real administrator on every request, without caching.
-
-    The credential is compared verbatim with users.access_token. Model keys and
-    request-supplied identities never grant access or determine the audit actor.
-    """
+    """New API decides validity, including legacy retirement; no SQL fallback."""
     if (
         not isinstance(value, str)
         or not 1 <= len(value) <= 256
         or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+        or value.startswith("sk-")
+        or "." in value
     ):
         raise LoginRequired("请提供有效的 New API 管理员 PAT。")
+    user = _upstream_user(value)
+    if (
+        type(user.get("id")) is not int
+        or user["id"] <= 0
+        or not isinstance(user.get("username"), str)
+        or not user["username"].strip()
+        or type(user.get("role")) is not int
+        or type(user.get("status")) is not int
+    ):
+        raise AuthUnavailable("New API 身份响应无效。")
+    if user["status"] != 1 or user["role"] < 10:
+        raise LoginForbidden("仅启用的 New API 管理员可以访问。")
+    if not value.startswith("nap_"):
+        return VerifiedPat(user)
     try:
         with psycopg.connect(
             connect_timeout=8,
@@ -153,12 +152,30 @@ def verify_pat(value):
             options="-c default_transaction_read_only=on -c statement_timeout=5000",
         ) as conn:
             row = conn.execute(
-                """SELECT id,username,role FROM users WHERE access_token=%s
-                   AND role>=10 AND status=1 AND deleted_at IS NULL LIMIT 1""",
-                (value,),
+                """SELECT scopes FROM user_access_tokens
+                   WHERE token_hash=%s AND user_id=%s
+                   AND (expires_at<=0 OR expires_at>%s) LIMIT 1""",
+                (
+                    hashlib.sha256(value.encode()).hexdigest(),
+                    user["id"],
+                    int(time.time()),
+                ),
             ).fetchone()
     except psycopg.Error:
         raise AuthUnavailable("管理员认证服务暂不可用，请稍后重试。") from None
     if row is None:
-        raise LoginRequired("无效的 New API 管理员 PAT，或账号已停用。")
-    return {key: row[key] for key in ("id", "username", "role")}
+        raise LoginRequired("PAT 已撤销、过期或不属于当前账号。")
+    try:
+        scopes = json.loads(row["scopes"])
+        if (
+            not isinstance(scopes, list)
+            or len(scopes) > 256
+            or any(
+                not isinstance(scope, str) or not 1 <= len(scope) <= 128
+                for scope in scopes
+            )
+        ):
+            raise ValueError()
+    except (KeyError, TypeError, ValueError):
+        raise LoginForbidden("PAT 权限数据无效。") from None
+    return VerifiedPat(user, frozenset(scopes))

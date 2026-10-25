@@ -76,7 +76,7 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 模型在客户端会话中选择，配置不固定默认模型；需要转换协议的 CC Switch 接入会列出本地路由设置。
 只查询本人令牌和模型，不改分组或额度，也不发起收费生成，详见[模型使用](docs/manual.md)。
 Codex 使用 `config.toml + auth.json` 双文件配置，不再依赖模型 KEY 环境变量。
-账户 MCP 的配置步骤和插件说明统一在[辅助工具](docs/tools.md)页面，另见[账户 MCP 协议](docs/mcp.md)：以用户 API 访问令牌（PAT，非模型 KEY）查询本人余额和用量，普通用户和管理员均不能借此读取他人账户。
+账户 MCP 的配置步骤和插件说明统一在[辅助工具](docs/tools.md)页面，另见[账户 MCP 协议](docs/mcp.md)：以用户 API 访问令牌（PAT，非模型 KEY）查询本人余额和用量、管理本人 KEY，普通用户和管理员均不能借此操作他人账户。用量查询仅在 MCP 提供，Claude/Codex 配置草稿仅在插件提供。
 
 生图工作站向所有启用用户开放，只用本人已有且分组精确为 `GPT` 的 KEY，管理员也不例外，原始 KEY 不进入浏览器。
 每次生成一张，同步等待、不排队，不保存图库或提示词；选区和标注分开，候选需明确采用，局部合成保留选区外原图。

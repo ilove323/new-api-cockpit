@@ -53,6 +53,7 @@ class ChatService:
                     "New API 请求过于频繁，请稍后再试。",
                     429,
                     "CHAT_UPSTREAM_RATE_LIMIT",
+                    retry_after=getattr(exc, "retry_after", None),
                 ) from None
             raise ChatError(
                 "无法使用所选本人令牌，请检查状态和权限。"
@@ -145,6 +146,18 @@ class ChatService:
     def events(self, principal, cid, query):
         return self.store.read_events(self._scope(principal, cid), **query)
 
+    def sync(self, principal, cid, query):
+        values = dict(query)
+        context_revision = values.pop("context_revision", 0)
+        schemas.integer(context_revision)
+        result = self.store.sync(self._scope(principal, cid), **values)
+        result["context"] = (
+            self.user_context.read_context(principal)
+            if context_revision < result.pop("required_context_revision")
+            else None
+        )
+        return result
+
     def files(self, principal, cid):
         files = self.store.files(self._scope(principal, cid))
         return {"files": files, "total": len(files)}
@@ -165,10 +178,12 @@ class ChatService:
     def delete_upload(self, principal, cid, fid):
         return self.store.delete_upload(self._scope(principal, cid), fid)
 
-    def _history(self, scope):
+    def _history(self, scope, *, lease=None):
         events, after, until = [], 0, None
         while True:
-            page = self.store.read_events(scope, after_seq=after, until_seq=until)
+            page = self.store.read_events(
+                scope, after_seq=after, until_seq=until, lease=lease
+            )
             events.extend(page["events"])
             if not page["has_more"]:
                 return events
@@ -230,7 +245,7 @@ class ChatService:
             )
             for item in [*snapshot["profiles"], *snapshot["skills"]]:
                 validate_credentials(item["content"], access.credential)
-            history = self._history(scope)
+            history = self._history(scope, lease=lease)
             attachment_texts = attachments.read_texts(
                 self.store,
                 scope,
@@ -425,7 +440,7 @@ class ChatService:
             audit = next(
                 (
                     event["data"]["audit"]
-                    for event in reversed(self._history(scope))
+                    for event in reversed(self._history(scope, lease=lease))
                     if event["run_id"] == rid and event["type"] == "memory.updated"
                 ),
                 None,

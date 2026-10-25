@@ -7,13 +7,18 @@ existing bounded New API client; only explicit key lookup reads a raw key.
 import re
 import time
 
+from ...platform.http_headers import retry_after as safe_retry_after
+
 
 class TokenError(ValueError):
-    def __init__(self, message, status=400, code="MANUAL_ERROR", *, reason=None):
+    def __init__(
+        self, message, status=400, code="MANUAL_ERROR", *, reason=None, retry_after=None
+    ):
         super().__init__(message)
         self.status = status
         self.code = code
         self.reason = reason
+        self.retry_after = safe_retry_after(retry_after)
 
 
 def token_id(body):
@@ -81,6 +86,11 @@ def owned_row(user, credential, body, *, upstream, group=None):
 
 def key_for(user, credential, body, *, upstream, group=None):
     target = owned_row(user, credential, body, upstream=upstream, group=group)["id"]
+    return _reveal_owned_key(user, credential, target, upstream=upstream, group=group)
+
+
+def _reveal_owned_key(user, credential, target, *, upstream, group=None):
+    """Internal continuation after owned_row; revalidate after the secret read."""
     result = upstream(f"/api/token/{target}/key", credential, user["id"], body={})
     data = result.get("data")
     raw = data.get("key") if isinstance(data, dict) else None
@@ -89,5 +99,5 @@ def key_for(user, credential, body, *, upstream, group=None):
     raw = raw.removeprefix("sk-")
     if not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", raw) or raw.startswith("sk-"):
         raise TokenError("New API 模型调用 KEY 格式无效。", 502)
-    owned_row(user, credential, body, upstream=upstream, group=group)
+    owned_row(user, credential, {"token_id": target}, upstream=upstream, group=group)
     return "sk-" + raw

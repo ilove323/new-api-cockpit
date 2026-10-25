@@ -9,7 +9,7 @@ Linux 源码检查还需要 `antiword` 和文泉驿正黑字体；Debian / Ubunt
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/pip install ruff build
+.venv/bin/pip install ruff build 'setuptools>=77'
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/ruff check src tests deploy
 .venv/bin/ruff format --check src tests deploy
@@ -23,7 +23,9 @@ npx --yes --package typescript@6.0.3 tsc -p frontend/studio/tsconfig.json
 
 开发启动：`python -m new_api_cockpit.app`。
 Python 依赖版本范围继续在 `requirements.txt` 维护。工作站构建工具单独使用 `frontend/studio/package-lock.json` 锁定。
-VS Code 插件源码独立放在 `vsix/`；Docker 的 Node 构建阶段打包 VSIX，Python 包和运行镜像只携带安装包及清单，不带 Node 或 node_modules。开发检查与打包：`npm ci --prefix vsix --ignore-scripts`、`npm run --prefix vsix check`、`npm test --prefix vsix`、`npm run --prefix vsix package`。源码开发需要系统下载时执行 `npm run --prefix vsix bundle` 后重启应用。VS Code 宿主检查及虚构身份的 MCP 联调见[插件说明](vsix/README.md#开发与打包)。
+VS Code 插件源码独立放在 `vsix/`；Docker 的 Node 构建阶段打包 VSIX，Python 包和运行镜像只携带安装包及清单，不带 Node 或 node_modules。开发检查与打包：`npm ci --prefix vsix --ignore-scripts`、`npm run --prefix vsix check`、`npm test --prefix vsix`、`npm run --prefix vsix package`。源码开发需要系统下载时执行 `npm run --prefix vsix bundle` 后重启应用。VS Code 宿主检查及独立 New API 接口验证见[插件说明](vsix/README.md#开发与打包)。
+CI 的镜像任务还在实际构建结果内执行 `test_runtime_image.py`：核对已安装应用与 VSIX 版本、二进制摘要、下载鉴权及无 Node/私有构建文件。测试容器禁用网络，账户身份仅在测试进程内模拟；不属于真实站点登录验收。普通源码回归不会把本机安装误当作镜像验证。
+在只读容器内执行聊天存储回归时，给测试用 `TMPDIR` 挂载独立可写目录，并保留大于 512 MiB 的可用空间；64/128 MiB 的进程临时盘不适合作为聊天数据卷。不要为测试下调程序的磁盘安全余量。
 提交前执行 CI 中的检查，修改数据库行为需运行 PostgreSQL 集成测试。
 测试必须使用独立数据库和虚构数据，绝不使用生产凭据。
 
@@ -37,6 +39,7 @@ MCP_SDK_PYTHON=/tmp/cockpit-mcp-sdk/bin/python .venv/bin/python -m unittest disc
 
 该测试在 loopback 随机端口启动短生命周期 fixture，验证现代客户端自动回退到支持的 MCP 生命周期、列工具与两项查询。
 `test_account_mcp.py` 另验证 PAT/模型 KEY/会话边界和读权限；配置隔离 PostgreSQL 后会实际执行用户隔离、缓存归一化与时间边界 SQL。
+`test_account_mcp_keys.py` 覆盖本人 KEY 归属、官方 PUT、修改前后查询、回执丢失读回、敏感结果与请求白名单；不操作真实 KEY，不调用模型。MCP 不提供客户端配置草稿，VS Code 插件不提供用量查询。
 
 SQL 集成测试使用独立 PostgreSQL 库。在当前终端设置仅属于测试库的
 `PGHOST`、`PGPORT`、`PGUSER`、`PGPASSWORD`、`PGDATABASE` 和 `MONITOR_DATABASE_URL` 后运行：
@@ -48,6 +51,14 @@ export TEST_SCHEDULE_DATABASE_URL="$MONITOR_DATABASE_URL"
 
 定时配额与用户/KEY 管理集成测试使用 `TEST_SCHEDULE_DATABASE_URL`；与 CI 一样指向同一个隔离测试库。
 这些测试会创建和删除临时 schema，但不得指向生产库；真实 New API 配额变更均由 fixture/mock 替代。
+
+源库列级授权另由 `test_source_grants_database.py` 验证，使用全新 PostgreSQL 实例，
+不能复用上述测试库或生产库。仅给该测试进程设置 `TEST_SOURCE_GRANTS_DATABASE_URL`：
+库名必须是 `cockpit_grants_fixture_` 加独立后缀，连接用户为 `fixture_admin`，
+服务端 `listen_addresses=''`，通过本机 Unix socket 连接。测试在创建表前核对这些条件及 public 下没有旧表，
+再用虚构源表执行真实 PAT 函数和部署授权；结束后删除自己的表与角色。
+通过 Docker 验证时，不发布端口、不加入业务网络，使用独立卷；测试客户端可挂载只读 socket 卷。
+未设置此专用变量时明确跳过，不把普通 `PG*` 或站点连接串当成默认值。
 
 `test_internal_timers.py` 还包含真实 Gunicorn 双进程启动、领导者接管和退出回归：
 它根据 `MONITOR_DATABASE_URL` 连接隔离 PostgreSQL，为测试新建随机名称的数据库，结束后仅删除自己创建的库。

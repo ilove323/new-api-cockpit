@@ -6,6 +6,12 @@ import { setTimeout as pause } from 'node:timers/promises';
 export const MIN_REFRESH_MS = 60_000;
 export interface Reservation { allowed: boolean; nextAllowedAt: number }
 
+function siteKey(endpoint: string): string {
+  // Keep the historical on-disk identity so upgrading an old saved connection
+  // cannot bypass an active 429 cooldown. This path is never requested.
+  return createHash('sha256').update(new URL(endpoint).origin + '/cockpit/mcp').digest('hex');
+}
+
 // Only timestamps are persisted. The shared local gate also covers other VS Code
 // windows and restarts; neither PATs nor account/balance data enter these files.
 export class RefreshGate {
@@ -13,7 +19,7 @@ export class RefreshGate {
 
   private async update(endpoint: string, deferUntil = 0, interval = MIN_REFRESH_MS): Promise<Reservation> {
     await fs.mkdir(this.directory, {recursive: true, mode: 0o700});
-    const base = path.join(this.directory, createHash('sha256').update(endpoint).digest('hex'));
+    const base = path.join(this.directory, siteKey(endpoint));
     const lock = base + '.lock', file = base + '.json', nonce = randomUUID();
     let handle: fs.FileHandle | undefined;
     for (let attempt = 0; attempt < 25; attempt++) {
@@ -56,7 +62,7 @@ export class RefreshGate {
     return this.update(endpoint, 0, interval);
   }
   async backoff(endpoint: string): Promise<number> {
-    const file = path.join(this.directory, createHash('sha256').update(endpoint).digest('hex') + '.json');
+    const file = path.join(this.directory, siteKey(endpoint) + '.json');
     try {
       const state = JSON.parse(await fs.readFile(file, 'utf8')), until = state.backoffUntil ?? 0;
       if (!Number.isSafeInteger(until) || until < 0) throw new Error('Invalid backoff state');

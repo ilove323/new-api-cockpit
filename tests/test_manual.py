@@ -31,11 +31,24 @@ def own_token(**changes):
         "expired_time": -1,
         "remain_quota": 20000,
         "unlimited_quota": False,
+        "model_limits_enabled": False,
+        "model_limits": "",
         **changes,
     }
 
 
 class ManualTest(unittest.TestCase):
+    def setUp(self):
+        self.provider = patch.object(
+            manual,
+            "_provider",
+            manual.TokenProvider(
+                lambda *args, **kwargs: manual.upstream(*args, **kwargs)
+            ),
+        )
+        self.provider.start()
+        self.addCleanup(self.provider.stop)
+
     def test_ordinary_login_is_accepted_but_existing_routes_default_to_admin(self):
         client = app.test_client()
         with auth_upstream({**USER, "role": 1}):
@@ -201,6 +214,26 @@ class ManualTest(unittest.TestCase):
         )
         self.assertNotIn(RAW_KEY, json.dumps(result))
 
+    def test_repeated_model_catalogue_reuses_secret_but_rechecks_current_token(self):
+        calls = []
+
+        def upstream(path, *args, **kwargs):
+            calls.append(path)
+            if path == "/api/token/7":
+                return {"data": own_token()}
+            if path.endswith("/key"):
+                return {"data": {"key": RAW_KEY}}
+            if path == "/v1/models":
+                return {"data": [{"id": "synthetic"}]}
+            self.fail(path)
+
+        with patch.object(manual, "upstream", side_effect=upstream):
+            manual.models(OWNER, "session-fixture", {"token_id": 7})
+            self.assertEqual(len(calls), 4)
+            calls.clear()
+            manual.models(OWNER, "session-fixture", {"token_id": 7})
+            self.assertEqual(calls, ["/api/token/7", "/v1/models"])
+
     def test_manual_headers_origin_size_and_session_switch_stop_before_api(self):
         client = app.test_client()
         with (
@@ -289,6 +322,7 @@ class ManualTest(unittest.TestCase):
         for status in (301, 403, 429, 500):
             conn = MagicMock()
             conn.getresponse.return_value.__enter__.return_value.status = status
+            conn.getresponse.return_value.__enter__.return_value.getheader.return_value = "1800"
             with (
                 patch.object(manual, "HTTPConnection", return_value=conn),
                 self.assertRaises(manual.ManualError) as caught,
@@ -299,6 +333,7 @@ class ManualTest(unittest.TestCase):
             if status == 429:
                 self.assertEqual(caught.exception.status, 429)
                 self.assertEqual(caught.exception.reason, "rate_limited")
+                self.assertEqual(caught.exception.retry_after, "1800")
 
 
 if __name__ == "__main__":

@@ -87,12 +87,12 @@ services:
   image-studio-receipts:
     image: redis:7-alpine
     restart: unless-stopped
+    user: "999:1000"
     command: [redis-server, --protected-mode, "no", --appendonly, "yes", --appendfsync, "always", --maxmemory, "64mb", --maxmemory-policy, noeviction, --save, ""]
     networks: [studio-receipts]
     volumes: ["image-studio-receipts:/data"]
     mem_limit: 128m
     cap_drop: [ALL]
-    cap_add: [CHOWN, SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: [CMD, redis-cli, ping]

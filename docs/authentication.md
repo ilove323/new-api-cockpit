@@ -18,7 +18,7 @@
 4. 验证成功后，将同一会话的访问凭据保存在 `cockpit_access` HttpOnly Cookie 中；路径为 `/cockpit`、SameSite=Strict，默认 Secure，最长保留 15 分钟且不超过上游 JWT 到期时间。
 5. 每个会话请求再次交给 New API 校验会话和权限，不跨请求缓存认证结果。页面请求和下载使用该 Cookie，业务 API 也可携带官方浏览器 JWT Bearer。
 
-普通用户允许访问辅助工具、登录后的插件下载、模型使用、智力测试、生图工作站及其 `/cockpit/api/manual/`、`/cockpit/api/intelligence/`、`/cockpit/api/image-studio/` 接口，以及会话接口和自动选择落地页的 `/cockpit`。模型使用仅查询本人令牌，智力测试仅创建或配置本人专用测试 KEY，生图工作站仅使用本人已有的 GPT KEY。其余路由默认要求 `role >= 10`，不是只隐藏菜单。所有访问都要求启用账号；新增管理接口不会自动继承普通用户权限。
+普通用户允许访问辅助工具、登录后的插件下载、模型使用、智力测试、生图工作站及其 `/cockpit/api/manual/`、`/cockpit/api/intelligence/`、`/cockpit/api/image-studio/` 接口，以及会话接口和自动选择落地页的 `/cockpit`。模型使用仅查询本人令牌，智力测试仅创建或配置本人专用测试 KEY，生图工作站使用本人有生图权限的 KEY，不限定分组名称。其余路由默认要求 `role >= 10`，不是只隐藏菜单。所有访问都要求启用账号；新增管理接口不会自动继承普通用户权限。
 
 New API 的 `user_sessions` 属于上游自身结构。Cockpit 登录不新增会话表、不读写 New API Redis、不共享 SESSION_SECRET，不读取密码哈希。生图工作站的独立 Redis 只保存短期派发回执，与登录无关。
 访问 JWT 只短暂出现在内存和 HttpOnly Cookie；密码、验证码、JWT、PAT 不进入 URL、localStorage、sessionStorage、日志或监控库。
@@ -30,19 +30,19 @@ New API 的 `user_sessions` 属于上游自身结构。Cockpit 登录不新增�
 - 普通查询的 GET/HEAD 可以在认证失效后续期重试一次。可能补建 PAT 的用户/KEY 详情、写请求及文档调试都只发送一次，避免重复执行。
 - 浏览器的业务 API 请求携带 `X-Cockpit-Session`；会话与当前 Cookie 不一致时返回 409，旧页面操作不执行。
 - 写接口验证同源及各功能 JSON/自定义请求头。会话承接、清除也要求 JSON 和 `X-Cockpit-Auth: 1`；第三方表单不能注入登录或触发修改。
-- 登录失效返回 401，账号不可用或当前功能权限不足返回 403，上游故障或限流返回 503。503 和普通用户误入管理功能不清除已有 Cookie，不降级为本地密码或 PAT 认证。
+- 登录失效返回 401，账号不可用或权限不足返回 403，上游故障返回 503，限流保留 429 及有效的 `Retry-After`。临时故障和限流不清除已有 Cookie 或聊天草稿，不自动重发消息；不降级为本地密码或另一种凭据。
 - 退出先调用官方 `POST /api/user/auth/logout`，成功后清除 Cockpit Cookie；调用失败时显示错误，供用户重试。
 - `/cockpit/api/statistics/balance` 和 `/cockpit/api/statistics/alert` 保持独立的管理员 PAT Bearer 认证，不接受浏览器 Cookie 或 JWT。
 
 ## 脚本与管理员 PAT
 
 业务接口统一在 `/cockpit/api/` 下；除私有聊天模块外，沿用已有 New API 管理员 PAT Bearer。
-模型使用接口只能读取认证账号本人的令牌；智力测试只使用认证账号自己的测试 KEY；生图工作站只使用本人 GPT KEY。管理员 PAT 也不能在这些接口里指定另一用户。
-PAT 每次按原值查询 `users.access_token`，要求管理员账号启用且未删除；不使用模型调用 KEY，不缓存认证结果。
+模型使用接口只能读取认证账号本人的令牌；智力测试只使用认证账号自己的测试 KEY；生图工作站只使用本人的生图 KEY。管理员 PAT 也不能在这些接口里指定另一用户。
+PAT 每次先调用官方 `/api/user/self`，要求管理员账号启用。旧 PAT 只有在上游仍接受时才能使用；退役、撤销、过期或上游故障均不回退到 `users.access_token` 匹配。新式 `nap_` PAT 还按哈希和已验证用户读取 `user_access_tokens` 的权限、到期信息，并逐接口检查所需权限。认证结果不跨请求缓存，不接受模型 KEY。
 权限、执行身份及审计来自对应管理员，不接受客户端指定操作者。参数、确认头与错误处理见 [API 参考](api.md)。
 
 显式 Bearer 优先于 Cookie，无效时不回退到 Cookie，也不清除浏览器的另一份有效会话。
-会话凭据只交官方接口验证，PAT 只交源库验证，认证服务故障不会尝试其他凭据。
+会话和 PAT 的有效性均由官方接口确认；源库读取只能进一步收窄新式 PAT 权限，不能替代上游验证。认证服务故障不会尝试其他凭据。
 PAT 不用于打开 HTML 管理页面，不能通过 `/cockpit/api/auth/session` 换取浏览器 Cookie；
 这不改变 New API 网页登录、二次验证和会话退出流程。
 PAT 调用不携带 `X-Cockpit-Session`，JSON/确认头要求不变；服务器调用不需要 `Origin`。
@@ -53,8 +53,9 @@ API 文档页面通过浏览器登录打开；页面内调试可用当前会话�
 ## 用户账户 MCP
 
 账户 MCP `/cockpit/mcp` 是独立例外，接受启用普通用户或管理员的本人 API PAT，但拒绝浏览器 Cookie/JWT 和模型 KEY。
-不经过管理员 PAT 的 SQL 认证，也不会让普通用户 PAT 获得任何现有管理 API 权限。
+不经过管理员 PAT 的附加权限查询，也不会让普通用户 PAT 获得任何现有管理 API 权限。
 每次向 New API 验证 `profile:read`；查用量还执行 `usage:read`，源 SQL 在聚合前绑定已验证用户 ID。
+KEY 列表、修改和完整密钥读取分别通过本人接口检查 `api_key:read`、`api_key:write`、`api_key:reveal`。MCP 不使用管理员代管或自动补建所属用户 PAT，不能操作他人 KEY。
 具体约定、禁用开关和客户端配置见[账户 MCP](mcp.md)。
 
 ## 部署要求

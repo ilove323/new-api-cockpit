@@ -106,14 +106,26 @@ class AccountMcpHttpTest(unittest.TestCase):
             200,
         )
 
-    def test_only_two_readonly_tools_are_exposed(self):
+    def test_only_own_account_tools_are_exposed_with_correct_write_hints(self):
         result = self.post().json["result"]
         self.assertEqual(
-            [t["name"] for t in result["tools"]], ["get_balance", "get_usage"]
+            [t["name"] for t in result["tools"]],
+            [
+                "get_balance",
+                "get_usage",
+                "list_keys",
+                "list_key_groups",
+                "create_key",
+                "delete_key",
+                "change_key_group",
+                "reveal_key",
+            ],
         )
         for tool in result["tools"]:
-            self.assertTrue(tool["annotations"]["readOnlyHint"])
-            self.assertFalse(tool["annotations"]["destructiveHint"])
+            write = tool["name"] in {"create_key", "delete_key", "change_key_group"}
+            self.assertEqual(tool["annotations"]["readOnlyHint"], not write)
+            self.assertEqual(tool["annotations"]["destructiveHint"], write)
+            self.assertEqual(tool["annotations"]["idempotentHint"], not write)
             self.assertFalse(tool["inputSchema"]["additionalProperties"])
             self.assertNotIn("user_id", tool["inputSchema"]["properties"])
 

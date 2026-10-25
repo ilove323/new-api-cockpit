@@ -19,6 +19,7 @@ from .user_context import MAX_REVISION, validate_credentials
 __all__ = [
     "MemoryProposal",
     "build_prompt",
+    "needs_memory_check",
     "parse_proposal",
     "prepare_update",
     "apply_proposal",
@@ -51,6 +52,59 @@ _SECRET_PATTERNS = tuple(
         r"(?i)[?&](?:token|key|password|secret|signature|sig)=[^\s&#]+",
     )
 )
+
+# Only exact acknowledgements/continuations can be proven not to assert a fact.
+# This is not a keyword gate for preferences: every other message is inspected,
+# including one-word facts, corrections and explicit remember/forget requests.
+_ACKNOWLEDGEMENTS = frozenset(
+    {
+        "好",
+        "好的",
+        "好吧",
+        "嗯",
+        "嗯嗯",
+        "哦",
+        "噢",
+        "收到",
+        "明白",
+        "明白了",
+        "了解",
+        "了解了",
+        "谢谢",
+        "谢谢你",
+        "多谢",
+        "继续",
+        "请继续",
+        "接着说",
+        "继续吧",
+        "继续写",
+        "ok",
+        "okay",
+        "yes",
+        "yep",
+        "no",
+        "nope",
+        "thanks",
+        "thank you",
+        "got it",
+        "understood",
+        "go on",
+        "continue",
+        "hi",
+        "hello",
+        "你好",
+        "再见",
+        "bye",
+    }
+)
+
+
+def needs_memory_check(text):
+    _raw(text)
+    normalized = " ".join(
+        text.casefold().strip(" \t\r\n.,!?，。！？…~～;；:：").split()
+    )
+    return normalized not in _ACKNOWLEDGEMENTS
 
 
 def _invalid():

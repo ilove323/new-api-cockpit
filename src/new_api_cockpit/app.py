@@ -24,6 +24,7 @@ from flask.json.provider import DefaultJSONProvider
 import psycopg
 from werkzeug.exceptions import HTTPException
 from new_api_cockpit import balance
+from new_api_cockpit import pat_permissions
 from new_api_cockpit import scopes as scope_backend
 from new_api_cockpit import notifications
 from new_api_cockpit import quota as quota_backend
@@ -175,10 +176,13 @@ def request_identity():
         if scheme.lower() == "bearer":
             if not separator or not value or any(char.isspace() for char in value):
                 raise LoginRequired("Bearer 凭据格式无效。")
-            # JWTs are validated upstream; opaque PATs are looked up verbatim.
+            # Both credential kinds are validated upstream. Scoped PATs also
+            # require an explicit grant for this Cockpit operation.
             if allow_pat and (pat_only or "." not in value):
                 g.auth_kind = "pat"
-                return verify_pat(value)
+                user = verify_pat(value)
+                pat_permissions.require_access(user, request.endpoint, request.method)
+                return user
             g.auth_kind = "session"
             return verify_session(value, allow_user=True)
         if pat_only or not token:
@@ -299,7 +303,10 @@ def authenticate():
     except LoginForbidden as exc:
         return auth_failure(str(exc), 403, "AUTH_FORBIDDEN")
     except AuthUnavailable as exc:
-        return auth_failure(str(exc), 503, "AUTH_UNAVAILABLE")
+        response = auth_failure(str(exc), exc.status, "AUTH_UNAVAILABLE")
+        if exc.status == 429 and exc.retry_after is not None:
+            response.headers["Retry-After"] = exc.retry_after
+        return response
     if not user:
         return auth_failure()
     if user["role"] < 10 and request.endpoint not in USER_ENDPOINTS:
@@ -402,7 +409,13 @@ def headers(response):
         if isinstance(body, dict):
             body["scope"] = scope_context()
             response.set_data(app.json.dumps(body))
-    response.headers["Cache-Control"] = "no-store"
+    # Static sources contain no user data. Their names are not fingerprinted,
+    # so require revalidation rather than leaving an old client after upgrades.
+    response.headers["Cache-Control"] = (
+        "public, max-age=0, must-revalidate"
+        if request.endpoint == "static" and response.status_code in {200, 304}
+        else "no-store"
+    )
     response.headers["X-Content-Type-Options"] = "nosniff"
     if request.endpoint == account_mcp_http.ENDPOINT and response.status_code == 401:
         response.headers["WWW-Authenticate"] = 'Bearer realm="cockpit-account-mcp"'
@@ -555,7 +568,11 @@ def manual_key():
 
 @app.errorhandler(manual.ManualError)
 def manual_error(exc):
-    return jsonify(error=str(exc), code=exc.code), exc.status
+    from .platform.http_headers import apply_retry_after
+
+    response = jsonify(error=str(exc), code=exc.code)
+    response.status_code = exc.status
+    return apply_retry_after(response, exc)
 
 
 @app.get("/cockpit/docs")
@@ -864,9 +881,15 @@ def management_token_groups(token_id):
 
 @app.post("/cockpit/api/keys/<int:target_id>/action")
 def management_action(target_id):
+    body = management_body()
+    if body.get("action") == "reveal" and getattr(g, "auth_kind", None) == "pat":
+        try:
+            pat_permissions.require_secret_access(g.current_user)
+        except LoginForbidden as exc:
+            return auth_failure(str(exc), 403, "AUTH_FORBIDDEN", clear_cookie=False)
     return jsonify(
         user_management.single_action(
-            g.current_user["username"], "token", target_id, management_body()
+            g.current_user["username"], "token", target_id, body
         )
     )
 

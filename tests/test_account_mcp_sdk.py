@@ -21,7 +21,7 @@ async def main():
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer nap_fixture_account_pat_only"}, trust_env=False) as http:
         async with Client(streamable_http_client(sys.argv[1], http_client=http), read_timeout_seconds=10) as client:
             tools = await client.list_tools()
-            assert {tool.name for tool in tools.tools} == {"get_balance", "get_usage"}
+            assert {tool.name for tool in tools.tools} == {"get_balance", "get_usage", "list_keys", "list_key_groups", "create_key", "delete_key", "change_key_group", "reveal_key"}
             balance = await client.call_tool("get_balance", {})
             assert not balance.is_error and balance.structured_content["remaining_amount"] == "2.5"
             usage = await client.call_tool("get_usage", {})

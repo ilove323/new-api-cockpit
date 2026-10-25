@@ -6,9 +6,11 @@
 })(typeof window === 'object' ? window : globalThis, function (C) {
   'use strict';
   class ChatAPIError extends Error {
-    constructor(status, value) {
+    constructor(status, value, retryAfter) {
       super(typeof value.error === 'string' ? value.error : '请求失败；未自动重试。');
       this.name = 'ChatAPIError'; this.status = status; this.code = value.code || ''; this.runId = value.run_id || null; this.uncertain = value.uncertain === true;
+      const delay = /^\d+$/.test(retryAfter || '') ? Number(retryAfter) * 1000 : Date.parse(retryAfter || '') - Date.now();
+      this.retryAfterMs = Number.isSafeInteger(delay) && delay >= 0 ? delay : 0;
     }
   }
   function createAPI({scope, fetch: fetcher = (...args) => window.fetch(...args), onAuth = () => {}}) {
@@ -26,8 +28,10 @@
         scope.assert(ticket);
         if (!response.ok) {
           const value = await response.json().catch(() => ({})); scope.assert(ticket);
-          const error = new ChatAPIError(response.status, value);
-          if (error.code.startsWith('AUTH_') || error.code === 'CHAT_SESSION_REQUIRED' || response.status === 401) { onAuth(); throw new C.StaleResponse(); }
+          const error = new ChatAPIError(response.status, value, response.headers?.get('Retry-After'));
+          // A temporary auth-service outage is not an identity change. Keep
+          // the draft/history, fail this request, and never replay a mutation.
+          if (response.status === 401 || ['AUTH_FORBIDDEN', 'AUTH_SESSION_CHANGED', 'CHAT_SESSION_REQUIRED'].includes(error.code)) { onAuth(); throw new C.StaleResponse(); }
           throw error;
         }
         if (kind === 'run') return await C.consumeRun(response, {onEvent, assertCurrent: () => scope.assert(ticket), signal: controller.signal, maxFrameBytes});
@@ -43,6 +47,7 @@
       conversations: (limit, cursor, options) => request(`/conversations?${new URLSearchParams({limit: String(limit), ...(cursor ? {cursor} : {})})}`, options),
       create: (cid, options) => request('/conversations', {...options, method: 'POST', body: {conversation_id: id(cid)}}),
       conversation: (cid, options) => request(conv(cid), options),
+      sync: (cid, after, limit, filesRevision, contextRevision, options) => request(`${conv(cid)}/sync?${new URLSearchParams({after_seq: String(after), limit: String(limit), context_revision: String(contextRevision), ...(filesRevision ? {files_revision: filesRevision} : {})})}`, options),
       rename: (cid, title, revision, options) => request(conv(cid), {...options, method: 'PATCH', body: {title, expected_revision: revision}}),
       setSkills: (cid, ids, revision, contextRevision, options) => {
         if (!Array.isArray(ids) || ids.length > 3 || new Set(ids).size !== ids.length || ids.some(value => !C.isUUID(value))

@@ -102,8 +102,8 @@
     }
     return result;
   }
-  function projectEvents(events) {
-    const runs = new Map(), files = new Map(); let title = null;
+  function createEventProjector() {
+    let runs = new Map(), files = new Map(), title = null, count = 0, first = null, last = null;
     function run(id) {
       if (!runs.has(id)) runs.set(id, {id, status: 'accepted', messages: new Map(), tools: new Map(), timeline: [], requests: new Map(), messageCandidates: new Map(), requestUsage: new Map(), notices: [], usage: null, usage_complete: false, accepted: null, uncertain: false, selected_candidate: null});
       return runs.get(id);
@@ -117,12 +117,14 @@
       if (candidateIndex(index)) m.candidate_index = index;
       return m;
     }
-    for (const event of events) {
+    function apply(event) {
       const d = event.data;
       if (event.type === 'conversation.created' || event.type === 'conversation.renamed') title = d.title;
       if (event.type === 'file.added') files.set(d.file.id, d.file);
-      if (!event.run_id) continue;
+      if (!event.run_id) return;
       const r = run(event.run_id);
+      if (!Object.hasOwn(r, '_seq')) Object.defineProperties(r, {_seq: {value: 0, writable: true}, _identity: {value: Symbol('run-view')}});
+      r._seq = event.seq;
       if (event.type === 'run.accepted') { r.accepted = d; r.candidate_count = candidateCount(r); }
       if (event.type === 'run.dispatching') {
         r.status = 'running'; r.model_requests = d.request_index;
@@ -171,8 +173,18 @@
       }
       if (event.type === 'run.terminal') Object.assign(r, d);
     }
-    return {runs: [...runs.values()], files: [...files.values()], title, lastSeq: events.at(-1)?.seq || 0};
+    return {update(events) {
+      // mergeEvents appends immutable records. Replacing/truncating a history
+      // resets this view, including on conversation/account switches.
+      if (events.length < count || count && (events[0] !== first || events[count - 1] !== last)) {
+        runs = new Map(); files = new Map(); title = null; count = 0;
+      }
+      for (let index = count; index < events.length; index++) apply(events[index]);
+      count = events.length; first = events[0]; last = events.at(-1);
+      return {runs: [...runs.values()], files: [...files.values()], title, lastSeq: last?.seq || 0};
+    }};
   }
+  function projectEvents(events) { return createEventProjector().update(events); }
   function buildRunRequest({meta, token, model, mode, text, attachments, skillIds, context, config, requestId, options}) {
     if (!meta || meta.storage_state === 'corrupt' || meta.active_run_id) throw new Error('聊天不可写或仍有运行，请先只读刷新状态。');
     if (!token?.usable || !Number.isInteger(token.id) || token.id < 1 || token.id > 2147483647) throw new Error('请选择本人可用 KEY。');
@@ -205,5 +217,5 @@
     if (page.has_more) seen.add(page.next_cursor);
     return page.has_more ? page.next_cursor : null;
   }
-  return {isUUID, isSHA256, ownerMemoryAudit, bytes, normalizeText, uuid, TERMINAL, PURPOSES, purposeOf, candidateCount, selectedCandidate, needsCandidateSelection, canSelectCandidate, StaleResponse, Scope, mergeEvents, projectEvents, buildRunRequest, pageCursor};
+  return {isUUID, isSHA256, ownerMemoryAudit, bytes, normalizeText, uuid, TERMINAL, PURPOSES, purposeOf, candidateCount, selectedCandidate, needsCandidateSelection, canSelectCandidate, StaleResponse, Scope, mergeEvents, projectEvents, createEventProjector, buildRunRequest, pageCursor};
 });

@@ -141,7 +141,10 @@ class Runner:
         target = self.store.get_conversation(run.scope, lease=run.lease)["last_seq"]
         while run.last_published < target:
             page = self.store.read_events(
-                run.scope, after_seq=run.last_published, until_seq=target
+                run.scope,
+                after_seq=run.last_published,
+                until_seq=target,
+                lease=run.lease,
             )
             if not page["events"]:
                 break
@@ -646,7 +649,7 @@ class Runner:
             while True:
                 self._check(run)
                 page = self.store.read_events(
-                    run.scope, after_seq=after, until_seq=until
+                    run.scope, after_seq=after, until_seq=until, lease=run.lease
                 )
                 history.extend(page["events"])
                 if not page["has_more"]:
@@ -672,6 +675,11 @@ class Runner:
 
         try:
             self._check(run)
+            accepted = next(
+                e["data"] for e in run.initial_events if e["type"] == "run.accepted"
+            )
+            if not auto_memory.needs_memory_check(accepted["text"]):
+                return
             snapshot = self.store.read_context(run.scope, run.run_id)
             current = self.user_context.read_context(run.access.principal)
             if current["context_revision"] != snapshot["context_revision"]:
@@ -679,9 +687,6 @@ class Runner:
                     "个人设置已变化，本轮不覆盖。", 409, "CHAT_CONTEXT_CHANGED"
                 )
             profile = next(p for p in current["profiles"] if p["name"] == "MEMORY.md")
-            accepted = next(
-                e["data"] for e in run.initial_events if e["type"] == "run.accepted"
-            )
             sources = [{"message_id": accepted["message_id"], "text": accepted["text"]}]
             prompt = auto_memory.build_prompt(sources, profile["content"])
             result = self._generate(run, prompt, purpose="memory", publish=False)[0]

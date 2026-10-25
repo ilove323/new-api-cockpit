@@ -104,6 +104,25 @@ class MemoryRuntimeV2Test(unittest.TestCase):
         self.assertEqual(state["aux_model_requests"], 0)
         self.assertEqual(self.memory()["content"], "")
 
+    def test_acknowledgement_has_no_auxiliary_call_or_memory_write(self):
+        request = body(
+            self.service, self.actor, self.cid, text="好的，谢谢！", auto_memory=True
+        )
+        # This is not in the exact acknowledgement set; no broad substring
+        # matching is allowed to suppress user facts.
+        from new_api_cockpit.features.chat.auto_memory import needs_memory_check
+
+        self.assertTrue(needs_memory_check(request["text"]))
+        request["text"] = "继续。"
+        active = self.service.accept_run(self.actor, self.cid, request)
+        output = "".join(self.service.stream(active))
+        state = self.service.get_run(self.actor.principal, self.cid, active.run_id)
+        self.assertEqual(state["status"], "completed", output)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(state["aux_model_requests"], 0)
+        self.assertEqual(self.memory()["content"], "")
+        self.assertNotIn("CHAT_MEMORY_UNCHANGED", output)
+
     def test_opt_in_one_aux_call_usage_intent_audit_and_owner_undo(self):
         manual = "# 手工记忆\n保留原始格式。\n"
         self.write_memory(manual)

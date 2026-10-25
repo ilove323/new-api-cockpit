@@ -38,6 +38,9 @@
 再用 KEY 所属用户 ID 读取 `users.access_token`，作为该次官方接口调用的 Bearer。
 用户资料管理则使用实际管理员 PAT。
 
+没有改用管理员跨用户 KEY 接口：所核对的官方版本没有这项接口。
+KEY 操作沿用官方接口及原有 owner PAT 获取流程。
+
 每次接口调用前重新读取 PAT，不缓存、不放到 `.env`、浏览器或监控库。
 没有 PAT 时才补建：与 New API 的 `GenerateRandomKey(29 + GetRandomInt(4))` 一致，
 使用密码学安全随机字节，标准 Base64 编码；事务锁及唯一约束防止并发覆盖与冲突。
@@ -88,7 +91,7 @@ GRANT EXECUTE ON FUNCTION public.statistics_ensure_user_pat(bigint,bigint,text) 
 **New API 的令牌 PUT 为配置和剩余额度覆盖更新，没有本功能需要的原子额度增减接口。**
 应用会在写入前从官方接口读取最新配置，保留未修改的字段，不写 `used_quota`；
 但这不能消除读写之间的并发扣费。因此改组、编辑或调整 KEY 额度前，必须先暂停这些 KEY 的并发调用。
-页面和确认窗口会明确提示；不会把“增加/减少”宣传为原子操作。
+这里涉及 KEY 自己的限额，不是用户账户余额；不会把改组或限额增减宣传为原子操作。
 用户账户的原子增减使用 `/cockpit/users/` 的配额接口，见[用户配额](quota.md)。
 
 ### 单个 KEY 快捷改组
