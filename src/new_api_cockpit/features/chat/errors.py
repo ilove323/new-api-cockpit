@@ -11,6 +11,7 @@ class ChatError(ValueError):
         uncertain=False,
         run_id=None,
         details=None,
+        retry_after=None,
     ):
         super().__init__(message)
         self.status = status
@@ -18,3 +19,4 @@ class ChatError(ValueError):
         self.uncertain = uncertain
         self.run_id = run_id
         self.details = details or {}
+        self.retry_after = retry_after

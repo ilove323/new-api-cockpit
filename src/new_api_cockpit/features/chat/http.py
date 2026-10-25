@@ -7,6 +7,8 @@ import re
 from flask import Blueprint, jsonify, render_template, request, Response, send_file
 from werkzeug.exceptions import HTTPException
 
+from ...platform.http_headers import apply_retry_after
+
 from . import config, schemas, web_tools
 from .errors import ChatError
 from .user_context import validate_credentials
@@ -21,6 +23,7 @@ API_ENDPOINTS = frozenset(
         "conversations",
         "conversation",
         "events",
+        "sync",
         "files",
         "file_download",
         "file_delete",
@@ -117,6 +120,7 @@ def create_blueprint(host, service_factory):
                 "auto_memory": True,
                 "context_strategies": ["recent", "adaptive"],
                 "web": web_tools.availability(),
+                "recovery_snapshot": True,
             },
         )
 
@@ -184,6 +188,17 @@ def create_blueprint(host, service_factory):
         principal, cid = scope(cid)
         return jsonify(
             service().events(principal, cid, query({"after_seq", "until_seq", "limit"}))
+        )
+
+    @blueprint.get("/cockpit/api/chat/conversations/<cid>/sync", endpoint="sync")
+    def sync(cid):
+        principal, cid = scope(cid)
+        return jsonify(
+            service().sync(
+                principal,
+                cid,
+                query({"after_seq", "limit", "files_revision", "context_revision"}),
+            )
         )
 
     @blueprint.route(
@@ -418,13 +433,15 @@ def create_blueprint(host, service_factory):
 
     @blueprint.errorhandler(ChatError)
     def chat_error(exc):
-        return jsonify(
+        response = jsonify(
             error=str(exc),
             code=exc.code,
             uncertain=exc.uncertain,
             run_id=exc.run_id,
             details=exc.details,
-        ), exc.status
+        )
+        response.status_code = exc.status
+        return apply_retry_after(response, exc)
 
     @blueprint.errorhandler(HTTPException)
     def http_error(exc):

@@ -218,6 +218,21 @@ class AuthTest(unittest.TestCase):
             self.assertNotIn("WWW-Authenticate", response.headers)
         with self.client.get("/cockpit/static/auth.js") as response:
             self.assertEqual(response.status_code, 200)
+            etag = response.headers["ETag"]
+            self.assertEqual(
+                response.headers["Cache-Control"], "public, max-age=0, must-revalidate"
+            )
+        with self.client.get(
+            "/cockpit/static/auth.js", headers={"If-None-Match": etag}
+        ) as cached:
+            self.assertEqual(cached.status_code, 304)
+            self.assertEqual(cached.data, b"")
+            self.assertEqual(
+                cached.headers["Cache-Control"], "public, max-age=0, must-revalidate"
+            )
+        with self.client.get("/cockpit/static/missing.js") as missing:
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.headers["Cache-Control"], "no-store")
         for suffix in ("usage", "balance/status", "usage/by-token", "usage/tokens"):
             response = self.client.get("/cockpit/api/statistics/" + suffix)
             self.assertEqual(response.status_code, 401)

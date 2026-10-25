@@ -6,7 +6,7 @@ from http.client import HTTPException
 from urllib import error, request
 from urllib.parse import urlsplit
 
-from .rate_limit import retry_after
+from ...platform.http_headers import retry_after
 
 
 class AccountError(ValueError):

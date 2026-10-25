@@ -322,6 +322,7 @@ class ManualTest(unittest.TestCase):
         for status in (301, 403, 429, 500):
             conn = MagicMock()
             conn.getresponse.return_value.__enter__.return_value.status = status
+            conn.getresponse.return_value.__enter__.return_value.getheader.return_value = "1800"
             with (
                 patch.object(manual, "HTTPConnection", return_value=conn),
                 self.assertRaises(manual.ManualError) as caught,
@@ -332,6 +333,7 @@ class ManualTest(unittest.TestCase):
             if status == 429:
                 self.assertEqual(caught.exception.status, 429)
                 self.assertEqual(caught.exception.reason, "rate_limited")
+                self.assertEqual(caught.exception.retry_after, "1800")
 
 
 if __name__ == "__main__":

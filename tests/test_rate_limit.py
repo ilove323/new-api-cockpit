@@ -3,13 +3,41 @@
 from datetime import datetime, timezone
 import io
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 
 from flask import Flask
 
 from new_api_cockpit.features.account_mcp import http, service, upstream
-from new_api_cockpit.integrations.new_api.rate_limit import retry_after
+from new_api_cockpit.platform.http_headers import retry_after
+
+
+class CatalogueRateLimitTest(unittest.TestCase):
+    def test_manual_and_image_boundaries_preserve_only_safe_retry_delays(self):
+        from new_api_cockpit.app import app, manual_error
+        from new_api_cockpit.features.image_studio import http as image_http
+        from new_api_cockpit.integrations.new_api.personal_tokens import TokenError
+
+        image_app = Flask(__name__)
+        image_app.register_blueprint(
+            image_http.create_blueprint(SimpleNamespace(access=lambda: None))
+        )
+        for value, expected in (("1800", "1800"), ("private\r\nInjected: value", None)):
+            error = TokenError("请求过频", 429, retry_after=value)
+            with app.test_request_context():
+                response = manual_error(error)
+                self.assertEqual(response.status_code, 429)
+                self.assertEqual(response.headers.get("Retry-After"), expected)
+            with patch.object(
+                image_http.image_studio, "list_tokens", side_effect=error
+            ) as call:
+                response = image_app.test_client().get(
+                    "/cockpit/api/image-studio/tokens"
+                )
+            self.assertEqual(response.status_code, 429)
+            self.assertEqual(response.headers.get("Retry-After"), expected)
+            self.assertEqual(call.call_count, 1)
 
 
 class RateLimitTest(unittest.TestCase):

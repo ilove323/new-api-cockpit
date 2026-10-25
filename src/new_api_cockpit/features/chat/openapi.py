@@ -118,6 +118,12 @@ def paths():
             ),
         ),
         ("/conversations/{cid}/events", "get", "已提交完整历史事件分页", None),
+        (
+            "/conversations/{cid}/sync",
+            "get",
+            "单次恢复聊天状态、事件和变化的文件列表，不续跑生成",
+            None,
+        ),
         ("/conversations/{cid}/files", "get", "本聊天文件及所有输出版本", None),
         (
             "/conversations/{cid}/files",
@@ -222,6 +228,18 @@ def paths():
             parameters.extend(
                 {"in": "query", "name": name, "schema": INT}
                 for name in ("after_seq", "until_seq", "limit")
+            )
+        if suffix.endswith("/sync"):
+            parameters.extend(
+                {"in": "query", "name": name, "schema": INT}
+                for name in ("after_seq", "limit", "context_revision")
+            )
+            parameters.append(
+                {
+                    "in": "query",
+                    "name": "files_revision",
+                    "schema": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                }
             )
         if suffix == "/skills/{sid}" and method == "get":
             parameters.append(

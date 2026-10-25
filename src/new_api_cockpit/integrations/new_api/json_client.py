@@ -55,6 +55,7 @@ def upstream(
                     "New API 请求过于频繁，请稍后再试。",
                     429,
                     reason="rate_limited",
+                    retry_after=response.getheader("Retry-After"),
                 )
             if response.status in {401, 403, 404}:
                 message = (

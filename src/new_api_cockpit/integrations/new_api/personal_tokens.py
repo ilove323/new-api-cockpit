@@ -7,13 +7,18 @@ existing bounded New API client; only explicit key lookup reads a raw key.
 import re
 import time
 
+from ...platform.http_headers import retry_after as safe_retry_after
+
 
 class TokenError(ValueError):
-    def __init__(self, message, status=400, code="MANUAL_ERROR", *, reason=None):
+    def __init__(
+        self, message, status=400, code="MANUAL_ERROR", *, reason=None, retry_after=None
+    ):
         super().__init__(message)
         self.status = status
         self.code = code
         self.reason = reason
+        self.retry_after = safe_retry_after(retry_after)
 
 
 def token_id(body):

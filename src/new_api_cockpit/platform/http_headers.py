@@ -22,3 +22,12 @@ def retry_after(value, *, now=None):
         return str(max(0, math.ceil((date - current).total_seconds())))
     except (ValueError, TypeError, OverflowError):
         return None
+
+
+def apply_retry_after(response, error):
+    """Project only a valid rate-limit delay, never arbitrary upstream headers."""
+    if getattr(error, "status", None) == 429:
+        value = retry_after(getattr(error, "retry_after", None))
+        if value is not None:
+            response.headers["Retry-After"] = value
+    return response

@@ -409,7 +409,13 @@ def headers(response):
         if isinstance(body, dict):
             body["scope"] = scope_context()
             response.set_data(app.json.dumps(body))
-    response.headers["Cache-Control"] = "no-store"
+    # Static sources contain no user data. Their names are not fingerprinted,
+    # so require revalidation rather than leaving an old client after upgrades.
+    response.headers["Cache-Control"] = (
+        "public, max-age=0, must-revalidate"
+        if request.endpoint == "static" and response.status_code in {200, 304}
+        else "no-store"
+    )
     response.headers["X-Content-Type-Options"] = "nosniff"
     if request.endpoint == account_mcp_http.ENDPOINT and response.status_code == 401:
         response.headers["WWW-Authenticate"] = 'Bearer realm="cockpit-account-mcp"'
@@ -562,7 +568,11 @@ def manual_key():
 
 @app.errorhandler(manual.ManualError)
 def manual_error(exc):
-    return jsonify(error=str(exc), code=exc.code), exc.status
+    from .platform.http_headers import apply_retry_after
+
+    response = jsonify(error=str(exc), code=exc.code)
+    response.status_code = exc.status
+    return apply_retry_after(response, exc)
 
 
 @app.get("/cockpit/docs")

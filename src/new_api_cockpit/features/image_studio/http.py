@@ -5,6 +5,8 @@ import re
 from flask import Blueprint, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
+from ...platform.http_headers import apply_retry_after
+
 from . import service as image_studio
 from .receipts import ReceiptError
 
@@ -191,7 +193,9 @@ def create_blueprint(host):
         # The injected adapter supplies the existing safe TokenError shape.
         # No concrete integration exception or implementation is imported here.
         if hasattr(exc, "status") and hasattr(exc, "code"):
-            return jsonify(error=str(exc), code=exc.code), exc.status
+            response = jsonify(error=str(exc), code=exc.code)
+            response.status_code = exc.status
+            return apply_retry_after(response, exc)
         return jsonify(error=str(exc)), 400
 
     @blueprint.errorhandler(HTTPException)
