@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from collections import OrderedDict
+from concurrent.futures import Future
 import hashlib
 import os
 import threading
@@ -26,6 +27,7 @@ class TokenProvider:
         self.upstream = upstream or json_client.upstream
         self._keys = OrderedDict()
         self._key_lock = threading.Lock()
+        self._pending = {}
 
     def list_tokens(self, access, *, group=None):
         entries, seen = [], set()
@@ -120,6 +122,11 @@ class TokenProvider:
         # still reads the owner's current token; New API validates the actual
         # key (including IP/group/model limits) on every model request.
         row = self._row(access, token_id, group)
+        with self._lease_checked(access, row, group=group) as key:
+            yield key
+
+    def _key_for_row(self, access, row, group):
+        token_id = row["id"]
         identity = (
             os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000"),
             access.principal.user_id,
@@ -137,22 +144,42 @@ class TokenProvider:
                 ):
                     del self._keys[entry]
             cached = self._keys.get(identity)
-            if cached is None:
-                key = ModelKey(
-                    personal_tokens.key_for(
-                        access.principal.as_user(),
-                        access.credential,
-                        {"token_id": token_id},
-                        upstream=self.upstream,
-                        group=group,
-                    )
+            if cached is not None:
+                self._keys.move_to_end(identity)
+                return identity, cached[1]
+            pending = self._pending.get(identity)
+            leader = pending is None
+            if leader:
+                pending = self._pending[identity] = Future()
+        if not leader:
+            return identity, pending.result()
+        try:
+            key = ModelKey(
+                personal_tokens._reveal_owned_key(
+                    access.principal.as_user(),
+                    access.credential,
+                    token_id,
+                    upstream=self.upstream,
+                    group=group,
                 )
+            )
+            with self._key_lock:
                 self._keys[identity] = (time.monotonic() + KEY_REUSE_SECONDS, key)
                 while len(self._keys) > KEY_CACHE_ENTRIES:
                     self._keys.popitem(last=False)
-            else:
-                _, key = cached
-            self._keys.move_to_end(identity)
+            pending.set_result(key)
+            return identity, key
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._key_lock:
+                if self._pending.get(identity) is pending:
+                    del self._pending[identity]
+
+    @contextmanager
+    def _lease_checked(self, access, row, *, group=None):
+        identity, key = self._key_for_row(access, row, group)
         try:
             yield key
         except ValueError as exc:
@@ -176,7 +203,7 @@ class TokenProvider:
             if not isinstance(raw, str) or len(raw) > 100000:
                 raise TokenError("令牌模型限制响应无效。", 502, reason="model_limits")
             limits = {item.strip() for item in raw.split(",") if item.strip()}
-        with self.lease_key(access, token_id, group=group) as key:
+        with self._lease_checked(access, row, group=group) as key:
             reply = self.upstream(
                 "/v1/models", key, access.principal.user_id, model_key=True
             )
