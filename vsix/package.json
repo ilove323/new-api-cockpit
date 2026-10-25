@@ -1,0 +1,253 @@
+{
+  "name": "new-api-cockpit-balance",
+  "displayName": "New API Cockpit 账户与 KEY",
+  "description": "查看账户余额、管理本人 KEY，生成 Claude Code 与 Codex 待保存配置草稿。",
+  "version": "0.4.0",
+  "publisher": "ilove323",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "new-api",
+    "cockpit",
+    "balance"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ilove323/new-api-cockpit.git",
+    "directory": "vsix"
+  },
+  "bugs": {
+    "url": "https://github.com/ilove323/new-api-cockpit/issues"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "newApiCockpitBalance.connect",
+        "title": "配置账户连接",
+        "category": "Cockpit 余额",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "newApiCockpitBalance.refresh",
+        "title": "刷新余额",
+        "category": "Cockpit 余额",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "newApiCockpitBalance.show",
+        "title": "查看账户余额",
+        "category": "Cockpit 余额"
+      },
+      {
+        "command": "newApiCockpitBalance.disconnect",
+        "title": "删除账户连接",
+        "category": "Cockpit 余额",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysRefresh",
+        "title": "刷新 KEY 列表",
+        "category": "Cockpit KEY",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysCreate",
+        "title": "申请 KEY",
+        "category": "Cockpit KEY",
+        "icon": "$(add)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysDelete",
+        "title": "删除 KEY",
+        "category": "Cockpit KEY",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysGroup",
+        "title": "切换 KEY 分组",
+        "category": "Cockpit KEY",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysCopy",
+        "title": "复制完整 KEY",
+        "category": "Cockpit KEY",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysConfigure",
+        "title": "配置 Claude / Codex",
+        "category": "Cockpit KEY",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "newApiCockpitBalance.configSave",
+        "title": "保存配置草稿到原路径",
+        "category": "Cockpit KEY",
+        "icon": "$(save)"
+      },
+      {
+        "command": "newApiCockpitBalance.keysPage",
+        "title": "KEY 列表翻页",
+        "category": "Cockpit KEY"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "newApiCockpitBalance",
+          "title": "Cockpit",
+          "icon": "media/account.svg"
+        }
+      ]
+    },
+    "views": {
+      "newApiCockpitBalance": [
+        {
+          "id": "newApiCockpitBalance.account",
+          "name": "账户余额"
+        },
+        {
+          "id": "newApiCockpitBalance.keys",
+          "name": "KEY 管理"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "newApiCockpitBalance.account",
+        "contents": "填写站点地址和本人用户 API PAT，即可查看余额。\n[配置账户连接](command:newApiCockpitBalance.connect)\n不需要安装 MCP 客户端，不使用模型 KEY。",
+        "when": "!newApiCockpitBalance.connected"
+      },
+      {
+        "view": "newApiCockpitBalance.keys",
+        "contents": "[配置账户连接](command:newApiCockpitBalance.connect)\n管理本人 KEY 需要 api_key:read / api_key:write；复制或配置客户端另需 api_key:reveal。",
+        "when": "!newApiCockpitBalance.connected"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "newApiCockpitBalance.configSave",
+          "when": "newApiCockpitBalance.configDraft",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "newApiCockpitBalance.refresh",
+          "when": "view == newApiCockpitBalance.account && newApiCockpitBalance.connected && !newApiCockpitBalance.loading",
+          "group": "navigation@1"
+        },
+        {
+          "command": "newApiCockpitBalance.connect",
+          "when": "view == newApiCockpitBalance.account",
+          "group": "navigation@2"
+        },
+        {
+          "command": "newApiCockpitBalance.disconnect",
+          "when": "view == newApiCockpitBalance.account && newApiCockpitBalance.connected",
+          "group": "connection"
+        },
+        {
+          "command": "newApiCockpitBalance.keysCreate",
+          "when": "view == newApiCockpitBalance.keys && newApiCockpitBalance.connected && !newApiCockpitBalance.keysBusy",
+          "group": "navigation@1"
+        },
+        {
+          "command": "newApiCockpitBalance.keysRefresh",
+          "when": "view == newApiCockpitBalance.keys && newApiCockpitBalance.connected && !newApiCockpitBalance.keysBusy",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "newApiCockpitBalance.keysConfigure",
+          "when": "view == newApiCockpitBalance.keys && viewItem == cockpitKey && !newApiCockpitBalance.keysBusy",
+          "group": "inline@0"
+        },
+        {
+          "command": "newApiCockpitBalance.keysCopy",
+          "when": "view == newApiCockpitBalance.keys && viewItem == cockpitKey && !newApiCockpitBalance.keysBusy",
+          "group": "inline@1"
+        },
+        {
+          "command": "newApiCockpitBalance.keysGroup",
+          "when": "view == newApiCockpitBalance.keys && viewItem == cockpitKey && !newApiCockpitBalance.keysBusy",
+          "group": "inline@2"
+        },
+        {
+          "command": "newApiCockpitBalance.keysDelete",
+          "when": "view == newApiCockpitBalance.keys && viewItem == cockpitKey && !newApiCockpitBalance.keysBusy",
+          "group": "inline@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "newApiCockpitBalance.configSave",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "editorTextFocus && newApiCockpitBalance.configDraft"
+      }
+    ],
+    "configuration": {
+      "title": "Cockpit 余额",
+      "properties": {
+        "newApiCockpitBalance.refreshIntervalMinutes": {
+          "type": "number",
+          "enum": [
+            0,
+            15,
+            30,
+            60
+          ],
+          "default": 15,
+          "scope": "application",
+          "markdownDescription": "账户余额自动刷新间隔（分钟）；0 表示只手动刷新。手动刷新至少间隔 60 秒，429 时延长等待。KEY 管理不随此设置更新。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node scripts/build.cjs",
+    "check": "tsc -p . --noEmit",
+    "test": "npm run compile && node --test test/*.test.cjs",
+    "test:host": "npm run compile && node test/run-host.cjs",
+    "vscode:prepublish": "npm run compile",
+    "bundle": "npm run package && node scripts/export-download.cjs",
+    "package": "vsce package --no-dependencies --githubBranch develop"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.0",
+    "@types/vscode": "1.95.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "jsonc-parser": "3.3.1",
+    "toml-eslint-parser": "0.10.0",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "@azure/msal-node": "7.1.0"
+  }
+}

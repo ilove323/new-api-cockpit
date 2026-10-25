@@ -1,4 +1,4 @@
-/* Model-use UI only; shared header, sidebar and controls remain in ui/navigation. */
+/* Model and account-tool guide layout; the shared shell remains in ui/navigation. */
 .manual-page { display: grid; gap: 16px; }
 .manual-page [id$="-title"] { scroll-margin-top: 80px; }
 .manual-page .page-heading { margin-bottom: 12px; }

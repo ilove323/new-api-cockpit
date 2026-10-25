@@ -1,0 +1,15 @@
+/* Account-tool documentation; no model picker or credential input on this page. */
+.tools-shortcuts, .tools-download { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.tools-shortcuts a, .tools-download a { display: inline-flex; align-items: center; gap: 8px; }
+.tools-shortcuts a { padding: 10px 14px; border: 1px solid var(--ui-border); border-radius: 12px; }
+.tools-features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tools-features > div { padding: 12px; background: var(--ui-muted); border-radius: 12px; }
+.tools-features h3 { margin-top: 0; }
+.tools-features p, .tools-vscode li li { font-size: 13px; line-height: 1.8; }
+.tools-vscode .manual-step p + p { margin-top: 10px; }
+.tools-vscode .manual-step ul { padding-left: 20px; line-height: 1.8; }
+.tools-checksum { margin: 12px 0; font-size: 12px; }
+.tools-checksum summary { cursor: pointer; }
+.tools-checksum code, .tools-vscode code { overflow-wrap: anywhere; }
+.tools-download .button { padding: 10px 16px; border-radius: 12px; text-decoration: none; }
+@media (max-width: 780px) { .tools-features { grid-template-columns: minmax(0, 1fr); } }

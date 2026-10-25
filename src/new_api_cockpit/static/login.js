@@ -3,7 +3,7 @@
   'use strict';
   const auth = window.CockpitAuth, $ = id => document.getElementById(id);
   const next = auth.safeNext(document.querySelector('.login-card').dataset.next);
-  const userPages = new Set(['/cockpit/manual', '/cockpit/manual/', '/cockpit/intelligence', '/cockpit/intelligence/']);
+  const userPages = new Set(['/cockpit/manual', '/cockpit/manual/', '/cockpit/tools', '/cockpit/tools/', '/cockpit/intelligence', '/cockpit/intelligence/']);
   const destination = user => user.role >= 10 || userPages.has(next.split('?')[0]) ? next : '/cockpit/manual';
   $('official-login').href = '/sign-in?' + new URLSearchParams({redirect: '/cockpit/login?' + new URLSearchParams({next})});
   let settings = null, challenge = null, busy = false, forbiddenSID = '';

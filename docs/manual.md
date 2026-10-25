@@ -149,12 +149,11 @@ model:
 不要以 Claude Code 的环境变量或 settings.json 代替桌面 Gateway 设置。
 保存后按提示重开、选模；连接测试可能计费。客户端仍可能要求自己的账号、许可或组织策略权限，网关 KEY 不能替代。
 
-## 账户 MCP
+## 辅助工具
 
-本页另设独立的账户 MCP 区，不依赖模型或 KEY 选择。
-显示当前站点 `/cockpit/mcp`、PAT 最小权限和 Codex/Cursor 占位符配置。
-复制 MCP 示例从不调用 `/manual/key`，也不把模型 KEY 填入 MCP。
-完整参数、认证边界、时间/金额口径与配置见[账户 MCP](mcp.md)。
+账户 MCP 已移到 **文档 → 辅助工具**（`/cockpit/tools`），与 VS Code 插件下载和使用说明放在一起，不再混在模型令牌选择页。
+MCP 的 Codex/Cursor 示例与复制功能保留，不读取模型 KEY；旧 MCP 书签会转到新位置。
+插件的账户连接、KEY 管理、Claude / Codex 配置草稿说明见[辅助工具](tools.md)，MCP 完整协议与口径见[账户 MCP](mcp.md)。
 
 ## 截图
 

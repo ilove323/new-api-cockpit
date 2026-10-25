@@ -21,6 +21,7 @@ npx --yes --package typescript@6.0.3 tsc -p frontend/studio/tsconfig.json
 
 开发启动：`python -m new_api_cockpit.app`。
 Python 依赖版本范围继续在 `requirements.txt` 维护。工作站构建工具单独使用 `frontend/studio/package-lock.json` 锁定。
+VS Code 插件源码独立放在 `vsix/`；Docker 的 Node 构建阶段打包 VSIX，Python 包和运行镜像只携带安装包及清单，不带 Node 或 node_modules。开发检查与打包：`npm ci --prefix vsix --ignore-scripts`、`npm run --prefix vsix check`、`npm test --prefix vsix`、`npm run --prefix vsix package`。源码开发需要系统下载时执行 `npm run --prefix vsix bundle` 后重启应用。VS Code 宿主检查及虚构身份的 MCP 联调见[插件说明](vsix/README.md#开发与打包)。
 提交前执行 CI 中的检查，修改数据库行为需运行 PostgreSQL 集成测试。
 测试必须使用独立数据库和虚构数据，绝不使用生产凭据。
 

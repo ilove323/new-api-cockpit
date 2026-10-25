@@ -8,6 +8,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const root = path.join(__dirname, '../src/new_api_cockpit');
 const html = fs.readFileSync(path.join(root, 'templates/manual.html'), 'utf8');
+const mcpHtml = fs.readFileSync(path.join(root, 'templates/partials/tools-mcp.html'), 'utf8');
 const source = fs.readFileSync(path.join(root, 'static/manual.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'static/manual.css'), 'utf8');
 const SECRET = 'sk-fixture-private-never-render';
@@ -161,7 +162,9 @@ test('template reuses the app shell, loads guides first, and omits the redundant
   for (const old of ['先分清密钥、地址和协议', '地址怎么填', '协议怎么选', 'manual-snippet', 'manual-examples']) {
     assert.ok(!html.includes(old), old);
   }
-  const mcpStep = html.slice(html.indexOf('<h3>添加远程 HTTP MCP</h3>'), html.indexOf('<h3>询问并核对结果</h3>'));
+  assert.ok(!html.includes('id="manual-mcp-title"'));
+  assert.match(html, /\/cockpit\/tools#manual-mcp-title/);
+  const mcpStep = mcpHtml.slice(mcpHtml.indexOf('<h3>添加远程 HTTP MCP</h3>'), mcpHtml.indexOf('<h3>询问并核对结果</h3>'));
   for (const id of ['manual-mcp-url', 'manual-mcp-client', 'manual-mcp-code', 'manual-mcp-copy']) {
     assert.ok(mcpStep.includes(`id="${id}"`), `${id} belongs to MCP step 2`);
   }
@@ -501,18 +504,13 @@ test('an unplaced configuration cannot silently disappear or be copied from the 
   assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 0);
 });
 
-test('account MCP previews and copies without model selection or reading any model KEY', async () => {
+test('model page links the independent account-tools page instead of embedding MCP controls', async () => {
   const h = await harness({actualGuides: true});
-  assert.ok(h.el('mcp-url').textContent.endsWith('/cockpit/mcp'));
-  assert.match(h.el('mcp-code').textContent, /NEW_API_USER_PAT/);
-  await h.fire('mcp-copy');
-  assert.match(h.writes[0], /mcp_servers.newapi_account/);
-  await h.fire('mcp-client', 'change', 'cursor');
-  await h.fire('mcp-copy');
-  assert.equal(JSON.parse(h.writes[1]).mcpServers.newapi_account.headers.Authorization, 'Bearer USER_API_TOKEN');
+  assert.equal(h.el('mcp-url'), undefined);
+  assert.match(html, /href="\/cockpit\/tools#manual-mcp-title"/);
+  assert.ok(!source.includes('module.buildMcp'));
   assert.equal(h.calls.filter(call => call.url.endsWith('/key') || call.url.endsWith('/models')).length, 0);
-  assert.ok(!h.dom().includes(SECRET));
-  assert.ok(h.writes.every(value => !value.includes(SECRET)));
+  assert.ok(!h.dom().includes(SECRET)); assert.equal(h.writes.length, 0);
 });
 test('native defaults survive conflicting model metadata and tool changes', async () => {
   const h = await harness({actualGuides: true, handler: async url => url.endsWith('/models')

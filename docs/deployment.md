@@ -6,7 +6,7 @@
 
 **默认方案：** `/root/new-api` 安装目录、IP + HTTP/80 访问、复用已安装的 Docker 和 Nginx。所有命令在目标服务器的 root Bash 终端执行；只有 SSH 隧道命令在访问电脑执行。
 
-**版本要求：** 所选 [Release](https://github.com/ilove323/new-api-cockpit/releases) 必须同时提供 `new-api-cockpit-vX.Y.Z-deploy.tar.gz`、对应 `.sha256` 和该版本 GHCR 镜像。`v0.3.0` 没有完整安装包及聊天组件，不能套用本手册；没有满足条件的 Release 时须先[完成发版](releasing.md#发布流程)，不自动切换到源码构建。
+**版本要求：** 使用 `v0.4.0` 或更新的 [Release](https://github.com/ilove323/new-api-cockpit/releases)，同时核对 `new-api-cockpit-vX.Y.Z-deploy.tar.gz`、对应 `.sha256` 和该版本 GHCR 镜像。`v0.3.0` 没有完整安装包及聊天组件，不能套用本手册；制品不齐时按[发布流程](releasing.md#发布流程)排查，不自动切换到源码构建。
 
 本页用于**全新安装**。已有 New API 使用[接入手册](existing-installation.md)；已有本套实例使用[升级手册](upgrading.md#全量安装实例的更新)。发现已有配置或业务数据时，不执行首次初始化。
 
@@ -465,3 +465,7 @@ docker compose up -d --no-build --pull never --no-deps --force-recreate --wait -
 | 模型/生图目录为空 | 继续第 10 节；核对本人 KEY、分组、上游目录与能力白名单，初始空配置不是安装失败 |
 | 上传返回 `413` | 应用和 Nginx 都需使用对应版本；检查聊天 location 的 `51264k` 已生效，不放大所有 API |
 | SSH 主机指纹校验失败 | 核对跳板和目标两跳指纹，先交互建立可信记录，再运行隧道；不使用 `StrictHostKeyChecking=no` 绕过 |
+
+## 下载客户端插件
+
+安装完成后登录，打开“文档 → 辅助工具”下载镜像内的 VS Code 安装包，按页面完成账户连接和 KEY 配置。正式镜像已带安装包，不需要下载源码或在服务器运行 npm。详见[辅助工具](tools.md)。

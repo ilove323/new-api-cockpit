@@ -17,8 +17,9 @@
 - 管理：[用户与令牌](users.md)、[手工与定时配额](quota.md)、[登录与会话](authentication.md)。
 - 模型工具：[模型使用教程](manual.md)、[智力测试](intelligence.md)、[生图工作站](image-studio.md)。
 - [AI 助手](chat.md)：聊天、文件与联网、Skills / Memory、能力配置和隔离边界。
-- 程序接入：[API 参考](api.md)、[交互式文档](interactive-api.md)。
+- 文档三个平级入口：[模型使用](manual.md)、[辅助工具与镜像内插件下载](tools.md)、[API 文档](interactive-api.md)；详细接口见 [API 参考](api.md)。
 - [账户 MCP](mcp.md)：用户 PAT 认证、本人余额和用量、客户端配置及安全边界。
+- [VS Code 账户与 KEY 插件](../vsix/README.md)：独立 VSIX 安装、用户 PAT 配置、状态栏余额、本人 KEY 管理及缓存限流、Claude Code / Codex 待保存配置草稿。
 
 ## 开发与契约
 

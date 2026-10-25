@@ -10,12 +10,12 @@ GitHub Actions 需要 `packages:write` 和 `contents:write`。GHCR 包须设为 
 
 ## 发布流程
 
-1. 确认源码、Compose、部署文档、迁移及功能范围一致，在 `pyproject.toml` 更新为新的正式版本；不能用新代码覆盖已发布标签或旧版本镜像。
+1. 确认源码、Compose、部署文档、迁移及功能范围一致，在 `pyproject.toml` 更新为新的正式版本，并执行 `npm --prefix vsix version X.Y.Z --no-git-tag-version` 同步插件及锁文件。正式镜像与随附插件使用同一版本；不能用新代码覆盖已发布标签或旧版本镜像。
 2. 通过 PR 合并到 `main` 并通过 CI，准备功能、升级、数据库及兼容性说明。
 3. 创建与版本匹配的 `vX.Y.Z` 标签并推送标签；目前仅支持正式标签，不接受预发布后缀。
 4. `release.yml` 复用 CI，校验标签与版本后构建 AMD64/ARM64 镜像，推送 `ghcr.io/ilove323/new-api-cockpit:X.Y.Z`；保留 `latest` 供发现，部署固定精确版本或 digest。
 5. 工作流执行 `deploy/build_release_bundle.py`，生成全量安装包及独立校验文件，同时保留已有 New API 接入所用的散文件附件。
-6. 工作流创建 Release 并上传制品；提前创建 Release 时仅补充附件，不覆盖手写说明。核对镜像、附件均成功发布后再交付部署地址；只创建 Release 页面不表示镜像和安装包已就绪。
+6. 工作流从已推送的镜像导出 VSIX 和校验清单，与安装包、`image-digest.txt` 一起上传 Release；提前创建 Release 时仅补充附件，不覆盖手写说明。核对镜像、附件均成功发布后再部署；只创建 Release 页面不表示镜像和安装包已就绪。
 
 开发分支推送不发布镜像或 Release，发布工作流也不部署服务器。尚未发布的功能不能通过把现有正式镜像换上新模板获得。
 Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/package-lock.json` 锁定，提交配套生成文件，运行镜像不在启动时构建前端。
@@ -26,6 +26,8 @@ Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/packag
 |---|---|---|
 | 新服务器全量安装 | `new-api-cockpit-vX.Y.Z-deploy.tar.gz` | 同名 `.tar.gz.sha256` |
 | 接入已有 New API | `compose.release.yml`、`default.env.example`、`nginx.conf.example`、`image-studio-capabilities.example.json`、`source_pat_function.sql` | `SHA256SUMS`，只覆盖这组散文件 |
+| VS Code 插件 | `new-api-cockpit-balance-X.Y.Z.vsix`、`vscode-extension.json` | 清单中的 SHA-256；安装包从发布镜像导出，不单独重建 |
+| 固定镜像 | `image-digest.txt` | 记录发布镜像的多架构索引 digest，可用于拉取和固定部署 |
 
 完整安装包只包含 `install/` 下的公开部署文件：
 
@@ -37,7 +39,7 @@ Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/packag
 
 安装包不包含应用源码、构建 override、`.env`、真实账号、密钥、数据或部署日志。部署密钥在目标服务器首次生成，不从构建环境打包带出。
 
-`v0.3.0` 的既有附件不包含全量安装包及聊天组件；新安装方式需先发布包含这些制品的新版本，不能补传开发分支安装包来伪装旧版本兼容。
+`v0.4.0` 是首次同时提供全量安装包、聊天、账户 MCP 和 VS Code 插件的正式版本。`v0.3.0` 的既有附件不包含这些组件，不能补传新版安装包来伪装旧版本兼容。
 
 ## 使用预构建镜像
 

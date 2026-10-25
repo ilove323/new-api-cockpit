@@ -37,6 +37,7 @@ from new_api_cockpit import (
     quality,
     intelligence,
     manual,
+    client_downloads,
     image_studio,
     image_receipts,
 )
@@ -76,6 +77,8 @@ USER_ENDPOINTS = {
     "cockpit_home",
     "browser_session",
     "manual_page",
+    "tools_page",
+    "vscode_download",
     "manual_tokens",
     "manual_models",
     "manual_key",
@@ -134,6 +137,8 @@ def safe_next(value):
         "/cockpit/intelligence/",
         "/cockpit/manual",
         "/cockpit/manual/",
+        "/cockpit/tools",
+        "/cockpit/tools/",
         "/cockpit/image-studio",
         "/cockpit/image-studio/",
         "/cockpit/chat",
@@ -225,6 +230,7 @@ def auth_failure(
         "quality_page",
         "intelligence_page",
         "manual_page",
+        "tools_page",
         "image_studio.page",
         "chat.page",
         "chat.settings_page",
@@ -298,7 +304,7 @@ def authenticate():
         return auth_failure()
     if user["role"] < 10 and request.endpoint not in USER_ENDPOINTS:
         return auth_failure(
-            "此功能仅管理员可访问；普通用户可使用模型使用、智力测试和生图工作站。",
+            "此功能仅管理员可访问；普通用户可使用模型使用、辅助工具、智力测试和生图工作站。",
             403,
             "AUTH_FORBIDDEN",
             clear_cookie=False,
@@ -421,6 +427,8 @@ def headers(response):
         "manual_tokens",
         "manual_models",
         "manual_key",
+        "tools_page",
+        "vscode_download",
     }:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
@@ -493,6 +501,32 @@ def cockpit_home():
 @app.get("/cockpit/manual/")
 def manual_page():
     return render_template("manual.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/tools")
+@app.get("/cockpit/tools/")
+def tools_page():
+    return render_template(
+        "tools.html",
+        site_name=load_site_name(),
+        vscode_release=client_downloads.vscode_release(),
+    )
+
+
+@app.get("/cockpit/downloads/vscode")
+def vscode_download():
+    release = client_downloads.vscode_release()
+    if not release:
+        return jsonify(
+            error="当前实例未包含可用的 VS Code 插件安装包，请重新构建镜像。"
+        ), 404
+    return send_file(
+        release.path,
+        as_attachment=True,
+        download_name=release.filename,
+        mimetype="application/octet-stream",
+        etag=release.sha256,
+    )
 
 
 @app.get("/cockpit/api/manual/tokens")

@@ -62,3 +62,6 @@ test-results/
 *.swp
 *.swo
 *~
+
+# Client downloads are regenerated from vsix sources during image builds.
+src/new_api_cockpit/bundled_clients/

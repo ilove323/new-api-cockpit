@@ -17,6 +17,7 @@
   {% call app_header(site_name) %}{% endcall %}
   {% include "partials/sidebar.html" %}
   <main id="api-docs">
+    {% include "partials/documentation-nav.html" %}
     <section class="page-panel">
       <div class="page-heading"><h1>API 文档</h1><a href="/cockpit/api/openapi.json" download="cockpit-openapi.json">{{ icon('download') }}下载 OpenAPI</a></div>
       <p>先试一次查询，再把示例复制到自己的程序里。这里调用的是当前站点的真实接口，不是模拟环境。</p>

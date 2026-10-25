@@ -42,3 +42,8 @@ build
 dist
 *.egg-info
 frontend/
+vsix/node_modules/
+vsix/dist/
+vsix/test/
+vsix/*.vsix
+src/new_api_cockpit/bundled_clients/

@@ -1,0 +1,34 @@
+<section class="page-panel tools-vscode" aria-labelledby="tools-vscode-title">
+  <div class="page-heading"><div><h2 id="tools-vscode-title">VS Code：账户、余额和 KEY</h2><p class="hint">只安装这个插件即可，不需要另装 MCP 客户端。支持 Windows、macOS 和 Linux 桌面版 VS Code 1.95 及以上。</p></div></div>
+  <div class="tools-features"><div><h3>看账户</h3><p>底部状态栏显示账户名与可用余额，侧栏查看累计消费和请求数。</p></div><div><h3>管 KEY</h3><p>申请、删除、复制本人 KEY，切换路由分组；已读数据按需缓存。</p></div><div><h3>配客户端</h3><p>选择 KEY，为 Claude Code 或 Codex 准备可编辑草稿，手动保存才修改原配置。</p></div></div>
+  <ol class="manual-steps">
+    <li class="manual-step" id="tools-vscode-install"><span class="manual-step-number">1</span><div><h3>下载并安装插件</h3>
+      {% if vscode_release %}
+      <div class="tools-download"><a id="tools-vsix-download" class="button button-primary" href="/cockpit/downloads/vscode">{{ icon('download') }}下载 VSIX · v{{ vscode_release.version }}</a><span class="hint">{{ vscode_release.display_size }} · 随当前系统镜像提供</span></div>
+      <details class="tools-checksum"><summary>安装包与校验值</summary><p>{{ vscode_release.filename }}</p><p>SHA-256：<code>{{ vscode_release.sha256 }}</code></p></details>
+      {% else %}
+      <p id="tools-vsix-unavailable" class="manual-notice">当前实例还没有插件安装包。重新构建包含 VSIX 的 Cockpit 镜像后，此处会显示下载按钮。</p>
+      {% endif %}
+      <p>打开 VS Code 扩展面板，点右上角“…” → “从 VSIX 安装”，选择刚下载的文件。已有旧版时直接覆盖安装并重载窗口，账户连接保留。</p>
+    </div></li>
+    <li class="manual-step"><span class="manual-step-number">2</span><div><h3>准备用户 API PAT 并连接本站</h3>
+      <p>打开<a href="/security">安全与访问</a>，创建自己的用户 API PAT。只看余额需要 profile:read；管理 KEY 另需 api_key:read、api_key:write；复制完整 KEY 或配置客户端另需 api_key:reveal。只查余额的 PAT 不会自动获得 KEY 管理权限。</p>
+      <p>在 VS Code 点击左侧 Cockpit 图标，或执行“Cockpit 余额：配置账户连接”。站点地址填 <code id="tools-site-origin">当前网站首页地址</code>，再填写用户 PAT。这里不要填 sk- 模型 KEY、网页登录 JWT 或账户密码。</p>
+      <p>地址与 PAT 保存在 VS Code 密钥库，不写入工作区或插件日志。远程站点必须使用 HTTPS；HTTP 仅支持 localhost、127.0.0.1、[::1]。</p>
+    </div></li>
+    <li class="manual-step"><span class="manual-step-number">3</span><div><h3>查看账户，管理自己的 KEY</h3>
+      <p>底部状态栏显示“账户名 · 可用余额”，点击可打开侧栏。余额下方是独立的 KEY 管理区，点击“载入我的 KEY”或刷新按钮读取列表。</p>
+      <ul><li>点“＋”申请 KEY，填写名称、分组、额度和有效期。</li><li>KEY 旁的复制按钮读取完整密钥；文件夹图标切换分组；垃圾桶删除 KEY，删除前确认一次。</li><li>缓存不会定时过期；展开分组、再次查看或复制已缓存 KEY 不会重复查询。主动刷新会清除旧缓存。</li><li>新建、删除、改分组按“查询 → 修改 → 查询”执行，不限制手动查询间隔；结果在插件内确认，不要求去网页核对。</li></ul>
+    </div></li>
+    <li class="manual-step"><span class="manual-step-number">4</span><div><h3>用所选 KEY 配置 Claude Code / Codex</h3>
+      <p>点击 KEY 旁的齿轮，或右键“配置 Claude / Codex”，再选择目标客户端。插件沿用当前站点，填入这个 KEY，不会自动调用模型。</p>
+      <ul><li><strong>Claude Code：</strong>选择扩展实际使用的 VS Code 用户 settings.json。草稿覆盖 claudeCode.environmentVariables 中的连接地址和认证信息，保留其他设置，不使用项目的 .vscode/settings.json。</li><li><strong>Codex：</strong>打开 config.toml 和 auth.json 两份草稿。优先使用 CODEX_HOME，未设置时使用用户主目录下的 .codex。config.toml 配置本站 /v1 和 Responses，auth.json 写入模型 KEY，替换旧 OAuth 认证。</li></ul>
+      <p>两种方式都覆盖同名连接项，不追加重复配置；保留无关的模型选择、MCP、权限设置和注释。完整 KEY 复用当前连接内存缓存，不因为生成草稿反复读取。</p>
+    </div></li>
+    <li class="manual-step"><span class="manual-step-number">5</span><div><h3>检查草稿，手动保存</h3>
+      <p>草稿打开后可继续编辑。上方显示文件名和保存目标；按 Ctrl+S（macOS 为 ⌘S），或点击草稿的保存按钮，才覆盖对应文件。Codex 两份草稿都需要保存，然后重载对应客户端。</p>
+      <p>开启自动保存也不会直接修改原文件。原文件在别处发生变化、已有未保存修改、草稿格式有误或已有同目标草稿时，插件会停止覆盖并说明原因。</p>
+    </div></li>
+  </ol>
+  <p class="manual-notice">保存后的客户端配置和草稿会包含明文模型 KEY，不要提交仓库、分享或同步含 KEY 的用户设置；VS Code 的编辑器备份也可能保留内容。插件重载前请先保存，重载后恢复的普通未命名文档不会保留插件的目标路径关联。余额和 KEY 操作仅限当前账户，管理员也不能在这里操作他人的 KEY。</p>
+</section>
