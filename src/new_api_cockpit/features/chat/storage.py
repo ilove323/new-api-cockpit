@@ -21,6 +21,7 @@ from uuid import uuid4
 
 from . import config, media, file_deletions
 from .errors import ChatError
+from .event_index import EventIndex, memory_size
 from .fs import SafeFS, canonical_json, storage_error, utcnow
 from .locks import ConversationLease, FileLock, profile_lock
 from .recovery import (
@@ -430,20 +431,28 @@ class ChatStore:
         finally:
             os.close(fd)
 
-    def _cache_read(self, key, signature, state):
-        # Bound both entry count and journal bytes (decoded data is larger).
-        if (
-            state.storage_state != "ok"
-            or state.unpublished
-            or state.offset > config.READ_CACHE_BYTES
-        ):
+    def _cache_read(self, scope, key, signature, state, raw):
+        if state.storage_state != "ok" or state.unpublished:
             return
+        fd = self.fs.open_file(f"{scope.path}/events.jsonl")
+        try:
+            if self._journal_signature(os.fstat(fd)) != signature[2]:
+                return
+            index = EventIndex(fd, raw, state.seq)
+            fd = -1
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        weight = index.memory_bytes + memory_size(state.projection.__dict__) + 2048
+        if weight > config.READ_CACHE_BYTES:
+            return
+        state.events = index
         with self._read_cache_lock:
-            self._read_cache[key] = (signature, state)
+            self._read_cache[key] = (signature, state, weight)
             self._read_cache.move_to_end(key)
             while (
                 len(self._read_cache) > config.READ_CACHE_ENTRIES
-                or sum(item[1].offset for item in self._read_cache.values())
+                or sum(item[2] for item in self._read_cache.values())
                 > config.READ_CACHE_BYTES
             ):
                 self._read_cache.popitem(last=False)
@@ -480,7 +489,7 @@ class ChatStore:
         state.commit_seq = commit["seq"]
         state.unpublished = len(raw) != commit["byte_offset"]
         if identity == self._journal_identity(scope):
-            self._cache_read(key, signature, state)
+            self._cache_read(scope, key, signature, state, raw)
         return state
 
     def _projections_current(self, scope, state):
@@ -1136,14 +1145,25 @@ class ChatStore:
         if not after_seq <= until_seq <= state.seq:
             raise ChatError("事件分页位置无效。")
         result, size = [], 0
-        for event in state.events[after_seq : min(until_seq, after_seq + limit)]:
-            item_size = len(canonical_json(event)) + 1
-            if result and (
-                len(result) == limit or size + item_size > config.EVENT_RESPONSE_BYTES
-            ):
-                break
-            result.append(event)
-            size += item_size
+        stop = min(until_seq, after_seq + limit)
+        events = (
+            state.events.iter_range(after_seq, stop)
+            if isinstance(state.events, EventIndex)
+            else iter(state.events[after_seq:stop])
+        )
+        try:
+            for event in events:
+                item_size = len(canonical_json(event)) + 1
+                if result and (
+                    len(result) == limit
+                    or size + item_size > config.EVENT_RESPONSE_BYTES
+                ):
+                    break
+                result.append(event)
+                size += item_size
+        finally:
+            if isinstance(state.events, EventIndex):
+                events.close()
         last = result[-1]["seq"] if result else after_seq
         return {
             "events": copy.deepcopy(result),
@@ -1557,21 +1577,13 @@ class ChatStore:
     @io_guard
     def read_context(self, scope, rid):
         state = self._state(scope)
-        accepted = next(
-            (
-                e
-                for e in state.events
-                if e["type"] == "run.accepted" and e["run_id"] == identifier(rid)
-            ),
-            None,
-        )
-        if accepted is None:
+        if state.projection is None:
+            self._projection(scope, state)
+        reference = state.projection.accepted.get(identifier(rid))
+        if reference is None:
             raise not_found()
         raw = self._raw_context(scope, rid)
-        if (
-            hashlib.sha256(raw).hexdigest()
-            != accepted["data"]["context_snapshot"]["sha256"]
-        ):
+        if hashlib.sha256(raw).hexdigest() != reference["sha256"]:
             raise ChatError("上下文快照校验失败。", 503, "CHAT_STORAGE_CORRUPT")
         try:
             value = json.loads(raw)

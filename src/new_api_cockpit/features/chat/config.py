@@ -54,6 +54,7 @@ EVENT_PAGE_MAX = 200
 EVENT_RESPONSE_BYTES = 2097152
 EVENT_BYTES = 1048576
 READ_CACHE_ENTRIES = 8
+# Resident offsets, block hashes and projections, not journal/body bytes.
 READ_CACHE_BYTES = 8 * 1024 * 1024
 LIST_PAGE_DEFAULT = 50
 LIST_PAGE_MAX = 100

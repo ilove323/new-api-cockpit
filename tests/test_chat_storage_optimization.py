@@ -8,9 +8,132 @@ from uuid import uuid4
 from test_chat_storage import StorageFixture
 from new_api_cockpit.features.chat import recovery
 from new_api_cockpit.features.chat.errors import ChatError
+from new_api_cockpit.features.chat import config
+from new_api_cockpit.features.chat.event_index import EventIndex
+from new_api_cockpit.features.chat.fs import canonical_json
 
 
 class ChatStorageOptimizationTest(StorageFixture):
+    def test_context_lookup_still_reads_valid_prefix_when_recovery_finds_corruption(
+        self,
+    ):
+        with self.store.lease(self.scope) as lease:
+            rid, _, _ = self.accept(lease)
+            terminal = self.terminal(lease, rid)
+        invalid = {
+            **terminal,
+            "seq": terminal["seq"] + 1,
+            "type": "assistant.delta",
+            "data": {"message_id": str(uuid4()), "text": "after terminal"},
+        }
+        path = f"{self.scope.path}/events.jsonl"
+        self.store.fs.atomic_write(
+            path, self.store.fs.read_bytes(path) + canonical_json(invalid) + b"\n"
+        )
+        self.store.fs.unlink(f"{self.scope.path}/commit.json")
+        self.assertEqual(self.store.read_context(self.scope, rid)["run_id"], rid)
+
+    def large_journal(self):
+        messages = {}
+        for _ in range(4):
+            with self.store.lease(self.scope) as lease:
+                rid, _, _ = self.accept(lease)
+                messages[rid] = str(uuid4())
+                self.store.append(
+                    self.scope,
+                    "run.dispatching",
+                    {"request_index": 1, "assistant_message_id": messages[rid]},
+                    rid,
+                    lease=lease,
+                )
+                self.terminal(lease, rid)
+        base = self.store.read_events(self.scope)["events"]
+        events = []
+        for event in base:
+            if event["type"] == "run.terminal":
+                for _ in range(13):
+                    events.append(
+                        {
+                            **event,
+                            "type": "assistant.delta",
+                            "seq": len(events) + 1,
+                            "data": {
+                                "message_id": messages[event["run_id"]],
+                                "text": "x" * 200000,
+                            },
+                        }
+                    )
+            events.append({**event, "seq": len(events) + 1})
+        raw = b"".join(canonical_json(event) + b"\n" for event in events)
+        with self.store.lease(self.scope):
+            self.store.fs.atomic_write(f"{self.scope.path}/events.jsonl", raw)
+            self.store.fs.write_json(
+                f"{self.scope.path}/commit.json",
+                {"v": 1, "seq": len(events), "byte_offset": len(raw)},
+            )
+        self.assertGreater(len(raw), config.READ_CACHE_BYTES)
+        return events, raw
+
+    def test_large_history_keeps_only_offsets_and_reads_only_requested_blocks(self):
+        events, raw = self.large_journal()
+        first = self.store.sync(self.scope, len(events))
+        cached = self.store._read_cache[(self.a.user_id, self.cid)]
+        self.assertIsInstance(cached[1].events, EventIndex)
+        self.assertLess(cached[2], config.READ_CACHE_BYTES)
+        self.assertLess(cached[2], len(raw) // 10)
+        with patch(
+            "new_api_cockpit.features.chat.storage.scan",
+            side_effect=AssertionError("unchanged large journal replayed"),
+        ):
+            with patch(
+                "new_api_cockpit.features.chat.event_index.os.pread", wraps=os.pread
+            ) as read:
+                page = self.store.read_events(self.scope, after_seq=5, limit=2)
+                self.assertEqual(page["events"], events[5:7])
+                self.assertLess(
+                    sum(call.args[1] for call in read.call_args_list), len(raw) // 4
+                )
+            with patch(
+                "new_api_cockpit.features.chat.event_index.os.pread",
+                side_effect=AssertionError("empty poll read a journal block"),
+            ):
+                value = self.store.sync(
+                    self.scope, len(events), files_revision=first["files_revision"]
+                )
+                self.assertEqual(value["events"]["events"], [])
+                self.assertIsNone(value["files"])
+                self.store.read_context(self.scope, events[1]["run_id"])
+
+    def test_index_pins_its_prefix_and_rejects_changed_block_bytes(self):
+        self.store.sync(self.scope)
+        indexed = self.store._read_cache[(self.a.user_id, self.cid)][1].events
+        self.assertIsInstance(indexed, EventIndex)
+        path = f"{self.scope.path}/events.jsonl"
+        with self.store.lease(self.scope):
+            fd = self.store.fs.open_file(path, os.O_RDWR | os.O_APPEND)
+            try:
+                os.write(fd, b"unpublished tail")
+                self.assertEqual(indexed[0]["seq"], 1)
+                # In-place overwrite after snapshot lookup must not return
+                # unchecked bytes, even when offsets/length remain valid.
+                os.pwrite(fd, b"X", 0)
+                self.assert_code("CHAT_STORAGE_UNAVAILABLE", lambda: indexed[0])
+            finally:
+                os.close(fd)
+
+    def test_index_eviction_and_store_close_release_source_descriptors(self):
+        self.store.sync(self.scope)
+        fd = self.store._read_cache[(self.a.user_id, self.cid)][1].events.fd
+        with patch.object(config, "READ_CACHE_ENTRIES", 1):
+            cid = self.store.create_conversation(self.a)["id"]
+            self.store.sync(self.store.open_conversation(self.a, cid))
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+        active = next(iter(self.store._read_cache.values()))[1].events.fd
+        self.store._read_cache.clear()
+        with self.assertRaises(OSError):
+            os.fstat(active)
+
     def test_unchanged_snapshot_does_not_read_or_replay_the_journal(self):
         first = self.store.sync(self.scope)
         read = self.store.fs.read_bytes
