@@ -49,6 +49,14 @@ export TEST_SCHEDULE_DATABASE_URL="$MONITOR_DATABASE_URL"
 定时配额与用户/KEY 管理集成测试使用 `TEST_SCHEDULE_DATABASE_URL`；与 CI 一样指向同一个隔离测试库。
 这些测试会创建和删除临时 schema，但不得指向生产库；真实 New API 配额变更均由 fixture/mock 替代。
 
+源库列级授权另由 `test_source_grants_database.py` 验证，使用全新 PostgreSQL 实例，
+不能复用上述测试库或生产库。仅给该测试进程设置 `TEST_SOURCE_GRANTS_DATABASE_URL`：
+库名必须是 `cockpit_grants_fixture_` 加独立后缀，连接用户为 `fixture_admin`，
+服务端 `listen_addresses=''`，通过本机 Unix socket 连接。测试在创建表前核对这些条件及 public 下没有旧表，
+再用虚构源表执行真实 PAT 函数和部署授权；结束后删除自己的表与角色。
+通过 Docker 验证时，不发布端口、不加入业务网络，使用独立卷；测试客户端可挂载只读 socket 卷。
+未设置此专用变量时明确跳过，不把普通 `PG*` 或站点连接串当成默认值。
+
 `test_internal_timers.py` 还包含真实 Gunicorn 双进程启动、领导者接管和退出回归：
 它根据 `MONITOR_DATABASE_URL` 连接隔离 PostgreSQL，为测试新建随机名称的数据库，结束后仅删除自己创建的库。
 测试角色必须在**隔离测试实例**具有 `CREATEDB`，否则该项明确跳过；不要因此提升生产账号权限。
