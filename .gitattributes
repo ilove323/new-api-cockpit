@@ -1,5 +1,19 @@
 # Keep the upstream bundle intact, including whitespace inside string literals.
 src/new_api_cockpit/static/scalar-*.js -whitespace linguist-vendored
 
-# Local site inventory must not appear in source archives.
-SITES.local.md export-ignore
+# Defense in depth for force-added local/private files in Git archives.
+*.private export-ignore
+*.private.* export-ignore
+*.local export-ignore
+*.local.* export-ignore
+.env export-ignore
+.env.* export-ignore
+.env.example -export-ignore
+*.pem export-ignore
+*.key export-ignore
+*.p12 export-ignore
+*.pfx export-ignore
+*.keystore export-ignore
+*.jks export-ignore
+secrets export-ignore
+credentials export-ignore
