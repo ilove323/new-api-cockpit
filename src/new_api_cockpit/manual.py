@@ -6,10 +6,9 @@ database writes, key persistence, automatic retries or user-supplied upstreams.
 
 from http.client import HTTPConnection, HTTPSConnection
 
-from . import personal_tokens
-from .integrations.new_api import json_client
+from .integrations.new_api import json_client, personal_tokens
 from .integrations.new_api.token_provider import TokenProvider
-from .personal_tokens import TokenError as ManualError  # noqa: F401 -- public exception alias
+from .integrations.new_api.personal_tokens import TokenError as ManualError  # noqa: F401 -- public exception alias
 from .platform.identity import Principal, RequestAccess
 
 
