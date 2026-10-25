@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from new_api_cockpit.features.chat.auto_memory import (
     MemoryProposal,
+    needs_memory_check,
     apply_proposal,
     build_prompt,
     parse_proposal,
@@ -59,6 +60,24 @@ def digest(text):
 
 
 class AutoMemoryV2Test(unittest.TestCase):
+    def test_only_pure_acknowledgements_skip_memory_inspection(self):
+        for text in ("继续", "好的。", "谢谢！", " OK ", "Thank you!", "go on"):
+            with self.subTest(text=text):
+                self.assertFalse(needs_memory_check(text))
+        for text in (
+            FACT,
+            "记住以后用中文",
+            "忘记之前的偏好",
+            "Remember this",
+            "Forget my location",
+            "中文",
+            "ok，我现在住在上海",
+            "```\nokay\n```",
+            "请继续，并记住这个格式",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(needs_memory_check(text))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = str(Path(self.temp.name).resolve())
