@@ -12,10 +12,11 @@ from new_api_cockpit import balance
 
 
 def main():
-    if (
-        os.environ.get("COCKPIT_PROCESS_ROLE", "web") != "image"
-        and balance.configured()
-    ):
+    role = os.environ.get("COCKPIT_PROCESS_ROLE", "web")
+    if role not in {"web", "image", "chat"}:
+        logging.error("Unknown process role")
+        raise SystemExit(1)
+    if role == "web" and balance.configured():
         try:
             balance.initialize()
         except Exception as exc:

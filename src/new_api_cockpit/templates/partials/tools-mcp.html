@@ -1,0 +1,23 @@
+    <section class="page-panel manual-mcp" aria-labelledby="manual-mcp-title">
+      <div class="page-heading"><div><h2 id="manual-mcp-title">账户 MCP：查询本人余额与用量</h2><p class="hint">使用本人的用户 API PAT，不使用模型 KEY，也不调用模型。</p></div></div>
+      <ol class="manual-steps">
+        <li class="manual-step"><span class="manual-step-number">1</span><div><h3>创建用户 API PAT</h3><p>打开 <a href="/security">安全与访问</a>，创建本人的 API 访问令牌。勾选 profile:read（读取本人资料和余额）与 usage:read（读取本人用量），设置有效期。不授予管理或写权限。本页不读取、代建或展示你的 PAT。</p></div></li>
+        <li class="manual-step"><span class="manual-step-number">2</span><div><h3>添加远程 HTTP MCP</h3><p>选择支持 Streamable HTTP 及自定义 Bearer 凭据的客户端，地址使用本步的 /cockpit/mcp，不是 /v1。Authorization 为 Bearer 加你的用户 PAT。不支持自定义请求头、只支持 OAuth 的客户端不能直接使用此静态 PAT 配置。</p>
+            <dl class="manual-definitions"><div><dt>本网站 MCP 地址</dt><dd><code id="manual-mcp-url">/cockpit/mcp</code></dd></div></dl>
+            <label for="manual-mcp-client">配置示例<select id="manual-mcp-client"><option value="codex">Codex · config.toml</option><option value="cursor">Cursor · MCP JSON</option></select></label>
+            <div class="manual-preview"><div class="manual-code-heading"><span id="manual-mcp-code-title">账户 MCP 配置</span><span class="hint">只含占位符，不会填入模型 KEY</span></div><pre tabindex="0" aria-label="账户 MCP 配置，仅含用户 PAT 占位符"><code id="manual-mcp-code"></code></pre></div>
+            <div class="manual-copy-actions"><button id="manual-mcp-copy" type="button">复制 MCP 配置（不含真实凭据）</button></div>
+            <p id="manual-mcp-copy-status" role="status" aria-live="polite"></p>
+            <details><summary>Codex 的 NEW_API_USER_PAT 怎么设置？</summary><p>这是账户 MCP 的专用凭据，与 auth.json 中调用模型的 OPENAI_API_KEY 分开。以下在你自己的终端交互输入 PAT，不把明文写入历史；配置后从同一终端启动 Codex。桌面或 IDE 需通过其受信任的启动环境提供该变量，终端变量不会自动传给已打开的桌面进程。</p><pre tabindex="0"># macOS / Linux（Bash / Zsh）
+printf '请输入用户 API PAT: '; read -r -s NEW_API_USER_PAT; printf '\n'; export NEW_API_USER_PAT
+
+# Windows PowerShell
+$env:NEW_API_USER_PAT = [System.Net.NetworkCredential]::new('', (Read-Host '用户 API PAT' -AsSecureString)).Password</pre></details>
+        </div></li>
+        <li class="manual-step"><span class="manual-step-number">3</span><div><h3>询问并核对结果</h3><p>保存配置后重连 MCP，确认能看到 get_balance 和 get_usage。可询问“我的余额还剩多少”“今天用了多少 Token”。默认查询北京时间今天到现在；自定义时间区间最长 31 天，结束时刻不包含。无论账号是不是管理员，都只能查自己的数据。</p></div></li>
+      </ol>
+
+      <p class="manual-notice">MCP 只返回本人账户和消费汇总，不提供充值、修改额度、读取模型 KEY、查看他人或读取提示词的工具。金额沿用 Cockpit 的 quota / 500000 账面单位，不自动换汇；按模型最多列出 20 项，总计仍覆盖全部模型。撤销或过期的 PAT 下次请求即失效。请通过 HTTPS 使用远程 MCP。</p>
+      <p class="hint">本服务兼容 2025-03-26、2025-06-18 和 2025-11-25 协议，采用 <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener noreferrer">MCP Streamable HTTP</a> 的 JSON 响应方式，不提供旧式 SSE 地址或 OAuth 登录。</p>
+    </section>
+

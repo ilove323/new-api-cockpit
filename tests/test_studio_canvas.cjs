@@ -337,7 +337,16 @@ function harness({fallback = false} = {}) {
     const blob = new Blob([fileBytes || pngBytes(w, height, data)], {type: 'image/png'});
     h.images.set(blob, {width: w, height, data: data.slice()}); return blob;
   };
+  h.textInputs = [];
   const attrs = new Map(), events = new Map(), document = {activeElement: null, createElement(tag) {
+    if (tag === 'textarea') {
+      const handlers = new Map(), input = {tagName: 'TEXTAREA', style: {}, value: '', attrs: {}, removed: false,
+        setAttribute(name, value) {this.attrs[name] = value;},
+        addEventListener(name, fn) {handlers.set(name, fn);},
+        focus() {document.activeElement = input;}, remove() {this.removed = true;},
+        fire(name, detail = {}) {const event = {target: input, preventDefault() {}, stopPropagation() {}, ...detail}; handlers.get(name)?.(event);}};
+      h.textInputs.push(input); return input;
+    }
     assert.equal(tag, 'canvas'); const c = new FixtureCanvas(h); h.allocations.push(c); return c;
   }};
   h.host = {ownerDocument: document, clientWidth: 200, clientHeight: 160,
@@ -345,7 +354,8 @@ function harness({fallback = false} = {}) {
     getAttribute: name => attrs.get(name) ?? null, setAttribute: (name, value) => attrs.set(name, value), removeAttribute: name => attrs.delete(name),
     addEventListener(name, fn) {const a = events.get(name) || []; a.push(fn); events.set(name, a);},
     removeEventListener(name, fn) {events.set(name, events.get(name).filter(f => f !== fn));},
-    focus() {document.activeElement = h.host;}, contains(target) {return target === h.host;},
+    focus() {document.activeElement = h.host;}, contains(target) {return target === h.host || h.textInputs.includes(target);},
+    append(input) {assert.ok(h.textInputs.includes(input));},
     setPointerCapture(id) {h.captures.add(id);}, hasPointerCapture: id => h.captures.has(id), releasePointerCapture(id) {h.captures.delete(id);}};
   h.decode = async blob => {if (h.decoder) await h.decoder(blob); const frame = h.images.get(blob); assert.ok(frame, 'fixture decoder only accepts known fixture images'); return {...frame, close() {h.closed++;}};};
   const context = {Blob, Date, crypto: {randomUUID: () => 'document-' + (++h.documentID || (h.documentID = 1))},
@@ -367,6 +377,10 @@ function harness({fallback = false} = {}) {
   };
   h.drag = (tool, points) => {h.editor.setTool(tool); h.fire('pointerdown', h.point(...points[0]));
     for (const p of points.slice(1)) h.fire('pointermove', h.point(...p)); h.fire('pointerup', h.point(...points.at(-1)));};
+  h.inline = () => h.textInputs.findLast(input => !input.removed);
+  h.type = value => {const input = h.inline(); assert.ok(input); input.value = value; input.fire('input'); return input;};
+  h.write = (x, y, value) => {h.editor.setTool('text'); h.fire('pointerdown', h.point(x, y)); h.fire('pointerup', h.point(x, y));
+    h.type(value).fire('keydown', {key: 'Enter', ctrlKey: true});};
   h.nodes = () => Array.from(h.records || [], record => ({
     kind: record.type === 'path' ? 'Line' : record.type === 'text' ? 'Text' : ({arrow:'Arrow',rect:'Rect',ellipse:'Ellipse'})[record.shape],
     attrs: {...record, stroke: record.color}, x: () => record.x ?? record.start?.x ?? record.points[0].x,
@@ -419,7 +433,7 @@ test('all mask tools, erasure, visibility, undo/redo and clears keep the base PN
 test('all vector tools stay selectable/editable objects; a guide is base plus vectors only', async () => {
   const h = harness(), base = h.image(12, 10, new Uint8ClampedArray(480)); await h.editor.load(base); h.editor.setStrokeWidth(1);
   for (const tool of ['pen', 'arrow', 'box', 'ellipse']) h.drag(tool, [[2, 2], [7, 6]]);
-  h.editor.setTool('text'); h.editor.setText('<script>literal text</script>'); h.fire('pointerdown', h.point(2, 2)); h.fire('pointerup', h.point(2, 2));
+  h.write(2, 2, '<script>literal text</script>');
   assert.equal(h.editor.state().annotationCount, 5); assert.equal(h.editor.state().hasMask, false);
   assert.deepEqual(h.nodes().map(n => n.kind), ['Line', 'Arrow', 'Rect', 'Ellipse', 'Text']);
   h.editor.setTool('select'); h.fire('pointerdown', h.point(3, 3)); h.fire('pointerup', h.point(3, 3)); assert.ok(h.editor.state().selectedId);
@@ -437,9 +451,48 @@ test('annotation move, style/text edit and delete are single undoable transactio
   h.editor.undo(); assert.equal(h.nodes()[0].attrs.stroke, '#ef4444'); h.editor.undo(); assert.equal(h.nodes()[0].x(), 1);
   h.editor.redo(); h.fire('pointerdown', h.point(5, 4)); h.fire('pointerup', h.point(5, 4));
   h.fire('keydown', {key: 'Delete'}); assert.equal(h.editor.state().annotationCount, 0); h.editor.undo(); assert.equal(h.editor.state().annotationCount, 1);
-  h.editor.setTool('text'); h.editor.setText('old'); h.fire('pointerdown', h.point(1, 1)); h.fire('pointerup', h.point(1, 1));
+  h.write(1, 1, 'old');
   h.editor.setTool('select'); h.fire('pointerdown', h.point(1, 1)); h.fire('pointerup', h.point(1, 1)); h.editor.setText('new');
   assert.equal(h.nodes().at(-1).attrs.text, 'new'); h.editor.undo(); assert.equal(h.nodes().at(-1).attrs.text, 'old');
+});
+test('text tool opens a blank editor at the clicked document point, tracks zoom and commits one history entry', async () => {
+  const h = harness(); await h.editor.load(h.image(200, 160)); h.editor.setTool('text');
+  h.editor.setText('must not prefill new text');
+  h.fire('pointerdown', h.point(30, 40)); h.fire('pointerup', h.point(30, 40));
+  const input = h.inline(), position = h.stage.children[0].children[0].getAbsoluteTransform().point({x: 30, y: 40});
+  assert.equal(input.value, ''); assert.equal(h.document.activeElement, input);
+  assert.ok(Math.abs(parseFloat(input.style.left) - position.x) < 1e-9);
+  assert.ok(Math.abs(parseFloat(input.style.top) - position.y) < 1e-9);
+  assert.equal(input.wrap, 'off'); assert.equal(input.maxLength, 2000);
+  assert.equal(h.editor.state().revision, 0); assert.equal(h.captures.size, 0);
+  h.type('这里改成红色\n保留背景'); assert.equal(h.editor.state().hasAnnotations, true);
+  h.editor.zoomBy(1.5); assert.equal(input.style.fontSize, 32 * h.editor.state().zoom + 'px');
+  input.fire('keydown', {key: 'Enter', metaKey: true});
+  assert.ok(input.removed); assert.equal(h.editor.state().revision, 1);
+  assert.equal(h.nodes()[0].attrs.text, '这里改成红色\n保留背景');
+  h.editor.undo(); assert.equal(h.editor.state().hasAnnotations, false);
+  h.editor.redo(); assert.equal(h.nodes()[0].attrs.text, '这里改成红色\n保留背景');
+});
+test('clicking another position finishes the previous text and starts the next without reusing content', async () => {
+  const h = harness(); await h.editor.load(h.image(400, 200)); h.editor.setTool('text');
+  h.fire('pointerdown', h.point(10, 10)); const first = h.type('第一处');
+  h.fire('pointerdown', h.point(250, 100)); h.fire('pointerup', h.point(250, 100));
+  assert.equal(h.nodes()[0].attrs.text, '第一处'); assert.equal(h.inline().value, '');
+  first.fire('blur'); assert.ok(h.inline(), 'a delayed blur from the old editor cannot close the new editor');
+  h.type('第二处').fire('blur'); assert.equal(h.editor.state().annotationCount, 2);
+  assert.ok(Math.abs(h.nodes()[1].attrs.x - 250) < 1e-9); assert.ok(Math.abs(h.nodes()[1].attrs.y - 100) < 1e-9);
+});
+test('inline text supports IME, Escape cancellation, blank deletion and double-click editing', async () => {
+  const h = harness(); await h.editor.load(h.image(400, 200)); h.write(20, 20, '原文');
+  h.editor.setTool('select'); h.fire('dblclick', h.point(25, 25));
+  assert.equal(h.inline().value, '原文');
+  const input = h.type('正在输入'); input.fire('keydown', {key: 'Enter', ctrlKey: true, isComposing: true});
+  assert.equal(input.removed, false); input.fire('keydown', {key: 'Escape', isComposing: true});
+  assert.equal(input.removed, false); input.fire('keydown', {key: 'Escape'});
+  assert.equal(h.nodes()[0].attrs.text, '原文');
+  h.fire('dblclick', h.point(25, 25)); h.type('').fire('blur');
+  assert.equal(h.editor.state().hasAnnotations, false); h.editor.undo();
+  assert.equal(h.nodes()[0].attrs.text, '原文');
 });
 test('upstream resize handles transform committed annotation geometry once and undo restores it', async () => {
   const h = harness(); await h.editor.load(h.image(24, 24)); h.editor.setStrokeWidth(2);

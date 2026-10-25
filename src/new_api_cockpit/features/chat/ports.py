@@ -1,0 +1,13 @@
+"""Injected external capabilities, without feature-to-feature imports."""
+
+from typing import Protocol
+
+
+class TokenProvider(Protocol):
+    def list_tokens(self, access, *, group=None): ...
+    def list_models(self, access, token_id, *, group=None): ...
+    def lease_key(self, access, token_id, *, group=None): ...
+
+
+class SessionVerifier(Protocol):
+    def revalidate(self, access): ...

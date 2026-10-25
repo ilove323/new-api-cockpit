@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 import redis
-from new_api_cockpit import image_receipts as receipts
+from new_api_cockpit.features.image_studio import receipts
 
 URL = "redis://127.0.0.1:6379/0"
 BODY = {

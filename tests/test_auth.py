@@ -393,8 +393,8 @@ class AuthTest(unittest.TestCase):
                 auth.verify_pat("fixture")
             self.assertNotIn("private-secret", str(caught.exception))
 
-    def test_all_business_api_methods_accept_pat_and_keep_its_real_actor(self):
-        """Exercise the real guard on every business route, without live writes."""
+    def test_non_chat_business_apis_accept_pat_and_keep_its_real_actor(self):
+        """Legacy business APIs retain PATs; private chat is session-only."""
         identity = {k: USER[k] for k in ("id", "username", "role")}
         with (
             patch("new_api_cockpit.app.verify_pat", return_value=identity) as pat,
@@ -403,6 +403,7 @@ class AuthTest(unittest.TestCase):
             for rule in app.url_map.iter_rules():
                 if (
                     not rule.rule.startswith("/cockpit/api/")
+                    or rule.rule.startswith("/cockpit/api/chat/")
                     or rule.endpoint == "browser_session"
                 ):
                     continue

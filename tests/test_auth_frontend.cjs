@@ -140,6 +140,8 @@ test('documentation fetchOnce never replays side-effecting GETs or mixes PAT wit
   assert.equal(pat.calls[0].init.credentials, 'omit');
   assert.equal(pat.calls[0].init.headers.has('X-Cockpit-Session'), false);
   assert.equal(pat.api.safeNext('/cockpit/docs/'), '/cockpit/docs/');
+  assert.equal(pat.api.safeNext('/cockpit/tools'), '/cockpit/tools');
+  assert.equal(pat.api.safeNext('/cockpit/tools/'), '/cockpit/tools/');
 });
 
 test('logout revokes official browser session before clearing bridge and publishing sign-out', async () => {
@@ -281,8 +283,8 @@ test('enabled ordinary users land in manual rather than a protected admin next p
   }
 });
 
-test('ordinary login returns to manual or intelligence requested pages, never admin pages', async () => {
-  for (const next of ['/cockpit/intelligence', '/cockpit/intelligence/', '/cockpit/manual', '/cockpit/manual/']) {
+test('ordinary login returns to requested documentation or intelligence pages, never admin pages', async () => {
+  for (const next of ['/cockpit/intelligence', '/cockpit/intelligence/', '/cockpit/manual', '/cockpit/manual/', '/cockpit/tools', '/cockpit/tools/']) {
     for (const password of [false, true]) {
       const h = environment({sid: '', expires: 0, login: true, next});
       const fallback = h.handle;

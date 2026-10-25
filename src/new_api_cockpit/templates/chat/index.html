@@ -1,0 +1,47 @@
+{% extends "chat/_base.html" %}
+{% block scripts %}<script defer src="/cockpit/static/chat/app.js"></script>{% endblock %}
+{% block main %}
+<main class="chat-page" id="chat-root" data-owner-user-id="{{ current_user.id if current_user else '' }}">
+  <div class="page-heading"><h1>AI 助手</h1><a href="/cockpit/chat/settings/">个人设置 · MEMORY / Skills</a></div>
+  <p class="hint">仅显示当前用户自己的聊天。历史与原 KEY 是否存在无关；正文不会保存在浏览器，未发送草稿刷新后丢失。勿粘贴凭据。</p>
+  <p id="chat-status" role="status" aria-live="polite"></p>
+  <fieldset id="chat-selection" class="page-panel chat-global-selection"><legend>模型</legend><div class="chat-controls">
+    <label>本人 KEY<select id="chat-token" disabled><option value="">正在读取…</option></select></label>
+    <button id="chat-model-load" type="button" disabled>载入模型目录</button>
+    <label>模型<select id="chat-model" disabled><option value="">先选择 KEY，再载入模型目录</option></select></label>
+  </div></fieldset>
+  <div class="chat-layout">
+    <aside class="page-panel chat-history" aria-label="本人全部聊天">
+      <div class="page-heading"><h2>我的全部聊天</h2><button id="chat-new" type="button">新建</button></div>
+      <button id="chat-list-refresh" type="button" class="button-small">重新加载列表</button>
+      <p id="chat-list-info" class="hint"></p><p id="chat-list-status" role="status"></p>
+      <div id="chat-list" class="chat-list"></div>
+      <button id="chat-more" type="button" hidden>加载更多聊天</button>
+    </aside>
+    <section class="page-panel chat-main" aria-label="聊天内容">
+      <div class="page-heading"><h2 id="chat-title">选择或新建一个聊天</h2><div class="page-actions">
+        <button id="chat-rename" type="button" class="button-small" disabled>重命名</button>
+        <button id="chat-delete" type="button" class="button-small danger" disabled>删除</button>
+      </div></div>
+      <p id="chat-storage-warning" class="warning" hidden></p>
+      <div id="chat-messages" class="chat-messages" aria-label="完整聊天历史"></div>
+      <form id="chat-compose" class="chat-compose">
+        <div class="chat-input-box">
+          <div id="chat-attachments" class="chat-attachments" aria-label="本轮引用附件" hidden></div>
+          <label for="chat-text" class="chat-input-label">消息</label>
+          <textarea id="chat-text" rows="4" placeholder="输入消息，或添加附件…" disabled></textarea>
+        </div>
+        <p id="chat-candidate-status" class="warning" role="status" aria-live="polite"></p>
+        <div class="chat-compose-footer"><span id="chat-text-count" class="hint"></span><button id="chat-attach" type="button" aria-label="上传附件" disabled><span aria-hidden="true">＋</span> 上传附件</button><button id="chat-send" type="submit" disabled>发送</button><button id="chat-stop" type="button" disabled>请求停止</button></div>
+        <input id="chat-upload" type="file" multiple hidden aria-label="选择附件" aria-describedby="chat-upload-hint chat-file-status" disabled>
+        <p id="chat-upload-hint" class="hint" hidden></p><p id="chat-file-status" role="status" aria-live="polite"></p>
+        <p class="hint">不会自动重发。停止不能撤销已计费请求或已保存文件；刷新仅查询历史与状态，不继续生成。</p>
+      </form>
+    </section>
+    <aside class="page-panel chat-files" aria-label="输出内容">
+      <h2>输出内容</h2>
+      <div id="chat-files-list"></div>
+    </aside>
+  </div>
+</main>
+{% endblock %}

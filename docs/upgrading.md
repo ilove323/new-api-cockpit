@@ -1,18 +1,50 @@
 # 升级、备份与回退
 
-升级同时更新 `statistics` 页面/调度池和 `image-studio` 图片请求池；两者使用同一版本镜像。
+升级同时更新 `statistics` 页面/调度池和 `image-studio` 图片请求池；启用聊天的实例还需更新 `chat` 池。所有 Cockpit 池使用同一版本镜像。
 独立的 `image-studio-receipts` Redis 保留原容器和持久卷。本文适用于源码或配套发布镜像。
 当前运行结构见[架构说明](architecture.md)，参数与探活见[部署](deployment.md)。
 
+上述两池流程用于[接入已有 New API](existing-installation.md)的默认 Compose。
+如果是 `/root/new-api` 的七服务全量实例，先按下一节处理；不要把源码目录的 Compose 或发布模板覆盖到实例根目录。
+
+## 全量安装实例的更新
+
+本节仅适用于[全量部署手册](deployment.md)创建的七服务实例。命令在 `/root/new-api` 执行，而不是 `source/`。
+保留实例根目录的 Compose、项目名、`.env`、整个 `config/`、instance ID 和数据目录；不能再次运行 `init-config.py`、管理员初始化或首次建库脚本。
+
+1. 记录当前 Release 标签及三个 Cockpit 池的镜像，给旧镜像保留单独回退标签。预先核对两个数据库、角色/权限、私有配置及聊天的备份计划。
+2. 选择已正式发布的目标版本，下载同版本安装包及校验文件到 `releases/` 的独立目录，校验后先解包到暂存目录，不覆盖正在使用的 `install/`。核对 Compose、角色环境文件、能力文件和迁移差异；预先拉取同版本 GHCR 镜像，不修改基础组件版本。源码实例的获取和构建另见[源码实例更新](deployment-source.md#源码实例的更新)。
+3. 在明确的维护窗口排空图片、聊天及管理操作，再停止 `statistics image-studio chat`；不停止或清理 New API、PostgreSQL、两套 Redis。停止写入后备份整个 `data/chat` 和私有配置，并完成数据库 dump；下方示例备份必须非空且能列出内容。
+4. 按核对后的差异更新公开安装文件与运行 Compose，将 `.env` 中唯一的 `COCKPIT_IMAGE` 更新为新版本，保留其他参数与密钥并记录新标签。仅用 `--no-build --pull never --no-deps` 重建 `statistics image-studio chat`。先等网页池自动迁移并健康，再启动图片和聊天池。不要运行无服务名的 `down` 或 `up --force-recreate` 波及基础组件。
+5. 按[最小验收](deployment.md#9-登录与验收)核对登录、迁移和数据保留。聊天回退受本文末尾的事件格式兼容限制；不能用恢复旧备份无提示覆盖升级后新增数据。
+
+数据库备份示例（`STAMP` 和备份目录在同一片段中建立）：
+
+```bash
+cd /root/new-api
+umask 077
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+install -d -m 700 "backups/$STAMP"
+docker compose exec -T postgres pg_dump -U newapi_owner -Fc new_api > "backups/$STAMP/new-api.dump"
+docker compose exec -T postgres pg_dump -U cockpit_monitor -Fc new_api_cockpit > "backups/$STAMP/cockpit.dump"
+docker compose exec -T postgres pg_dumpall -U postgres --roles-only > "backups/$STAMP/roles.sql"
+test -s "backups/$STAMP/new-api.dump" && test -s "backups/$STAMP/cockpit.dump"
+docker compose exec -T postgres pg_restore -l < "backups/$STAMP/new-api.dump" > "backups/$STAMP/new-api.contents.txt"
+docker compose exec -T postgres pg_restore -l < "backups/$STAMP/cockpit.dump" > "backups/$STAMP/cockpit.contents.txt"
+```
+
+角色备份含密码哈希，必须与配置备份同样保护，不写入公共日志或提交到 Git。上面没有备份聊天、配置和 Redis，不能把数据库 dump 当作完整实例备份。
+恢复监控库只影响监控库，不自动撤销已经发生的 New API 配额/KEY 操作或模型费用；恢复源库也必须另行评估业务影响并取得授权。
+
 ## 升级前检查
 
-- 记录当前 Git 提交、两个应用的镜像 ID/tag/digest、Compose 和私有 override；给旧镜像保留独立的回退标签，避免源码构建覆盖同名 tag。
+- 记录当前版本或 Git 提交、所有已启用 Cockpit 池的镜像 ID/tag/digest、Compose 和私有 override；给旧镜像保留独立的回退标签，避免源码构建覆盖同名 tag。
 - 备份独立监控库、`.env` 及 `NOTIFICATION_ENCRYPTION_KEY`，保存在仓库外的受限目录。
 - 核对 New API 查询账号能读取[兼容范围](compatibility.md)中的字段；配额操作需可访问管理 API。
 - 确认 New API 支持当前登录协议，浏览器入口同源，后台内部地址可用，见[登录与会话](authentication.md)。
 - 更新应用镜像时同时使用配套 Compose，不把当前源码模板与不包含该实现的发布镜像混用。
-- 备份图片协议文件，确认回执 Redis 健康且持久卷仍在。缺少图片池时，先按[图片池部署](deployment.md#生图工作站请求池)准备配置、权限与回执服务。
-- 本文只替换两个应用服务，不对 New API、PostgreSQL 或 Redis 项目执行 `down`，不清理回执或业务数据。
+- 备份图片协议文件，确认回执 Redis 健康且持久卷仍在。缺少图片池时，先按[图片池部署](existing-installation.md#生图工作站请求池)准备配置、权限与回执服务。
+- 本文只替换 Cockpit 应用服务，不对 New API、PostgreSQL 或 Redis 项目执行 `down`，不清理回执或业务数据。
 
 备份监控库（示例库名为 `new_api_cockpit`，应按自己的配置核对）：
 
@@ -30,22 +62,14 @@ docker exec -i <PostgreSQL容器名> pg_restore -l \
 
 保留现有数据库、角色、`.env`、连接串与 Compose 项目名。
 需要固定项目名时使用 `COMPOSE_PROJECT_NAME` 或 `docker compose -p <现有项目名>`。
-保持 `statistics`、`image-studio` 和 `image-studio-receipts` 的服务名与项目名，避免产生另一组容器或新的回执卷。
+保持 `statistics`、`image-studio`、已启用的 `chat` 和 `image-studio-receipts` 的服务名与项目名，避免产生另一组容器或新的回执卷。
 
 ## 准备与切换
 
 先准备新镜像，再停止应用，避免停机期间等待构建或下载。保留 `.env`、端口、网络、协议文件和私有 override，
 不要直接覆盖环境参数。下面两种方式选一种，所有命令都在同一个实际 Compose 项目中执行。
 
-### 源码构建
-
-```bash
-docker compose build statistics image-studio
-docker compose stop statistics image-studio
-docker compose up -d --no-build --no-deps --pull never statistics image-studio
-docker compose ps
-docker compose logs --tail=100 statistics image-studio
-```
+源码项目的构建和切换步骤已移至[源码构建部署](deployment-source.md#源码实例的更新)。以下是发布镜像流程。
 
 ### 发布镜像
 
@@ -59,7 +83,8 @@ docker compose -f compose.release.yml ps
 docker compose -f compose.release.yml logs --tail=100 statistics image-studio
 ```
 
-私有 override 必须在构建、停止和启动命令中始终使用；固定了镜像的 override 也要同步更新两个应用服务。
+私有 override 必须在构建、停止和启动命令中始终使用；固定了镜像的 override 也要同步更新所有已启用的 Cockpit 池。
+已启用可选聊天池时，以上命令须使用原有 `--profile chat` 和私有 override，并把 `chat` 加入服务列表。切换时先启动 `statistics` 并确认健康，再启动 `image-studio chat`；聊天数据与 instance ID 保持不变。
 `--no-deps` 保留已运行的回执 Redis，不用于尚未初始化回执服务的首次部署。
 
 停止前确认同一监控库没有其他应用实例正在发起额度操作。Compose 按服务配置排空请求：
@@ -93,13 +118,13 @@ python -m new_api_cockpit.runtime gunicorn --bind 127.0.0.1:8000 new_api_cockpit
 
 ## 升级后验证
 
-- 两个应用服务使用同一目标镜像且均健康，回执 Redis 保持健康；没有重复项目或意外启动的调度实例。
-- 网页池 `http://127.0.0.1:8091/healthz` 返回 `200`，两种定时器就绪；图片池 `http://127.0.0.1:8092/healthz` 返回 `200`，`receipts_ready` 为 `true`。端口不同的安装按实际配置检查。
+- 所有已启用 Cockpit 池使用同一目标镜像且均健康，回执 Redis 保持健康；没有重复项目或意外启动的调度实例。
+- 网页池 `http://127.0.0.1:8091/healthz` 返回 `200`，两种定时器就绪；图片池 `http://127.0.0.1:8092/healthz` 返回 `200`，`receipts_ready` 为 `true`。已启用聊天池时，`http://127.0.0.1:8093/healthz` 也应返回 `200`，并验证聊天页可输入消息、附件可选、历史及输出下载可用。端口不同的安装按实际配置检查。
 - 刷新页面并重新查询用量，确认日志倍率分行、Token 和消费金额。临时报表详情有效期为 15 分钟，不需要为页面更新清理数据库。
 - 核对迁移版本、已归档月份、预算、通知配置和配额规则仍在；验证网页及 API 认证没有被放开。
 - 配额执行结果在 `/cockpit/operations/` 核对；探活和普通页面访问不会发额度。
 - 如需验证通知，管理员明确点击“发送测试消息”；不要用增减真实用户额度测试部署。
-- 确认 Nginx 保留 `/cockpit/` 前缀、原域名和端口；图片生成/编辑两个精确路径走图片池，其他请求走网页池。管理页面与 API 文档要求管理员，三个模型工具页允许普通用户登录访问；业务 API 也可通过管理员 PAT 调用。
+- 确认 Nginx 保留 `/cockpit/` 前缀、原域名和端口；图片生成/编辑两个精确路径走图片池，聊天 API（含 SSE、附件上传/下载）走聊天池，其他请求走网页池。管理页面与 API 文档要求管理员，三个模型工具页允许普通用户登录访问；聊天外的业务 API 也可通过管理员 PAT 调用。
   未登录时可加载登录页和静态资源，业务请求仍受保护。外部调用的路径与确认头按 [API 参考](api.md) 核对。
 
 首次渠道同步会进行一次完整渠道发现，之后只同步当前目录；显式发现命令及快照清理机制
@@ -110,14 +135,34 @@ python -m new_api_cockpit.runtime gunicorn --bind 127.0.0.1:8000 new_api_cockpit
 
 ## 回退
 
-1. 按各自停止窗口排空并停止两个应用池，确认调度器不再领取任务；不停止或清理回执 Redis。
-2. 恢复两个应用的原镜像、配套 Compose 和图片协议文件，保留 `.env`、加密密钥与现有回执卷。
+1. 按各自停止窗口排空并停止所有已启用 Cockpit 池，确认调度器不再领取任务；不停止或清理回执 Redis。
+2. 恢复所有已启用 Cockpit 池的原镜像、配套 Compose 和图片协议文件，保留 `.env`、加密密钥与现有回执卷。
 3. 核对该应用与现有监控结构是否兼容。回退镜像不会自动降级数据库，不能仅凭新增表就认定回退兼容；需要回退结构时恢复该版本的匹配备份。
 4. 确需数据库恢复时，只恢复目标监控库，并先评估备份后新增数据的损失；不得自动覆盖业务记录或动 New API 原库。
-5. 使用原项目启动两个应用池，重新验证健康、认证、归档、配置和任务状态。已经成功的额度操作不会撤销，结果未知的图片请求不会重放。
+5. 使用原项目启动所有已启用 Cockpit 池，重新验证健康、认证、归档、配置和任务状态。已经成功的额度操作不会撤销，结果未知的图片请求不会重放。
 
 本项目没有自动降级 SQL，也不自动重放结果不明确的额度请求。
 遇到迁移或外部请求不确定状态，先保留证据、备份并人工核对，不以清库或反复重发作为修复手段。
 
 源库 PAT 补建函数单独安装与授权，见[用户管理](users.md#安装补建函数与最小权限)。
 升级不批量补建 PAT，不修改已有用户和 KEY。
+
+
+## 可选聊天功能的升级与回退
+
+本地新增代码不会自动升级已发布镜像。采用包含此功能的版本前，按[AI助手配置](chat.md)准备data目录；接入已有 New API 的可选聊天池需显式 chat profile，七服务全量实例不需要 profile；不需要新的SQL迁移。
+保留`data/chat`和稳定instance ID，不随容器清理。升级前停止chat写入并一致备份；重建后分别验证每用户完整聊天列表、失败/中断历史、附件及个人设置仍在。
+chat回退时先停止新提交、取消并收尾在途轮次，停chat服务并隐藏CHAT_ENABLED入口，保留data；旧版本不理解新schema时禁止继续写，不自动降级/清空。
+模型请求断开或超时可能已计费，恢复备份或回退镜像不会撤销费用，也不得自动续跑。旧web/image池与既有监控迁移按原流程处理。
+
+AI 助手多协议/Memory/压缩扩展保留旧日志读取，但新增事件和字段不能由原 v1 二进制直接读取。升级前一致备份整个 chat 数据（含原生连续状态、工作窗口、个人 manifest 与审计）；回退必须停写并使用兼容版本；如确需恢复升级前备份，应另行评估新增记录与删除状态，不能把更换镜像当作无损 schema 回滚。
+
+### 附件删除与数据恢复
+
+上传附件删除后，`control/` 中的删除标记和原件删除状态必须保留；历史继续显示文件名及“已删除”，不能再下载或引用。上下文缓存也不能绕过删除标记重新读取附件。
+
+一般代码回退只恢复镜像、源码及配套配置，不恢复聊天数据、删除标记、回执或账单。不要为了回退页面恢复整个旧 `data/chat`：这会丢失新聊天，并可能使已经删除的附件重新出现。确需灾难恢复时，先停写、另备当前数据，再核对备份后的删除记录与新增事件；旧版本不能识别删除标记时，保持聊天关闭，不能直接接流量。
+
+## 文档与 VS Code 插件
+
+包含此功能的镜像把插件安装包一并发布，在“文档 → 辅助工具”下载，并从 VSIX 覆盖安装。页面显示的是当前镜像内的版本和校验值，不会自动安装到用户 VS Code。模型使用、辅助工具、API 文档为三个平级入口，旧 MCP 书签会转到辅助工具；API 文档仍限管理员。无新数据库迁移或 Nginx 规则。

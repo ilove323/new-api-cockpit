@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 from PIL import Image, PngImagePlugin
 
-from new_api_cockpit import image_results as results, image_transport as transport
+from new_api_cockpit.features.image_studio import results, transport
 from test_image_transport import (
     GENERATION,
     KEY,

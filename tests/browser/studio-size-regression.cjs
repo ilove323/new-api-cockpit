@@ -28,7 +28,7 @@ async function main() {
     'from flask import render_template,g\nfrom new_api_cockpit.app import app\n'
     + 'with app.test_request_context("/cockpit/image-studio"):\n'
     + ' g.current_user={"id":1,"username":"fixture","role":1,"session_id":"fixture-session","expires_at":4102444800}\n'
-    + ' print(render_template("studio.html",site_name="Studio regression"))'],
+    + ' print(render_template("image_studio/index.html",site_name="Studio regression"))'],
     {cwd:root,env:{...process.env,PYTHONPATH:path.join(root,'src')},encoding:'utf8'});
   assert.equal(rendered.status,0,'Fixture template render failed');
   const catalog = relay ? await relay({kind:'catalog'}) : {
@@ -105,6 +105,8 @@ async function main() {
         await route.fulfill({status:reply.status,json:reply.body});
       });
       await page.goto(`http://127.0.0.1:${server.address().port}/cockpit/image-studio/`);
+      assert.equal(await page.locator('#studio-annotation-text').count(),0);
+      assert.match(await page.locator('label[for="studio-prompt"]').innerText(),/^提示词/);
       await page.selectOption('#studio-token',String(catalog.token_id));
       await page.selectOption('#studio-model',model.id);
       await page.selectOption('#studio-quality','low');
@@ -120,7 +122,11 @@ async function main() {
         await page.click('[data-tool="text"]');
         await page.mouse.click(cx-35,cy-35);
         const inline=page.locator('.studio-inline-text');await inline.waitFor();
+        assert.equal(await inline.inputValue(),'');
+        const textBox=await inline.boundingBox();
+        assert(Math.abs(textBox.x-(cx-35))<1 && Math.abs(textBox.y-(cy-35))<1,'Text begins at the clicked canvas position');
         await inline.fill('把这里改为绿色\n保留其他部分');
+        if(artifactsDir)await page.screenshot({path:path.join(artifactsDir,'inline-text-input.png')});
         assert.equal(await page.locator('#studio-submit').isDisabled(),false,'Typing a guide should enable submission before blur');
         await inline.press('Control+Enter');await inline.waitFor({state:'detached'});
         assert.equal(await page.evaluate(()=>window.__studioEditor.state().annotationCount),1);
@@ -158,8 +164,9 @@ async function main() {
       assert.equal(await page.locator('#studio-submit').isDisabled(),true,'Selection alone needs an instruction');
       await page.click('[data-tool="text"]');
       assert.equal(await page.locator('[data-tool="text"]').getAttribute('aria-pressed'),'true');
-      await page.fill('#studio-annotation-text','Change this square to green');
       await page.mouse.click(cx-40,cy-30);
+      await page.locator('.studio-inline-text').fill('Change this square to green');
+      await page.locator('.studio-inline-text').press('Control+Enter');
       await page.waitForFunction(() => !document.getElementById('studio-submit').disabled);
       assert.equal(await page.inputValue('#studio-prompt'),'');
       assert.match(await page.locator('#studio-submit-label').innerText(),/局部/);

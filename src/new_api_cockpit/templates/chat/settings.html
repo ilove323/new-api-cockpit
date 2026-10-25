@@ -1,0 +1,39 @@
+{% extends "chat/_base.html" %}
+{% block title %}个人上下文{% endblock %}
+{% block page_kind %}settings{% endblock %}
+{% block scripts %}<script defer src="/cockpit/static/chat/settings.js"></script>{% endblock %}
+{% block main %}
+<main class="chat-page chat-settings" id="chat-settings-root">
+  <div class="page-heading"><h1>个人上下文，仅你可见</h1><a href="/cockpit/chat/">返回 AI 助手</a></div>
+  <p class="hint">手动管理，默认空白，不自动提取记忆。不依赖 KEY；仅影响以后开始的轮次，历史快照不会追溯修改或擦除。请勿填写密码、KEY、Cookie 等凭据。</p>
+  <p id="settings-status" role="status" aria-live="polite"></p>
+  <div class="table-toolbar"><span id="settings-context-info" class="hint"></span><button id="settings-refresh" type="button">读取最新设置</button></div>
+  <div class="chat-settings-layout">
+    <aside class="page-panel">
+      <nav class="chat-settings-tabs" aria-label="个人文档">
+        <button type="button" data-profile="MEMORY.md">记忆 MEMORY</button>
+        <button type="button" data-profile="SOUL.md">风格 SOUL</button>
+        <button type="button" data-profile="IDENTITY.md">身份 IDENTITY</button>
+        <button type="button" id="settings-skills-tab">Skills</button>
+      </nav>
+      <section id="settings-skills-panel" hidden><h2>我的全部 Skills</h2><p class="hint">单文件提示模板，不是可执行插件。不加载脚本、网络资源或宿主技能。</p><button id="settings-new-skill" type="button">新建 Skill</button><p id="settings-skill-count" class="hint"></p><div id="settings-skill-list" class="chat-list"></div></section>
+    </aside>
+    <section class="page-panel">
+      <h2 id="settings-document-title">MEMORY.md</h2><p id="settings-document-info" class="hint"></p>
+      <div id="settings-skill-fields" hidden>
+        <div class="chat-controls"><label>Skill 名称<input id="settings-skill-name" placeholder="weekly-summary" autocomplete="off"></label><label>单行描述<input id="settings-skill-description" placeholder="整理本周材料" autocomplete="off"></label></div>
+        <button id="settings-skill-header" type="button" class="button-small">将名称与描述应用到原文</button>
+        <label>导入单个 SKILL.md（仅载入编辑器，不保存）<input id="settings-import-skill" type="file" accept=".md,text/markdown,text/plain"></label>
+        <p class="hint">固定 frontmatter 仅含 name、description，description 使用 JSON 双引号字符串。正文不可执行。新建成功不会自动在聊天中加载。</p>
+      </div>
+      <label>Markdown 原文<textarea id="settings-content" class="chat-editor" rows="18" spellcheck="false" disabled></textarea></label>
+      <p id="settings-byte-count" class="hint"></p>
+      <div class="table-toolbar"><button id="settings-save" type="button" class="button-primary" disabled>保存</button><button id="settings-discard" type="button" disabled>放弃修改</button><button id="settings-clear" type="button" class="danger" disabled>清空文档</button><button id="settings-delete-skill" type="button" class="danger" hidden>删除 Skill</button><button id="settings-preview-toggle" type="button" aria-expanded="false">安全预览</button><button id="settings-copy-draft" type="button">复制当前草稿</button></div>
+      <div id="settings-preview" class="chat-preview" hidden></div>
+      <section id="settings-conflict" class="chat-conflict" hidden>
+        <h3>保存结果或版本发生变化，草稿已保留</h3><p class="warning">不会自动合并、覆盖或重试。下方为最新服务端内容，请与当前草稿核对；之后才能主动采用新版版本号。</p><pre id="settings-latest-content"></pre><button id="settings-rebase" type="button">已核对，保留草稿并采用新版版本号</button>
+      </section>
+    </section>
+  </div>
+</main>
+{% endblock %}

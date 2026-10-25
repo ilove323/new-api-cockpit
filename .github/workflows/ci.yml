@@ -44,17 +44,56 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+      - name: Install document rendering prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends antiword fonts-wqy-zenhei
       - run: pip install . ruff build
-      - run: ruff check src tests
-      - run: ruff format --check src tests
+      - run: ruff check src tests deploy
+      - run: ruff format --check src tests deploy
       - run: python -m unittest discover -s tests
-      - run: for file in src/new_api_cockpit/static/*.js; do node --check "$file"; done
+      - name: Verify account MCP with the official SDK in an isolated environment
+        run: |
+          python -m venv /tmp/cockpit-mcp-sdk
+          /tmp/cockpit-mcp-sdk/bin/pip install mcp==2.3.0
+          MCP_SDK_PYTHON=/tmp/cockpit-mcp-sdk/bin/python python -m unittest discover -s tests -p 'test_account_mcp_sdk.py'
+      - run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file" || exit 1
+          done < <(find src/new_api_cockpit/static -name '*.js' -type f -print0)
       - run: npm ci --prefix frontend/studio --ignore-scripts
       - run: npm --prefix frontend/studio run check
       - run: node --test tests/*.cjs
       - run: npx --yes --package typescript@6.0.3 tsc -p tests/tsconfig.studio.json
       - run: npx --yes --package typescript@6.0.3 tsc -p frontend/studio/tsconfig.json
       - run: python -m build
+
+  vsix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - run: pip install .
+      - run: npm ci --prefix vsix --ignore-scripts
+      - run: npm run --prefix vsix check
+      - name: Test plugin and remove stale build output
+        run: |
+          mkdir -p vsix/dist
+          printf 'obsolete build output\n' > vsix/dist/obsolete-module.js
+          npm test --prefix vsix
+          test ! -e vsix/dist/obsolete-module.js
+        env:
+          COCKPIT_PYTHON: python
+      - run: npm run --prefix vsix package
+      - run: node vsix/scripts/export-download.cjs
+      - run: pip install --no-deps --force-reinstall .
+      - run: python -c "from new_api_cockpit.client_downloads import vscode_release; assert vscode_release() is not None"
 
   container:
     runs-on: ubuntu-latest
@@ -65,6 +104,8 @@ jobs:
       - name: Verify runtime and build boundaries
         run: |
           docker run --rm --entrypoint python cockpit-ci -c "from pathlib import Path; assert not Path('/app/.git').exists(); assert not Path('/app/.env').exists(); assert not Path('/app/DEPLOYMENT.private.md').exists()"
+          docker run --rm --entrypoint python cockpit-ci -c "import shutil; from pathlib import Path; from new_api_cockpit.client_downloads import vscode_release; assert vscode_release() is not None; assert shutil.which('node') is None; assert not Path('/app/vsix').exists()"
+          docker run --rm --network none --entrypoint python cockpit-ci -c "from new_api_cockpit.features.chat.outputs import generate; assert generate('report.pdf', '# 中文报告').startswith(b'%PDF-'); assert generate('chart.png', '{\"width\":64,\"height\":64,\"elements\":[{\"type\":\"text\",\"x\":0,\"y\":0,\"text\":\"中文\",\"size\":12}]}').startswith(b'\x89PNG')"
           docker run -d --name cockpit-ci -p 127.0.0.1:8091:8000 cockpit-ci
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8091/healthz; then break; fi
@@ -74,6 +115,7 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/statistics/)" = 302
           curl -fsS http://127.0.0.1:8091/cockpit/login >/dev/null
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/api/auth/session)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/cockpit/downloads/vscode)" = 401
       - if: always()
         run: docker logs cockpit-ci || true
 

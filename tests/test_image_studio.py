@@ -13,12 +13,17 @@ from unittest.mock import MagicMock, patch
 import psycopg
 from PIL import Image
 
-from new_api_cockpit import (
-    image_contracts,
-    image_receipts,
-    image_studio as studio,
-    image_transport,
-    manual,
+from new_api_cockpit.features.image_studio import (
+    capacity as capacity_control,
+    contracts as image_contracts,
+    receipts as image_receipts,
+    service as studio,
+    source_routes,
+    transport as image_transport,
+)
+from new_api_cockpit.integrations.new_api.token_provider import TokenProvider
+from new_api_cockpit.integrations.new_api.personal_tokens import (
+    TokenError as ManualError,
 )
 from new_api_cockpit.app import app, safe_next
 from test_image_contracts import configuration, route
@@ -69,6 +74,10 @@ def api(path, credential, user_id, **kwargs):
         return {"data": {"key": RAW_KEY}}
     if path == "/api/token/7":
         return {"data": owned()}
+    if path == "/api/user/self":
+        return {"data": {"id": 12, "group": "default"}}
+    if path == "/api/token/auto-groups":
+        return {"data": {"groups": ["海外模型"], "max_count": 8}}
     if path == "/v1/models":
         return {
             "data": [
@@ -94,6 +103,10 @@ def record(*, mask=False, size=(8, 8), alpha=255):
 
 class ImageStudioTest(unittest.TestCase):
     def setUp(self):
+        self.tokens = TokenProvider()
+        self.enterContext(
+            patch.object(studio, "_dependencies", (self.tokens, MagicMock()))
+        )
         self.config = configuration()
         self.configuration = self.enterContext(
             patch.object(studio, "_configuration", side_effect=lambda: self.config)
@@ -102,7 +115,7 @@ class ImageStudioTest(unittest.TestCase):
             patch.object(studio, "_routes", return_value=[route()])
         )
         self.upstream = self.enterContext(
-            patch.object(manual, "upstream", side_effect=api)
+            patch.object(self.tokens, "upstream", side_effect=api)
         )
         self.claim = self.enterContext(patch.object(image_receipts, "claim"))
         self.send = self.enterContext(
@@ -124,25 +137,18 @@ class ImageStudioTest(unittest.TestCase):
             **changes,
         }
 
-    def test_own_exact_gpt_tokens_only_and_no_raw_key(self):
+    def test_all_owned_groups_are_listed_and_invalid_tokens_still_fail(self):
         with patch.object(
-            manual,
+            self.tokens,
             "list_tokens",
-            return_value={
-                "tokens": [{"id": 1, "group": "GPT"}, {"id": 2, "group": "auto"}],
-                "token_manager_path": "/keys",
-            },
+            return_value=[{"id": 1, "group": "GPT"}, {"id": 2, "group": "auto"}],
         ):
             self.assertEqual(
                 studio.list_tokens(OWNER, "fixture")["tokens"],
-                [{"id": 1, "group": "GPT"}],
+                [{"id": 1, "group": "GPT"}, {"id": 2, "group": "auto"}],
             )
         for changes in (
             {"user_id": 99},
-            {"group": "auto"},
-            {"group": "gpt"},
-            {"group": ""},
-            {"group": "default"},
             {"status": 2},
             {"expired_time": 1},
             {"remain_quota": 0},
@@ -150,10 +156,10 @@ class ImageStudioTest(unittest.TestCase):
             with (
                 self.subTest(changes=changes),
                 patch.object(
-                    manual, "upstream", return_value={"data": owned(**changes)}
+                    self.tokens, "upstream", return_value={"data": owned(**changes)}
                 ) as upstream,
             ):
-                with self.assertRaises(manual.ManualError):
+                with self.assertRaises(ManualError):
                     studio.run(OWNER, "fixture", self.body())
                 self.assertEqual(upstream.call_count, 1)
         self.claim.assert_not_called()
@@ -161,6 +167,13 @@ class ImageStudioTest(unittest.TestCase):
 
     def test_models_intersect_permissions_routes_and_never_expose_key(self):
         self.routes.return_value = [route(), route("gpt-image-1-mini")]
+        self.config["profiles"]["generation-only"] = deepcopy(
+            self.config["profiles"]["fixture-v1"]
+        )
+        self.config["profiles"]["generation-only"]["edit"] = None
+        self.config["models"]["gpt-image-1-mini"] = {
+            "5": {"profile": "generation-only", "mapped_model": "gpt-image-1-mini"}
+        }
         data = studio.models(OWNER, "fixture", {"token_id": 7})
         self.assertEqual(
             [m["id"] for m in data["models"]], ["gpt-image-1-mini", "gpt-image-2"]
@@ -195,6 +208,107 @@ class ImageStudioTest(unittest.TestCase):
         self.assertEqual(
             studio.models(OWNER, "fixture", {"token_id": 7}), {"models": []}
         )
+
+    def test_non_gpt_groups_and_model_aliases_can_generate_and_edit(self):
+        name = "公司画图模型"
+        self.config["models"] = {
+            name: {"5": {"profile": "fixture-v1", "mapped_model": name}}
+        }
+        self.routes.return_value = [route(name, route_group="海外模型")]
+
+        def upstream(path, *args, **kwargs):
+            if path == "/api/token/7":
+                return {"data": owned(group="海外模型")}
+            if path == "/v1/models":
+                return {"data": [{"id": name}, {"id": "text-model"}]}
+            return api(path, *args, **kwargs)
+
+        self.upstream.side_effect = upstream
+        catalogue = studio.models(OWNER, "fixture", {"token_id": 7})
+        self.assertEqual([m["id"] for m in catalogue["models"]], [name])
+        contract = catalogue["models"][0]
+        for operation in ("generate", "whole"):
+            body = self.body(
+                model=name, contract_revision=contract["revision"], operation=operation
+            )
+            studio.run(
+                OWNER,
+                "fixture",
+                body,
+                images=None if operation == "generate" else [record()],
+            )
+        self.assertEqual(self.send.call_count, 2)
+        self.routes.assert_called_with(["海外模型"], [name])
+
+    def test_auto_token_uses_its_actual_routing_groups_and_no_unconfigured_model(self):
+        def upstream(path, *args, **kwargs):
+            if path == "/api/token/7":
+                return {"data": owned(group="auto")}
+            return api(path, *args, **kwargs)
+
+        self.upstream.side_effect = upstream
+        self.assertEqual(
+            len(studio.models(OWNER, "fixture", {"token_id": 7})["models"]), 1
+        )
+        self.routes.assert_called_with(["海外模型"], ["gpt-image-2"])
+        self.config["models"].clear()
+        self.routes.return_value = []
+        self.assertEqual(
+            studio.models(OWNER, "fixture", {"token_id": 7}), {"models": []}
+        )
+
+    def test_strict_model_limits_reject_malformed_policy_and_empty_allowlist(self):
+        for policy in (
+            {"model_limits_enabled": None},
+            {"model_limits_enabled": "false"},
+            {"model_limits_enabled": 1},
+            {"model_limits_enabled": True, "model_limits": ["gpt-image-2"]},
+            {"model_limits_enabled": True, "model_limits": "x" * 100001},
+        ):
+
+            def malformed(path, *args, **kwargs):
+                if path == "/api/token/7":
+                    return {"data": owned(**policy)}
+                return api(path, *args, **kwargs)
+
+            with self.subTest(policy=repr(policy)[:80]):
+                self.upstream.side_effect = malformed
+                with self.assertRaises(studio.StudioError) as caught:
+                    studio.run(OWNER, "fixture", self.body())
+                self.assertEqual(caught.exception.status, 502)
+                self.assertEqual(caught.exception.code, "IMAGE_STUDIO_ERROR")
+        self.upstream.side_effect = lambda path, *args, **kwargs: (
+            {"data": owned(model_limits_enabled=True, model_limits="")}
+            if path == "/api/token/7"
+            else api(path, *args, **kwargs)
+        )
+        self.assertEqual(
+            studio.models(OWNER, "fixture", {"token_id": 7}), {"models": []}
+        )
+        with self.assertRaises(studio.StudioError) as caught:
+            studio.run(OWNER, "fixture", self.body())
+        self.assertEqual(caught.exception.status, 403)
+        self.claim.assert_not_called()
+        self.send.assert_not_called()
+
+    def test_owner_change_after_models_is_rechecked_before_receipt_or_paid_post(self):
+        changed = False
+
+        def drift(path, *args, **kwargs):
+            nonlocal changed
+            if path == "/api/token/7" and changed:
+                return {"data": owned(user_id=99)}
+            reply = api(path, *args, **kwargs)
+            if path == "/v1/models":
+                changed = True
+            return reply
+
+        self.upstream.side_effect = drift
+        with self.assertRaises(ManualError) as caught:
+            studio.run(OWNER, "fixture", self.body())
+        self.assertEqual(caught.exception.status, 403)
+        self.claim.assert_not_called()
+        self.send.assert_not_called()
 
     def test_parse_normalizes_without_mutating_and_requires_revision_intent(self):
         body = self.body(prompt="  hello\r\nworld\r  ")
@@ -650,7 +764,9 @@ class ImageStudioTest(unittest.TestCase):
             patch.object(
                 studio, "capacity", side_effect=studio.StudioError("busy", 429)
             ) as capacity,
-            patch("new_api_cockpit.app.studio_edit_body") as parse,
+            patch(
+                "new_api_cockpit.features.image_studio.http.studio_edit_body"
+            ) as parse,
         ):
             self.assertEqual(
                 client.post(
@@ -758,9 +874,9 @@ class ImageStudioTest(unittest.TestCase):
         conn.execute.return_value.fetchone.side_effect = [("epoch",), (True,), (True,)]
         with (
             patch.dict(os.environ, {"COCKPIT_PROCESS_ROLE": "image"}),
-            patch.object(studio, "_monitor_connection", return_value=conn),
-            patch.object(studio, "_capacity_failed", False),
-            patch.object(studio, "_database_epoch", None),
+            patch.object(capacity_control, "_monitor_connection", return_value=conn),
+            patch.object(capacity_control, "_capacity_failed", False),
+            patch.object(capacity_control, "_database_epoch", None),
         ):
             with self.assertRaisesRegex(ValueError, "fixture failure"):
                 with studio.capacity(OWNER):
@@ -796,6 +912,12 @@ class ImageStudioTest(unittest.TestCase):
 
 
 class ImageStudioConfigurationTest(unittest.TestCase):
+    def setUp(self):
+        self.source_db = MagicMock()
+        self.enterContext(
+            patch.object(studio, "_dependencies", (MagicMock(), self.source_db))
+        )
+
     def test_file_loader_is_strict_bounded_and_never_falls_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "protocols.json"
@@ -845,18 +967,20 @@ class ImageStudioConfigurationTest(unittest.TestCase):
         ):
             with (
                 self.subTest(available=available),
-                patch.object(studio.quota, "connect", return_value=context),
-                patch.object(studio, "_source_columns", side_effect=[available, set()]),
-                patch.object(studio, "_gateway_policy", return_value=policy),
+                patch.object(self.source_db, "read_connection", return_value=context),
+                patch.object(
+                    source_routes, "_source_columns", side_effect=[available, set()]
+                ),
+                patch.object(source_routes, "_gateway_policy", return_value=policy),
             ):
-                rows = studio._routes()
+                rows = studio._routes(["海外模型"], ["custom-image"])
                 self.assertTrue(rows[0]["no_affinity_override"])
                 sql = conn.execute.call_args.args[0].as_string()
                 self.assertNotIn("to_jsonb(c)", sql)
                 self.assertNotIn("c.*", sql)
                 self.assertNotIn('"c"."key"', sql)
                 self.assertNotIn("c.key", sql)
-                self.assertIn('a."group"=%s', sql)
+                self.assertIn('a."group"=ANY(%s)', sql)
                 self.assertNotIn("priority=", sql)
                 self.assertNotIn("weight>", sql)
                 for field in available:
@@ -868,7 +992,9 @@ class ImageStudioConfigurationTest(unittest.TestCase):
                     "header_override",
                 } - available:
                     self.assertNotIn('"c"."' + field + '"', sql)
-                self.assertEqual(conn.execute.call_args.args[1], ("GPT", "gpt-image-%"))
+                self.assertEqual(
+                    conn.execute.call_args.args[1], (["海外模型"], ["custom-image"])
+                )
 
     def test_metadata_distinguishes_missing_column_from_missing_select_grant(self):
         conn = MagicMock()
@@ -877,7 +1003,9 @@ class ImageStudioConfigurationTest(unittest.TestCase):
             [{"column_name": "setting"}],
         ]
         self.assertEqual(
-            studio._source_columns(conn, "channels", {"setting", "param_override"}),
+            source_routes._source_columns(
+                conn, "channels", {"setting", "param_override"}
+            ),
             {"setting"},
         )
         query = conn.execute.call_args.args[0]
@@ -889,9 +1017,16 @@ class ImageStudioConfigurationTest(unittest.TestCase):
             [],
         ]
         with self.assertRaises(studio.StudioError) as caught:
-            studio._source_columns(conn, "channels", {"setting"})
+            source_routes._source_columns(conn, "channels", {"setting"})
         self.assertEqual(caught.exception.status, 503)
         self.assertIn("SELECT", str(caught.exception))
+
+    def test_empty_route_scope_never_queries_all_groups_or_models(self):
+        for groups, models in (([], ["alias"]), (["private"], [])):
+            self.assertEqual(
+                source_routes.load_routes(self.source_db, groups, models), []
+            )
+        self.source_db.read_connection.assert_not_called()
 
     def test_route_read_failure_has_short_safe_diagnostic(self):
         for error in (
@@ -899,10 +1034,10 @@ class ImageStudioConfigurationTest(unittest.TestCase):
             psycopg.OperationalError("secret DSN"),
         ):
             with (
-                patch.object(studio.quota, "connect", side_effect=error),
+                patch.object(self.source_db, "read_connection", side_effect=error),
                 self.assertRaises(studio.StudioError) as caught,
             ):
-                studio._routes()
+                studio._routes(["海外模型"], ["custom-image"])
             self.assertEqual(caught.exception.status, 503)
             self.assertNotIn("secret", str(caught.exception))
 
@@ -917,7 +1052,7 @@ class ImageStudioConfigurationTest(unittest.TestCase):
                 "affinity_enabled": enabled,
                 "affinity_rules": rules,
             }
-            return studio._gateway_policy(conn)
+            return source_routes._gateway_policy(conn)
 
         self.assertTrue(check()["no_affinity_override"])
         self.assertFalse(check()["global_pass_through_request_enabled"])

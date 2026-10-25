@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Usage: PGHOST=... PGPASSWORD=... python -m new_api_cockpit.app
 # Production: docker compose up -d --build (Gunicorn serves /cockpit/).
-"""Cockpit pages/APIs, with an isolated synchronous image-request role."""
+"""Cockpit pages/APIs with isolated image and private-chat request roles."""
 
 import os
 import re
@@ -37,9 +37,17 @@ from new_api_cockpit import (
     quality,
     intelligence,
     manual,
+    client_downloads,
     image_studio,
     image_receipts,
 )
+
+from new_api_cockpit.features.image_studio import http as image_http
+from new_api_cockpit.platform.identity import Principal, RequestAccess
+from new_api_cockpit.platform.host import HostServices
+from new_api_cockpit.composition import register_image, register_chat
+from new_api_cockpit.features.chat import http as chat_http
+from new_api_cockpit.features.account_mcp import http as account_mcp_http
 
 from new_api_cockpit.report import (
     TZ,
@@ -69,6 +77,8 @@ USER_ENDPOINTS = {
     "cockpit_home",
     "browser_session",
     "manual_page",
+    "tools_page",
+    "vscode_download",
     "manual_tokens",
     "manual_models",
     "manual_key",
@@ -76,12 +86,12 @@ USER_ENDPOINTS = {
     "intelligence_models",
     "intelligence_test",
     "intelligence_preview",
-    "image_studio_page",
-    "image_studio_tokens",
-    "image_studio_models",
-    "image_studio_generations",
-    "image_studio_edits",
 }
+
+
+USER_ENDPOINTS |= image_http.USER_ENDPOINTS | chat_http.USER_ENDPOINTS
+# This endpoint has its own PAT-only boundary; browser sessions do not grant it.
+USER_ENDPOINTS.add(account_mcp_http.ENDPOINT)
 
 
 class JSONProvider(DefaultJSONProvider):
@@ -127,8 +137,14 @@ def safe_next(value):
         "/cockpit/intelligence/",
         "/cockpit/manual",
         "/cockpit/manual/",
+        "/cockpit/tools",
+        "/cockpit/tools/",
         "/cockpit/image-studio",
         "/cockpit/image-studio/",
+        "/cockpit/chat",
+        "/cockpit/chat/",
+        "/cockpit/chat/settings",
+        "/cockpit/chat/settings/",
         "/cockpit/api/statistics/export",
     }
     return value if not parsed.netloc and parsed.path in paths else default
@@ -150,6 +166,7 @@ def request_identity():
     allow_pat = (
         request.path.startswith("/cockpit/api/")
         and request.endpoint != "browser_session"
+        and request.endpoint not in chat_http.USER_ENDPOINTS
     )
     authorization = request.headers.get("Authorization")
     token = request.cookies.get(COOKIE_NAME)
@@ -160,7 +177,9 @@ def request_identity():
                 raise LoginRequired("Bearer 凭据格式无效。")
             # JWTs are validated upstream; opaque PATs are looked up verbatim.
             if allow_pat and (pat_only or "." not in value):
+                g.auth_kind = "pat"
                 return verify_pat(value)
+            g.auth_kind = "session"
             return verify_session(value, allow_user=True)
         if pat_only or not token:
             raise LoginRequired("请使用 Bearer 凭据。")
@@ -169,6 +188,7 @@ def request_identity():
     # Other authorization schemes grant no access; a browser cookie still works.
     if not token:
         return None
+    g.auth_kind = "session"
     return verify_session(token, allow_user=True)
 
 
@@ -210,7 +230,10 @@ def auth_failure(
         "quality_page",
         "intelligence_page",
         "manual_page",
-        "image_studio_page",
+        "tools_page",
+        "image_studio.page",
+        "chat.page",
+        "chat.settings_page",
     }
     if is_page and status == 401:
         response = redirect(login_url(), 302)
@@ -238,12 +261,27 @@ def auth_failure(
 
 @app.before_request
 def authenticate():
-    if image_studio.process_role() == "image" and request.endpoint not in {
-        "health",
-        "image_studio_generations",
-        "image_studio_edits",
-    }:
+    role = os.environ.get("COCKPIT_PROCESS_ROLE", "web")
+    if role not in {"web", "image", "chat"}:
+        return jsonify(error="实例角色无效。", code="CHAT_CONFIG_INVALID"), 503
+    if role == "image" and request.endpoint not in image_http.ROLE_ENDPOINTS[
+        "image"
+    ] | {"health"}:
         return jsonify(error="该实例只处理图片请求。"), 404
+    if role == "chat" and request.endpoint not in chat_http.API_ENDPOINTS | {"health"}:
+        return jsonify(error="该实例只处理聊天请求。"), 404
+    if request.endpoint == account_mcp_http.ENDPOINT:
+        # Keep normal-user PATs OUT of request_identity()/administrator APIs.
+        # The MCP handler revalidates PATs/scopes through official own-account
+        # endpoints, without accepting cookies, JWTs, or requested identities.
+        return None
+    if request.endpoint in chat_http.USER_ENDPOINTS:
+        if os.environ.get("CHAT_ENABLED", "false").lower() != "true":
+            return jsonify(error="聊天功能未启用。", code="CHAT_NOT_FOUND"), 404
+        if request.endpoint not in chat_http.ROLE_ENDPOINTS.get(role, frozenset()):
+            return jsonify(
+                error="聊天请求池尚未接入。", code="CHAT_STORAGE_UNAVAILABLE"
+            ), 503
     if request.endpoint is None or request.endpoint in {
         "static",
         "health",
@@ -266,11 +304,23 @@ def authenticate():
         return auth_failure()
     if user["role"] < 10 and request.endpoint not in USER_ENDPOINTS:
         return auth_failure(
-            "此功能仅管理员可访问；普通用户可使用模型使用、智力测试和生图工作站。",
+            "此功能仅管理员可访问；普通用户可使用模型使用、辅助工具、智力测试和生图工作站。",
             403,
             "AUTH_FORBIDDEN",
             clear_cookie=False,
         )
+    if request.endpoint in chat_http.API_ENDPOINTS:
+        if (
+            not user.get("session_id")
+            or getattr(g, "auth_kind", "session") != "session"
+        ):
+            return jsonify(
+                error="聊天仅接受本人登录会话。", code="CHAT_SESSION_REQUIRED"
+            ), 403
+        if not request.headers.get("X-Cockpit-Session"):
+            return jsonify(
+                error="缺少当前会话标识。", code="CHAT_SESSION_REQUIRED"
+            ), 403
     expected = request.headers.get("X-Cockpit-Session")
     if expected and expected != user.get("session_id"):
         return auth_failure(
@@ -281,7 +331,10 @@ def authenticate():
 
 @app.context_processor
 def login_context():
-    return {"current_user": getattr(g, "current_user", None)}
+    return {
+        "current_user": getattr(g, "current_user", None),
+        "chat_enabled": os.environ.get("CHAT_ENABLED", "false").lower() == "true",
+    }
 
 
 @app.get("/cockpit/login")
@@ -351,6 +404,8 @@ def headers(response):
             response.set_data(app.json.dumps(body))
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    if request.endpoint == account_mcp_http.ENDPOINT and response.status_code == 401:
+        response.headers["WWW-Authenticate"] = 'Bearer realm="cockpit-account-mcp"'
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
     )
@@ -372,6 +427,8 @@ def headers(response):
         "manual_tokens",
         "manual_models",
         "manual_key",
+        "tools_page",
+        "vscode_download",
     }:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
@@ -387,7 +444,7 @@ def headers(response):
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
         )
-    if request.endpoint == "image_studio_page" or request.path.startswith(
+    if request.endpoint == "image_studio.page" or request.path.startswith(
         "/cockpit/api/image-studio/"
     ):
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -396,11 +453,28 @@ def headers(response):
             "connect-src 'self'; img-src 'self' data: blob:; "
             "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         )
+    if request.endpoint in chat_http.USER_ENDPOINTS:
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+            "img-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; "
+            "form-action 'self'; frame-ancestors 'none'"
+        )
     return response
 
 
 @app.get("/healthz")
 def health():
+    if os.environ.get("COCKPIT_PROCESS_ROLE") == "chat":
+        from new_api_cockpit.composition import get_chat_service
+
+        try:
+            state = get_chat_service(verify_session).health()
+        except ValueError:
+            state = {"ready": False, "role": "chat"}
+        return jsonify(
+            status="ok" if state["ready"] else "unhealthy", chat=state
+        ), 200 if state["ready"] else 503
     state = (
         image_studio.health()
         if image_studio.process_role() == "image"
@@ -427,6 +501,32 @@ def cockpit_home():
 @app.get("/cockpit/manual/")
 def manual_page():
     return render_template("manual.html", site_name=load_site_name())
+
+
+@app.get("/cockpit/tools")
+@app.get("/cockpit/tools/")
+def tools_page():
+    return render_template(
+        "tools.html",
+        site_name=load_site_name(),
+        vscode_release=client_downloads.vscode_release(),
+    )
+
+
+@app.get("/cockpit/downloads/vscode")
+def vscode_download():
+    release = client_downloads.vscode_release()
+    if not release:
+        return jsonify(
+            error="当前实例未包含可用的 VS Code 插件安装包，请重新构建镜像。"
+        ), 404
+    return send_file(
+        release.path,
+        as_attachment=True,
+        download_name=release.filename,
+        mimetype="application/octet-stream",
+        etag=release.sha256,
+    )
 
 
 @app.get("/cockpit/api/manual/tokens")
@@ -456,168 +556,6 @@ def manual_key():
 @app.errorhandler(manual.ManualError)
 def manual_error(exc):
     return jsonify(error=str(exc), code=exc.code), exc.status
-
-
-@app.get("/cockpit/image-studio")
-@app.get("/cockpit/image-studio/")
-def image_studio_page():
-    return render_template("studio.html", site_name=load_site_name())
-
-
-@app.get("/cockpit/api/image-studio/tokens")
-def image_studio_tokens():
-    return jsonify(image_studio.list_tokens(g.current_user, new_api_credential()))
-
-
-def studio_request(*, multipart=False):
-    if request.headers.get("X-Cockpit-Studio") != "1":
-        raise image_studio.StudioError("请求缺少 X-Cockpit-Studio: 1。", 403)
-    if multipart:
-        if request.mimetype != "multipart/form-data":
-            raise image_studio.StudioError("改图请求需要 multipart/form-data。", 400)
-        request.max_content_length = 24 * 1024 * 1024
-        request.max_form_memory_size = 192 * 1024
-        request.max_form_parts = 16
-    else:
-        if not request.is_json:
-            raise image_studio.StudioError("请求需要 JSON。", 400)
-        request.max_content_length = 192 * 1024
-    if request.content_length and request.content_length > request.max_content_length:
-        raise image_studio.StudioError("图片请求过大。", 413)
-
-
-@app.post("/cockpit/api/image-studio/models")
-def image_studio_models():
-    studio_request()
-    request.max_content_length = 1024
-    return jsonify(
-        image_studio.models(
-            g.current_user, new_api_credential(), request.get_json(silent=True)
-        )
-    )
-
-
-@app.post("/cockpit/api/image-studio/generations")
-def image_studio_generations():
-    studio_request()
-    with image_studio.capacity(g.current_user):
-        return jsonify(
-            image_studio.run(
-                g.current_user, new_api_credential(), request.get_json(silent=True)
-            )
-        )
-
-
-def studio_edit_body():
-    from . import image_transport
-    from PIL import Image
-    from io import BytesIO
-    import json
-
-    form = request.form
-    required = {
-        "token_id",
-        "model",
-        "prompt",
-        "parameters",
-        "request_id",
-        "contract_revision",
-        "intent",
-    }
-    if "contract_revision" not in form or "intent" not in form:
-        raise image_studio.StudioError(
-            "工作站协议已更新，请刷新模型后重新提交。", 409, "IMAGE_CONTRACT_CHANGED"
-        )
-    if set(form) != required or any(len(form.getlist(k)) != 1 for k in required):
-        raise image_studio.StudioError("改图表单字段无效或重复。")
-    if not re.fullmatch(r"[1-9][0-9]{0,9}", form["token_id"]):
-        raise image_studio.StudioError("令牌 ID 无效。")
-    try:
-        params = json.loads(form["parameters"])
-        intent = json.loads(form["intent"])
-    except ValueError:
-        raise image_studio.StudioError("图片参数或编辑意图不是有效的 JSON。") from None
-    body = image_studio.parse_request(
-        {
-            **form.to_dict(),
-            "token_id": int(form["token_id"]),
-            "parameters": params,
-            "intent": intent,
-        }
-    )
-    uploads = request.files
-    images = uploads.getlist("image[]")
-    masks = uploads.getlist("mask")
-    if (
-        set(uploads) - {"image[]", "mask"}
-        or not 1 <= len(images) <= 4
-        or len(masks) > 1
-    ):
-        raise image_studio.StudioError("请上传 1–4 张图像，遮罩最多一张。")
-    inspected, total_pixels, sent_bytes = [], 0, 0
-    try:
-        for index, file in enumerate(images):
-            data = file.read(image_transport.MAX_INPUT_BYTES + 1)
-            image = image_transport.inspect_image(
-                data, max_pixels=16_000_000 if index == 0 else 32_000_000
-            )
-            total_pixels += image["width"] * image["height"]
-            sent_bytes += len(image["data"])
-            if total_pixels > 32_000_000:
-                raise image_studio.StudioError(
-                    "输入图像的解码像素合计超过 32 MP。", 413
-                )
-            inspected.append(image)
-        mask = None
-        if masks:
-            mask = image_transport.inspect_image(masks[0].read(4_000_001), mask=True)
-            if (mask["width"], mask["height"]) != (
-                inspected[0]["width"],
-                inspected[0]["height"],
-            ):
-                raise image_studio.StudioError("遮罩尺寸必须与第一张实际输入图像一致。")
-            with Image.open(BytesIO(mask["data"])) as decoded:
-                if decoded.getchannel("A").getextrema()[0] == 255:
-                    raise image_studio.StudioError("局部修改请先画出修改区域。")
-            sent_bytes += len(mask["data"])
-        if sent_bytes > image_transport.MAX_UPLOAD_BYTES - 65536:
-            raise image_studio.StudioError(
-                "规范化后的输入图片过大，请减少参考图。", 413
-            )
-        return body, inspected, mask
-    finally:
-        for file in images + masks:
-            file.close()
-
-
-@app.post("/cockpit/api/image-studio/edits")
-def image_studio_edits():
-    from . import image_transport
-
-    studio_request(multipart=True)
-    try:
-        with image_studio.capacity(g.current_user):
-            body, images, mask = studio_edit_body()
-            return jsonify(
-                image_studio.run(
-                    g.current_user, new_api_credential(), body, images=images, mask=mask
-                )
-            )
-    except image_transport.ImageError as exc:
-        raise image_studio.StudioError(
-            str(exc), exc.status, exc.code, exc.uncertain
-        ) from None
-
-
-@app.errorhandler(image_studio.StudioError)
-@app.errorhandler(image_receipts.ReceiptError)
-def image_studio_error(exc):
-    return jsonify(
-        error=str(exc),
-        code=exc.code,
-        uncertain=exc.uncertain,
-        details=getattr(exc, "details", {}),
-    ), exc.status
 
 
 @app.get("/cockpit/docs")
@@ -1328,7 +1266,7 @@ def http_error(exc):
         body.update(
             code="IMAGE_TOO_LARGE" if exc.code == 413 else "IMAGE_INVALID_REQUEST",
             uncertain=exc.code >= 500
-            and request.endpoint in {"image_studio_generations", "image_studio_edits"},
+            and request.endpoint in {"image_studio.generations", "image_studio.edits"},
         )
     response.set_data(app.json.dumps(body))
     response.content_type = "application/json"
@@ -1390,10 +1328,53 @@ def quota_error(exc):
     return jsonify(error=str(exc)), 400
 
 
-if __name__ == "__main__":
-    if balance.configured():
-        balance.initialize()
-    timers.start()
+def feature_access():
+    user = g.current_user
+    return RequestAccess(
+        Principal(
+            user_id=user["id"],
+            username=user.get("username", ""),
+            role=user["role"],
+            session_id=user.get("session_id"),
+            expires_at=user.get("expires_at"),
+            auth_kind=getattr(
+                g, "auth_kind", "session" if user.get("session_id") else "pat"
+            ),
+        ),
+        new_api_credential(),
+    )
+
+
+def feature_write(header, content_type):
+    from werkzeug.exceptions import Forbidden, BadRequest
+
+    if not same_origin_request() or request.headers.get(header) != "1":
+        raise Forbidden("请求来源或特征头无效。")
+    if request.mimetype != content_type:
+        raise BadRequest("请求内容类型无效。")
+
+
+feature_host = HostServices(feature_access, feature_write, lambda: load_site_name())
+register_image(app, feature_host)
+register_chat(app, feature_host, verify_session)
+app.register_blueprint(account_mcp_http.create_blueprint())
+
+
+def run_development():
+    role = os.environ.get("COCKPIT_PROCESS_ROLE", "web")
+    if role not in {"web", "image", "chat"}:
+        raise SystemExit("Unknown process role")
+    chat_service = None
+    if role == "web":
+        if balance.configured():
+            balance.initialize()
+        timers.start()
+    elif role == "image":
+        image_studio.initialize_capacity()
+    else:
+        from new_api_cockpit.composition import get_chat_service
+
+        chat_service = get_chat_service(verify_session)
     try:
         app.run(
             host="127.0.0.1",
@@ -1401,4 +1382,11 @@ if __name__ == "__main__":
             use_reloader=False,
         )
     finally:
-        timers.stop()
+        if role == "web":
+            timers.stop()
+        elif chat_service is not None:
+            chat_service.shutdown()
+
+
+if __name__ == "__main__":
+    run_development()

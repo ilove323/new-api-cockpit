@@ -1,6 +1,15 @@
-/* Model-use UI only; shared header, sidebar and controls remain in ui/navigation. */
+/* Model and account-tool guide layout; the shared shell remains in ui/navigation. */
 .manual-page { display: grid; gap: 16px; }
+.manual-page [id$="-title"] { scroll-margin-top: 80px; }
 .manual-page .page-heading { margin-bottom: 12px; }
+.manual-definitions { display: grid; gap: 12px; margin: 16px 0; }
+.manual-definitions > div { display: grid; grid-template-columns: minmax(130px, .24fr) minmax(0, 1fr); gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--ui-border); }
+.manual-definitions dt { font-weight: 600; font-size: 13px; }
+.manual-definitions dd { margin: 0; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.manual-mcp label { display: block; margin: 12px 0; max-width: 360px; }
+.manual-mcp select { width: 100%; }
+.manual-mcp details { margin: 16px 0; font-size: 13px; line-height: 1.8; }
+.manual-mcp details pre { padding: 12px; overflow: auto; background: var(--ui-muted); border-radius: 10px; font-size: 12px; }
 .manual-intro .page-heading p { margin-bottom: 0; }
 .manual-intro .page-heading > a { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .manual-progress { display: flex; flex-wrap: wrap; gap: 12px 32px; list-style: none; margin: 20px 0; padding: 0; }
@@ -28,9 +37,9 @@
 .manual-screenshot { margin: 14px 0 0; max-width: 760px; }
 .manual-screenshot img { display: block; max-width: 100%; width: auto; height: auto; max-height: 480px; object-fit: contain; border: 1px solid var(--ui-border); border-radius: 10px; }
 .manual-screenshot figcaption { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 6px; font-size: 12px; color: var(--ui-muted-text); }
-.manual-examples { padding-top: 16px; border-top: 1px solid var(--ui-border); }
-.manual-examples .page-heading h3 { margin: 0; }
-.manual-examples .page-heading select { max-width: min(360px, 100%); }
+.manual-step-example { min-width: 0; margin-top: 14px; }
+.manual-step-example > .hint { margin-bottom: 8px; }
+.manual-step-example .manual-copy-status { margin-top: 8px; font-size: 12px; }
 .manual-preview { border: 1px solid var(--ui-border); border-radius: 13px; overflow: hidden; }
 .manual-code-heading { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--ui-muted); font-size: 12px; overflow-wrap: anywhere; }
 .manual-preview pre { margin: 0; padding: 16px; max-height: 440px; overflow: auto; font: 12px/1.8 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
@@ -51,8 +60,8 @@
   .manual-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 540px) {
+  .manual-definitions > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .manual-selection, .manual-guide-controls, .manual-tools { grid-template-columns: minmax(0, 1fr); }
   .manual-progress { gap: 8px 16px; }
   .manual-copy-actions > button { width: 100%; }
-  .manual-examples .page-heading > label, .manual-examples .page-heading select { width: 100%; max-width: none; }
 }

@@ -1,8 +1,10 @@
 .env
+/data/
 .env.*
 DEPLOYMENT.private.md
 docker-compose.override.yml
 image-studio-capabilities.json
+chat-capabilities.json
 .venv
 __pycache__
 tests
@@ -40,3 +42,8 @@ build
 dist
 *.egg-info
 frontend/
+vsix/node_modules/
+vsix/dist/
+vsix/test/
+vsix/*.vsix
+src/new_api_cockpit/bundled_clients/

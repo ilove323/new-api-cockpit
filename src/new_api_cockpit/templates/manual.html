@@ -17,6 +17,7 @@
   {% call app_header(site_name) %}{% endcall %}
   {% include "partials/sidebar.html" %}
   <main id="manual-page" class="manual-page">
+    {% include "partials/documentation-nav.html" %}
     <section class="page-panel manual-intro" aria-labelledby="manual-title">
       <div class="page-heading"><div><h1 id="manual-title">模型使用</h1><p class="hint">选好自己的令牌和模型，再跟着教程接入常用工具。</p></div><a id="manual-token-manager" href="/keys">{{ icon('key-round') }}管理我的令牌</a></div>
       <ol class="manual-progress" aria-label="使用流程"><li><span>1</span>选令牌与模型</li><li><span>2</span>选工具与系统</li><li><span>3</span>复制配置并设置</li></ol>
@@ -28,6 +29,18 @@
       <dl id="manual-token-details" class="manual-token-details" hidden></dl>
       <p id="manual-load-status" role="status" aria-live="polite">正在读取本人令牌…</p>
       <p id="manual-empty" class="manual-notice" hidden>没有可用令牌？请先到 <a href="/keys">New API 的令牌管理</a> 创建或启用自己的令牌，再回来刷新。</p>
+      <p class="hint"><a href="#manual-basics-title">接入配置说明</a> · <a href="/cockpit/tools#manual-mcp-title">查询本人余额和用量的 MCP</a></p>
+    </section>
+
+    <section class="page-panel manual-basics" aria-labelledby="manual-basics-title">
+      <h2 id="manual-basics-title">接入配置说明</h2>
+      <dl class="manual-definitions">
+        <div><dt>模型调用 KEY</dt><dd>从上方“本人令牌”选择，通常以 sk- 开头。用来配置下方客户端并调用模型，消费记在你的账户。页面只显示占位符，明确点击含 KEY 复制按钮才读取该令牌。</dd></div>
+        <div><dt>用户 API 访问令牌（PAT）</dt><dd>从 <a href="/security">New API 的“安全与访问”</a> 创建，供<a href="/cockpit/tools">账户 MCP 和 VS Code 插件</a>查询本人账户或管理 KEY。它不是模型 KEY；新式 PAT 通常以 nap_ 开头。不要互换，也不要把管理权限交给客户端。</dd></div>
+        <div><dt>服务地址</dt><dd>各客户端的地址格式不同：有的填站点根地址，有的需要 /v1，有的要填完整接口路径。示例按当前站点的地址和端口生成，按对应步骤填写即可，无需再补 /v1。</dd></div>
+        <div><dt>接口协议</dt><dd>本站提供 Chat、Responses 和 Anthropic Messages 接口。按教程选择客户端支持的协议，模型也须支持该接口，不能只凭模型名称判断。读取模型列表不会生成内容；连接测试、任务和对话按实际用量计费。</dd></div>
+        <div><dt>配置文件</dt><dd>修改前保留备份，只合并需要的字段，不覆盖整份配置。文件名不要多出 .txt 后缀；JSON 不支持注释和尾随逗号，TOML 顶层字段放在表头之前。保存后完全退出客户端再打开。</dd></div>
+      </dl>
     </section>
 
     <section class="page-panel" aria-labelledby="manual-tools-title">
@@ -46,13 +59,6 @@
       <p id="manual-protocol-help" class="warning" hidden></p>
 
       <ol id="manual-steps" class="manual-steps" aria-label="配置步骤"></ol>
-      <section class="manual-examples" aria-labelledby="manual-example-title">
-        <div class="page-heading"><h3 id="manual-example-title">配置示例</h3><label for="manual-snippet"><span class="sr-only">选择配置片段</span><select id="manual-snippet" disabled><option value="">暂无示例</option></select></label></div>
-        <p id="manual-preview-help" class="hint">请选择令牌和模型。</p>
-        <div id="manual-preview" class="manual-preview" hidden><div class="manual-code-heading"><span id="manual-code-title"></span><span id="manual-code-language" class="hint"></span></div><pre tabindex="0" aria-label="仅含占位符的配置示例"><code id="manual-code"></code></pre></div>
-        <div class="manual-copy-actions"><button id="manual-copy-key" class="button-primary" type="button" disabled>{{ icon('key-round') }}<span id="manual-copy-key-label">复制配置（含 KEY）</span></button></div>
-        <p id="manual-copy-status" role="status" aria-live="polite"></p>
-      </section>
       <section class="manual-extra" aria-labelledby="manual-notes-title"><h3 id="manual-notes-title">使用前留意</h3><ul id="manual-notes"></ul></section>
       <section class="manual-extra" aria-labelledby="manual-sources-title"><h3 id="manual-sources-title">官方资料</h3><ul id="manual-sources"></ul></section>
     </section>
@@ -64,6 +70,7 @@
       <details><summary>401 / 403：登录或权限问题</summary><p>401 时重新登录；403 时检查所选令牌是否有该模型的权限及 IP 限制。切换账号后请重新加载本页，不要继续使用旧配置。</p></details>
       <details><summary>404 / model not found：地址、模型或协议不匹配</summary><p>模型名称要与列表一致，包含大小写。检查工具要求的是根地址、/v1 地址还是完整接口路径；按教程选择协议。</p></details>
       <details><summary>429 / 额度不足 / 连接超时</summary><p>检查令牌额度、账户余额及服务限制，稍后再手动操作。超时不代表请求未到达；请先核对工具记录和用量，不要反复发送。</p></details>
+      <details><summary>Codex 还是要求登录，或配置文件没生效</summary><p>确认 config.toml 和 auth.json 位于同一个 CODEX_HOME，默认是 ~/.codex；config.toml 顶层设置 cli_auth_credentials_store = "file"，提供商表内设置 requires_openai_auth = true。auth.json 使用严格 JSON，OPENAI_API_KEY 中是模型 KEY。备份旧登录后再更换认证文件，检查项目配置、环境变量、启动参数和组织策略是否覆盖了设置。</p></details>
       <details><summary>剪贴板不可用</summary><p>使用 HTTPS 或本机的安全页面，并允许浏览器访问剪贴板。若复制被阻止，可手动选中预览中的配置复制，再在工具内填写 KEY。</p></details>
     </section>
     <noscript><p class="manual-notice">此页面需要启用 JavaScript 才能读取本人令牌和生成配置。可先前往 <a href="/keys">New API 的令牌管理</a>。</p></noscript>

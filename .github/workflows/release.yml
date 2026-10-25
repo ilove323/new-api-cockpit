@@ -25,10 +25,11 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python - <<'PY'
-          import os, re, tomllib
+          import json, os, re, tomllib
           version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
           assert re.fullmatch(r"\d+\.\d+\.\d+", version), "Stable versions only"
           assert os.environ["RELEASE_TAG"] == "v" + version, "Tag/version mismatch"
+          assert json.load(open("vsix/package.json"))["version"] == version, "Plugin/version mismatch"
           PY
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -45,6 +46,7 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: image
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -57,12 +59,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
+          python deploy/build_release_bundle.py --tag "$RELEASE_TAG" --output-dir dist
+          bundle="new-api-cockpit-${RELEASE_TAG}-deploy.tar.gz"
+          image="ghcr.io/${GITHUB_REPOSITORY}:${RELEASE_TAG#v}"
+          printf '%s@%s\n' "${image%%:*}" "$IMAGE_DIGEST" > dist/image-digest.txt
+          docker pull "$image@$IMAGE_DIGEST"
+          # Export the very VSIX served by the published image, not a separate rebuild.
+          docker run --rm --network none --entrypoint python "$image@$IMAGE_DIGEST" -c '
+          import io, json, sys, tarfile
+          from new_api_cockpit.client_downloads import vscode_release
+          release = vscode_release()
+          assert release is not None, "Published image is missing its VSIX"
+          metadata = {k: getattr(release, k) for k in ("version", "filename", "size", "sha256")}
+          files = {release.filename: release.path.read_bytes(), "vscode-extension.json": (json.dumps(metadata, indent=2) + "\n").encode()}
+          with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+              for name, body in files.items():
+                  info = tarfile.TarInfo(name)
+                  info.size, info.mode = len(body), 0o644
+                  archive.addfile(info, io.BytesIO(body))
+          ' > dist/clients.tar
+          tar -xf dist/clients.tar -C dist
+          rm dist/clients.tar
+          vsix=$(python -c 'import json; print(json.load(open("dist/vscode-extension.json"))["filename"])')
           cp .env.example default.env.example
           sha256sum compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json > SHA256SUMS
           (cd sql && sha256sum source_pat_function.sql) >> SHA256SUMS
+          assets=(compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json sql/source_pat_function.sql SHA256SUMS "dist/$bundle" "dist/$bundle.sha256" "dist/$vsix" dist/vscode-extension.json dist/image-digest.txt)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json sql/source_pat_function.sql SHA256SUMS --clobber
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG" compose.release.yml default.env.example nginx.conf.example image-studio-capabilities.example.json sql/source_pat_function.sql SHA256SUMS
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG" "${assets[@]}"
           fi

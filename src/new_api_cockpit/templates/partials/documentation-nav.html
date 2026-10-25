@@ -1,0 +1,9 @@
+<nav class="documentation-nav" aria-label="文档分类">
+  <a href="/cockpit/manual" {% if request.endpoint == 'manual_page' %}aria-current="page"{% endif %}>模型使用</a>
+  <a href="/cockpit/tools" {% if request.endpoint == 'tools_page' %}aria-current="page"{% endif %}>辅助工具</a>
+  {% if current_user and current_user.role >= 10 %}
+  <a href="/cockpit/docs/" {% if request.endpoint == 'api_docs_page' %}aria-current="page"{% endif %}>API 文档</a>
+  {% else %}
+  <span aria-disabled="true" title="管理接口文档仅管理员可访问">API 文档</span>
+  {% endif %}
+</nav>

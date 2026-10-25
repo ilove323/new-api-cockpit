@@ -5,6 +5,7 @@ services:
       context: .
       args:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     stop_grace_period: 90s
@@ -27,12 +28,57 @@ services:
       timeout: 5s
       retries: 3
 
+  # Optional: enable CHAT_ENABLED and prepare ./data/chat before --profile chat.
+  chat:
+    profiles: [chat]
+    image: new-api-cockpit:local
+    build:
+      context: .
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      COCKPIT_PROCESS_ROLE: chat
+      NEW_API_INTERNAL_URL: ${NEW_API_INTERNAL_URL:-http://new-api:3000}
+      CHAT_ENABLED: ${CHAT_ENABLED:-false}
+      CHAT_INSTANCE_ID: ${CHAT_INSTANCE_ID:-}
+      CHAT_DATA_DIR: /app/data/chat
+      CHAT_CAPABILITIES_FILE: ${CHAT_CAPABILITIES_FILE:-}
+      CHAT_WEB_SEARCH_BACKEND: ${CHAT_WEB_SEARCH_BACKEND:-}
+      CHAT_WEB_SEARXNG_URL: ${CHAT_WEB_SEARXNG_URL:-}
+      CHAT_MAX_CONCURRENT_RUNS: ${CHAT_MAX_CONCURRENT_RUNS:-2}
+      CHAT_TOTAL_STORAGE_BYTES: ${CHAT_TOTAL_STORAGE_BYTES:-10737418240}
+      TZ: ${TZ:-Asia/Shanghai}
+    command: [gunicorn, --bind, "0.0.0.0:8000", --worker-class, gthread, --workers, "2", --threads, "8", --timeout, "210", --access-logfile, "-", "new_api_cockpit.app:app"]
+    ports: ["${BIND_HOST:-127.0.0.1}:${CHAT_PORT:-8093}:8000"]
+    networks: [new-api]
+    volumes:
+      - type: bind
+        source: ./data/chat
+        target: /app/data/chat
+        bind:
+          create_host_path: false
+    read_only: true
+    mem_limit: ${CHAT_MEMORY:-1g}
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   image-studio:
     image: new-api-cockpit:local
     build:
       context: .
       args:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     stop_grace_period: 360s
@@ -65,7 +111,7 @@ services:
     restart: unless-stopped
     command: [redis-server, --protected-mode, "no", --appendonly, "yes", --appendfsync, "always", --maxmemory, "64mb", --maxmemory-policy, noeviction, --save, ""]
     networks: [studio-receipts]
-    volumes: [image-studio-receipts:/data]
+    volumes: ["image-studio-receipts:/data"]
     mem_limit: 128m
     cap_drop: [ALL]
     cap_add: [CHOWN, SETUID, SETGID]

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ site_name }} · 辅助工具</title>
+  <link rel="stylesheet" href="/cockpit/static/ui.css">
+  <link rel="stylesheet" href="/cockpit/static/navigation.css">
+  <link rel="stylesheet" href="/cockpit/static/manual.css">
+  <link rel="stylesheet" href="/cockpit/static/tools.css">
+  {% include "partials/auth.html" %}
+  <script defer src="/cockpit/static/navigation.js"></script>
+  <script defer src="/cockpit/static/manual-guides.js"></script>
+  <script defer src="/cockpit/static/tools.js"></script>
+</head>
+<body class="app-layout">
+  {% from "partials/header.html" import app_header %}
+  {% from "partials/icons.html" import icon %}
+  {% call app_header(site_name) %}{% endcall %}
+  {% include "partials/sidebar.html" %}
+  <main id="auxiliary-tools-page" class="manual-page">
+    {% include "partials/documentation-nav.html" %}
+    <section class="page-panel">
+      <div class="page-heading"><div><h1>辅助工具</h1><p class="hint">在 VS Code 管理账户与 KEY，或让支持 MCP 的客户端查询余额和用量。</p></div></div>
+      <div class="tools-shortcuts"><a href="#tools-vscode-title">{{ icon('download') }}VS Code 插件与下载</a><a href="#manual-mcp-title">{{ icon('book-open') }}账户 MCP</a></div>
+      <p class="hint">客户端连接模型的配置方法，见<a href="/cockpit/manual">模型使用</a>。这些辅助工具使用用户 API PAT，与调用模型的 sk- KEY 分开。</p>
+    </section>
+    {% include "partials/tools-vscode.html" %}
+    {% include "partials/tools-mcp.html" %}
+    <section class="page-panel manual-faq" aria-labelledby="tools-faq-title">
+      <h2 id="tools-faq-title">常见问题</h2>
+      <details><summary>模型 KEY 能用，MCP 或插件却报 401 / 403</summary><p>模型 KEY 和用户 API PAT 不能互换。401 检查 PAT 是否有效、已过期或被撤销；403 按当前功能补齐权限。插件配置连接时填写用户 PAT，生成 Claude / Codex 配置时才使用选中的模型 KEY。</p></details>
+      <details><summary>余额和 KEY 列表为什么没有一起刷新？</summary><p>余额默认每 15 分钟刷新，手动刷新至少间隔 60 秒；429 会按服务器要求延后。KEY 列表没有自动刷新和查询间隔，点 KEY 区刷新才重新读取，新建、删除、改分组前后各查询一次。两套刷新规则独立。</p></details>
+      <details><summary>遇到 429 或连接断开怎么办？</summary><p>429 是服务端限流，插件不自动重试。ECONNRESET 表示连接中断，不等于证书失效；检查 VS Code 的代理和网络。只有明确的证书校验错误才检查证书有效期、域名和证书链，不要关闭 HTTPS 校验。</p></details>
+      <details><summary>草稿怎样保存？为什么还没有生效？</summary><p>在草稿编辑器中按 Ctrl+S（macOS 为 ⌘S），或点击草稿上方、编辑器右上角的保存按钮。Codex 的 config.toml 和 auth.json 都要保存，再重载 Codex。自动保存不会写入原配置；原生“另存为”会使用你自行选择的路径。</p></details>
+      <details><summary>远程 SSH、容器或 WSL 窗口能配置客户端吗？</summary><p>余额和 KEY 管理可以使用。客户端配置草稿目前只支持本机窗口；不会用本机目录代替远程目录。Windows 下让 Codex 在 WSL 运行时，也不会修改 Windows 主目录中的同名配置。</p></details>
+      <details><summary>MCP 示例的复制按钮不可用</summary><p>通过 HTTPS 或本机安全地址打开页面，并允许浏览器访问剪贴板。也可以手动复制示例；其中的 USER_API_TOKEN 仍需在客户端替换成自己的用户 API PAT。</p></details>
+    </section>
+  </main>
+</body>
+</html>

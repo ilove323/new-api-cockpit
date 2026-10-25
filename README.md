@@ -14,29 +14,35 @@
 </div>
 
 给 [New API](https://github.com/QuantumNous/new-api) 补一套统计和管理页面：查用量、对账、设余额告警，
-批量管理用户、令牌和额度，比较渠道质量，也可以测试模型生成动画，或用自己的 GPT KEY 生成和编辑图片。
+批量管理用户、令牌和额度，比较渠道质量，也可以测试模型生成动画，或用自己的生图模型 KEY 生成和编辑图片。
 页面放在现有站点的 `/cockpit/` 下，登录沿用 New API 账号；管理功能仅对管理员开放，
-普通用户也能使用智力测试、模型使用教程和生图工作站：测试自己的可用模型、生成客户端配置、创作图片。
+普通用户也能使用智力测试、模型使用教程和生图工作站；显式启用 AI 助手后，还可用本人 KEY 聊天、整理私有文件和管理自己的 Skill/Memory。
 在同站点登录过 New API，可以直接进入。
+
+[VS Code 账户与 KEY 插件](vsix/README.md) 随镜像提供，可从“文档 → 辅助工具”直接下载：使用本人用户 API PAT 查看状态栏余额，在余额下方独立分区申请、复制、删除 KEY 和切换分组；选择 KEY 后可生成 Claude Code / Codex 配置草稿，自行编辑、手动保存才覆盖生效。KEY 按需加载并缓存，手动查询无时间间隔限制，每次修改前后各查一次，不需要另装 MCP 客户端，不调用模型。
 
 本项目需要已部署的 New API，目前支持 PostgreSQL 后端。应用用 Flask 编写，网页与图片请求使用独立容器，
 和 New API 共用 Docker 网络，通过同一 HTTPS 入口访问。
 
 ## 功能
 
-页面通过侧边栏切换：
+> AI 助手为当前开发分支功能，默认关闭；已发布镜像的功能以对应 Release 为准。源码变化见[变更记录](CHANGELOG.md)。
+
+页面通过侧边栏切换；“文档”下的模型使用、辅助工具、API 文档为三个平级入口：
 
 | 页面 | 地址 | 可以做什么 |
 | --- | --- | --- |
 | 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
 | 渠道质量 | `/cockpit/quality/` | 查看性能健康和高频模型，比较渠道成功率、失败码、首字与总耗时分位数、平均输出 token/s 和费用，跳到对应日志 |
 | 智力测试 | `/cockpit/intelligence/` | 选择模型做鹈鹕骑车测试，直接查看生成的 SVG 动画和 HTML 源码；结果仅留在当前页面 |
-| 生图工作站 | `/cockpit/image-studio` | 使用本人 GPT KEY 创作图片，选区、文字和箭头指导修改，编辑标注并放大比较候选 |
+| 生图工作站 | `/cockpit/image-studio` | 使用本人 KEY 中可用的生图模型创作图片，选区、文字和箭头指导修改，编辑标注并放大比较候选 |
+| AI 助手（默认关闭） | `/cockpit/chat/` | 本人 KEY 三协议聊天、附件读取与引用、文档和图片输出、按需联网、完整历史与自适应上下文、自动 Memory |
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
 | 令牌管理 | `/cockpit/keys/` | 按用户查看 KEY，搜索、查看和复制令牌，修改分组、限额及状态，批量把 KEY 切换到其他分组 |
 | 操作记录 | `/cockpit/operations/` | 查看用户、KEY、配额和定时规则的操作，定位目标用户及逐条执行结果 |
 | API 文档 | `/cockpit/docs/` | 按流程试调用接口，填写参数、查看响应、复制程序示例，查阅和下载 OpenAPI 描述 |
 | 模型使用 | `/cockpit/manual` | 普通用户登录后选择自己的令牌和模型，查看客户端接入教程；页面隐藏完整 KEY，显式复制时才填入 |
+| 辅助工具 | `/cockpit/tools` | 从镜像内下载 VS Code 插件，设置账户与 KEY 管理、生成 Claude / Codex 草稿，配置本人账户 MCP |
 
 统计页按渠道标签区分上游账本，也有“全部”和“未分组”。每个账本单独设置预算、报警阈值和监控开关，
 共用飞书、钉钉和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
@@ -51,7 +57,7 @@ Token 按消费日志统计，倍率显示请求当时的值。
 用户、KEY 和额度的修改需要监控库保存操作记录，只记录已发起的操作。
 管理员管理 KEY 时使用所属用户的 PAT，缺失才通过受限函数补建；普通用户的智力测试使用本人登录会话，不创建 PAT。
 
-页面使用的业务接口也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
+页面使用的业务接口（聊天模块除外）也可以供脚本调用，统一在 `/cockpit/api/` 下，使用已有 New API 管理员 PAT。
 各模块的地址、参数及调用示例见 [API 参考](docs/api.md)。
 余额查询为 `/cockpit/api/statistics/balance`，报警检查为 `/cockpit/api/statistics/alert`；后者会按配置发送通知。
 登录后从侧边栏打开 API 文档即可在线调试，使用方法见[交互式文档](docs/interactive-api.md)。
@@ -65,10 +71,12 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 直接等待并显示结果，不保存测试历史；Cockpit 不设置输出 Token 上限，预览会按窗口缩放，也支持调整高度和全屏。
 调用正常计费，实际输出仍受 New API 和上游限制，详见[智力测试](docs/intelligence.md)。
 
-模型使用教程覆盖 Claude Code、Codex、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw 和 curl。
+模型使用教程覆盖 Claude Code、Codex、WorkBuddy、Hermes、Claude App、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw 和 curl。
 地址取当前站点，按工具分别生成 Chat Completions、Responses 或 Anthropic Messages 配置；
 模型在客户端会话中选择，配置不固定默认模型；需要转换协议的 CC Switch 接入会列出本地路由设置。
 只查询本人令牌和模型，不改分组或额度，也不发起收费生成，详见[模型使用](docs/manual.md)。
+Codex 使用 `config.toml + auth.json` 双文件配置，不再依赖模型 KEY 环境变量。
+账户 MCP 的配置步骤和插件说明统一在[辅助工具](docs/tools.md)页面，另见[账户 MCP 协议](docs/mcp.md)：以用户 API 访问令牌（PAT，非模型 KEY）查询本人余额和用量，普通用户和管理员均不能借此读取他人账户。
 
 生图工作站向所有启用用户开放，只用本人已有且分组精确为 `GPT` 的 KEY，管理员也不例外，原始 KEY 不进入浏览器。
 每次生成一张，同步等待、不排队，不保存图库或提示词；选区和标注分开，候选需明确采用，局部合成保留选区外原图。
@@ -78,57 +86,15 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 
 ## 部署
 
-准备好 New API、PostgreSQL、Docker Compose，以及 Nginx 或同等反向代理。
-New API 需要支持 JWT 登录和刷新接口，数据库字段见[兼容范围](docs/compatibility.md)。
+默认使用 GitHub Release 的预构建镜像，不在服务器上编译应用：
 
-### 1. 下载与配置
+- **新服务器全量安装**：[发布镜像部署手册](docs/deployment.md)，下载同一 Release 的安装包和镜像，完成建库、账号、Nginx 与登录。
+- **已有 New API，只安装 Cockpit**：[已有系统接入](docs/existing-installation.md)，使用对应 Release 的 Compose 和环境示例，不替换现有数据库。
+- **开发提交或自行构建**：[源码构建部署](docs/deployment-source.md)，与发布镜像流程分开。
+- **维护与回退**：[升级、备份与回退](docs/upgrading.md)。
 
-```bash
-git clone https://github.com/ilove323/new-api-cockpit.git
-cd new-api-cockpit
-cp .env.example .env
-chmod 600 .env
-```
-
-按[部署文档](docs/deployment.md)填写 `.env`：
-
-- `PG*`：New API 原库的专用查询账号，授予所需表的 SELECT 权限。
-- `NEW_API_NETWORK`、`NEW_API_INTERNAL_URL`：现有 Docker 网络和 New API 内部地址。
-- `MONITOR_DATABASE_URL`：独立监控库，保存预算、归档、通知配置、定时规则和操作记录。建库方法见[监控库配置](docs/monitoring.md#独立数据库)。留空时提供只读查询。
-- `NOTIFICATION_ENCRYPTION_KEY`：保存通知凭据时填写（飞书、钉钉、邮件认证密码），并与监控库一起备份。
-- 生图工作站：源库查询账号增加 `abilities` 的路由列 SELECT（含 `priority`、`weight`）；图片池使用 `COCKPIT_PROCESS_ROLE=image`，必须配置版本化 `IMAGE_STUDIO_CAPABILITIES_FILE` 和短期 Redis 请求回执。见[图片池配置](docs/deployment.md#生图工作站请求池)。
-
-需要补建用户 PAT 时，由源库表所有者安装 [source_pat_function.sql](sql/source_pat_function.sql)，
-再给查询账号授予函数执行权限，步骤见[用户管理部署](docs/users.md#安装补建函数与最小权限)。
-应用账号无需业务表的 UPDATE 权限，PAT 也无需填入 `.env`。
-
-### 2. 启动
-
-```bash
-docker compose up -d --build
-docker compose ps
-curl --fail-with-body http://127.0.0.1:8091/healthz
-```
-
-配置监控库后，启动入口自动应用缺失的迁移，余额和配额定时器随应用运行。
-配额规则在用户管理页右上角的设置中配置，保存后从下一个周期执行。
-
-上面是源码构建方式。使用发布镜像时，从对应 [Release](https://github.com/ilove323/new-api-cockpit/releases)
-下载配置文件，设置 `IMAGE_TAG` 后按[镜像部署说明](docs/releasing.md#使用预构建镜像)启动。
-已有安装请先看[升级、备份与回退](docs/upgrading.md)。
-
-### 3. 接入现有站点
-
-把 [nginx.conf.example](nginx.conf.example) 中的 location 加入 New API 的 HTTPS 站点，检查配置并重载。
-浏览器访问 `https://<你的域名>/cockpit/`，由侧边栏切换页面。
-New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和端口下，会话才能共用。
-
-没有有效登录时会打开登录页，密码和二次验证码由 New API 验证。
-使用 SSO、通行密钥或人机验证的站点，可从登录页进入官方登录流程，完成后返回。
-详细流程见[登录与会话](docs/authentication.md)。
-
-应用端口默认只监听宿主机 `127.0.0.1:8091`，用于反向代理和探活，不应直接公开到公网。
-图片池监听 `127.0.0.1:8092`，代理仅将生成/编辑两个精确路径转到图片池，页面和模型目录仍走 `8091`。
+从 `v0.4.0` 起，Release 提供全量安装包、聊天组件和镜像内 VSIX 下载；`v0.3.0` 不包含这些制品，不能与新版模板混用。可用功能以所选 Release 为准。
+New API 与 Cockpit 的浏览器入口须同协议、同主机、同端口，账号共用；应用端口只绑定回环地址，由 Nginx 统一反向代理。
 
 ## 界面预览
 
@@ -150,6 +116,9 @@ New API 的 `/api/`、`/sign-in` 和 Cockpit 必须在同一协议、域名和�
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [工作站源码维护](docs/image-studio-sources.md) · [贡献指南](CONTRIBUTING.md)
+- AI 助手：[使用、隔离与配置](docs/chat.md) · [接口与设计](docs/design/ai-assistant-v2/README.md)（默认关闭，需单独配置聊天请求池）
+
+完整分类见[文档导航](docs/README.md)；最新源码变化见[变更记录](CHANGELOG.md)。公共文档不记录具体服务器的部署状态。
 
 问题和建议请提交到 [Issues](https://github.com/ilove323/new-api-cockpit/issues)，附上版本、复现步骤和脱敏日志。
 安全问题见 [SECURITY.md](SECURITY.md)，请勿公开密码、令牌或客户数据。

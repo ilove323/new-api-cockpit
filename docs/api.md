@@ -2,10 +2,11 @@
 
 Cockpit 的业务接口统一放在 `/cockpit/api/`，与页面共用站点入口。
 报表、渠道质量、智力测试、模型使用、生图工作站、用户、令牌、配额、规则和操作记录接口支持 **New API 管理员 PAT** 调用。
-网页通过 New API 登录会话调用同一套接口；模型使用、智力测试和生图工作站向所有启用用户开放，其余管理功能要求管理员。
+网页通过 New API 登录会话调用同一套接口；模型使用、智力测试、生图工作站和启用后的 AI 助手向所有启用用户开放，其余管理功能要求管理员。
+**AI 助手 `/cockpit/api/chat/` 是例外：仅接受本人登录会话/访问JWT，不支持管理员PAT；所有读取也强制 `X-Cockpit-Session`，管理员没有跨用户权限。**
 
 - 页面地址见 [README](../README.md#功能)。
-- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`manual`、`image-studio`、`users`、`keys`、`operations` 模块。
+- API：`/cockpit/api/` 下的 `statistics`、`quality`、`intelligence`、`manual`、`image-studio`、`chat`、`users`、`keys`、`operations` 模块。
 - 独立余额和报警：`/cockpit/api/statistics/balance`、`/cockpit/api/statistics/alert`。
 - New API 自己的 `/api/...` 不属于本项目，仍由 New API 处理。
 
@@ -132,7 +133,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | `GET` | `/cockpit/api/intelligence/models` | 可测试模型及自动分组 |
 | `POST` | `/cockpit/api/intelligence/test` | 同步鹈鹕骑车测试，真实计费 |
 | `POST` | `/cockpit/api/intelligence/preview` | 当前 HTML 的沙箱预览，不调用模型 |
-| `GET` | `/cockpit/api/image-studio/tokens` | 本人 GPT KEY 脱敏摘要 |
+| `GET` | `/cockpit/api/image-studio/tokens` | 本人 KEY 脱敏摘要 |
 | `POST` | `/cockpit/api/image-studio/models` | 所选 KEY 的模型、操作能力与参数，不生成内容 |
 | `POST` | `/cockpit/api/image-studio/generations` | 同步文生图，真实计费 |
 | `POST` | `/cockpit/api/image-studio/edits` | multipart 图片编辑，真实计费 |
@@ -807,6 +808,9 @@ curl --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
 
 ## 模型使用（本人令牌）
 
+账户 MCP 使用独立路径 `/cockpit/mcp`、JSON-RPC 和用户 API PAT，不复用管理员 REST API 或模型 KEY；
+提供 `get_balance`、`get_usage` 两个本人只读工具，详见[账户 MCP](mcp.md)。
+
 | 方法 | 地址 | 用途 |
 | --- | --- | --- |
 | `GET` | `/cockpit/api/manual/tokens` | 列出本人令牌，返回 `tokens`、`token_manager_path`；KEY 始终脱敏 |
@@ -824,11 +828,11 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 
 ## 生图工作站接口
 
-所有启用用户可用，始终限定本人 GPT 分组 KEY。管理员 PAT 也不能代用其他用户。生成/编辑是收费操作，交互式 API 文档不提供试运行。
+所有启用用户可用，始终限定本人 KEY，不限制分组名称。管理员 PAT 也不能代用其他用户。生成/编辑是收费操作，交互式 API 文档不提供试运行。
 
 ### GET /cockpit/api/image-studio/tokens
 
-返回 `tokens` 和固定的 `token_manager_path`。令牌摘要包含 `id`、名称、脱敏 KEY、`group: "GPT"`、`usable` 与不可用原因，不返回原始 KEY。
+返回 `tokens` 和固定的 `token_manager_path`。令牌摘要包含 `id`、名称、脱敏 KEY、实际 `group`、`usable` 与不可用原因，不返回原始 KEY。
 
 ### POST /cockpit/api/image-studio/models
 
@@ -838,7 +842,7 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 
 | 字段 | 含义 |
 |---|---|
-| `id` | 当前 KEY 授权的精确 gpt-image 型号 |
+| `id` | 当前 KEY 授权的精确图片模型 ID（不限制前缀） |
 | `revision` | 有效路由契约的 64 位十六进制摘要，提交时带回 |
 | `generation` | `null` 或 `{parameters}`，独立的生成参数 |
 | `edit` | `null` 或 `{parameters, local_strategy, max_images, inputs}` |
@@ -848,7 +852,7 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 `inputs` 提供当前渠道的 MIME 类型、单图字节/像素、总像素、最长边与宽高比上限；页面会在提交前校验实际导出的主图、指导图和参考图。
 `parameters` 包含 `allowed_fields`、`sizes`、`custom_size`、`qualities`、`formats`、`backgrounds`、`input_fidelity`、`max_images`。按操作使用对应参数，未出现在 `allowed_fields` 中的字段不要发送。
 
-目录按本人模型限制、GPT 启用 abilities、启用渠道、KEY 的 `/v1/models` 准入与显式协议配置求交；同模型所有可能路由使用共同契约。不默认选择型号，不通过收费请求探测能力。
+目录按本人模型限制、该令牌实际路由分组的启用 abilities、启用渠道、KEY 的 `/v1/models` 准入与显式协议配置求交；同模型所有可能路由使用共同契约。不默认选择型号，不通过收费请求探测能力。
 
 ### POST /cockpit/api/image-studio/generations
 
@@ -908,4 +912,48 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 - 超时、断网或 `uncertain: true` 表示结果可能已生效；结束等待不取消上游，需人工核对 New API 日志。New API 的下游重试另由其配置决定。
 - 严格局部合成发生在工作站浏览器；直接调用 edits 得到的是模型结果，不承诺选区外像素未变。
 
-操作见[生图工作站](image-studio.md)，能力文件、Redis 与数据库读权限见[部署](deployment.md#生图工作站请求池)。
+操作见[生图工作站](image-studio.md)，能力文件、Redis 与数据库读权限见[部署](existing-installation.md#生图工作站请求池)。
+
+
+## AI 助手（需显式启用）
+
+页面 `/cockpit/chat/`，个人设置 `/cockpit/chat/settings/`。聊天数据仅属本人，管理员也不能查看他人记录。
+完整字段、分页、流式事件、幂等与错误见[聊天接口契约](design/ai-assistant-v1/chat-api.md)及[扩展契约](design/ai-assistant-v2/contracts.md)，
+Skill/Memory 的版本与快照见[个人上下文契约](design/ai-assistant-v1/user-context.md)。
+所有读写需要已验证会话和匹配的 `X-Cockpit-Session`；写入另需同源及 `X-Cockpit-Chat: 1`。
+普通 JSON 使用 application/json，文件上传使用 multipart/form-data；付费轮次不自动重试。
+所有聊天接口在交互式文档中禁用试运行，不使用文档页的管理员PAT调用。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/cockpit/api/chat/config` | 非秘密客户端限制 |
+| `GET` | `/cockpit/api/chat/tokens` | 本人全部分组的令牌摘要 |
+| `POST` | `/cockpit/api/chat/models` | 所选本人KEY的模型与明确能力 |
+| `GET` | `/cockpit/api/chat/conversations` | 本人全部未删除聊天分页，含空/失败/中断记录 |
+| `POST` | `/cockpit/api/chat/conversations` | 幂等创建空聊天 |
+| `GET` | `/cockpit/api/chat/conversations/{cid}` | 本人聊天元数据 |
+| `PATCH` | `/cockpit/api/chat/conversations/{cid}` | 版本检查后改名 |
+| `DELETE` | `/cockpit/api/chat/conversations/{cid}` | 确认删除聊天及附件/快照 |
+| `GET` | `/cockpit/api/chat/conversations/{cid}/events` | 按已提交高水位分页读取完整历史 |
+| `GET` | `/cockpit/api/chat/conversations/{cid}/files` | 所有上传和输出版本 |
+| `POST` | `/cockpit/api/chat/conversations/{cid}/files` | 上传单个文本、PDF、Word、Excel 或图片附件 |
+| `GET` | `/cockpit/api/chat/conversations/{cid}/files/{fid}/download` | 经本人鉴权的附件或生成文件下载 |
+| `DELETE` | `/cockpit/api/chat/conversations/{cid}/files/{fid}` | 确认删除上传附件；生成中也可删除，历史保留名称，禁止再次读取、引用或下载 |
+| `POST` | `/cockpit/api/chat/conversations/{cid}/runs` | 有限收费轮次，POST fetch SSE；重复ID返回原run JSON |
+| `GET` | `/cockpit/api/chat/conversations/{cid}/runs/{rid}` | 状态查询，不续跑模型 |
+| `POST` | `/cockpit/api/chat/conversations/{cid}/runs/{rid}/cancel` | 请求停止，不撤销已发生计费 |
+| `POST` | `/cockpit/api/chat/conversations/{cid}/runs/{rid}/candidate` | 版本检查后选择已完成多候选回答，后续仅采用所选分支 |
+| `POST` | `/cockpit/api/chat/conversations/{cid}/runs/{rid}/memory/undo` | 本人显式撤销自动 Memory 更新；后续修改优先，冲突不覆盖 |
+| `GET` | `/cockpit/api/chat/context` | MEMORY/SOUL/IDENTITY及Skill摘要 |
+| `PATCH` | `/cockpit/api/chat/profiles/{name}` | 替换本人固定文档 |
+| `GET` | `/cockpit/api/chat/skills` | 本人Skill目录 |
+| `POST` | `/cockpit/api/chat/skills` | 创建单文件提示Skill |
+| `GET` | `/cockpit/api/chat/skills/{sid}` | 查看本人Skill内容 |
+| `PATCH` | `/cockpit/api/chat/skills/{sid}` | 版本检查后编辑 |
+| `DELETE` | `/cockpit/api/chat/skills/{sid}` | 确认删除，旧运行快照不变 |
+| `GET` | `/cockpit/api/chat/conversations/{cid}/runs/{rid}/context` | 本轮实际个人上下文快照 |
+
+聊天列表必须继续取 next_cursor 直到 has_more=false；事件也按 after_seq/until_seq分页。
+断线、刷新、401或停止后只能GET恢复记录，不重放旧POST。历史不依赖旧KEY仍有效。
+
+当前页面没有模式选择，默认使用完整助手请求（内部兼容值 `mode: "files"`，按站点配置启用 `web_enabled`）。两种旧 API 模式均允许 `attachment_ids`；新请求都由服务器读取本人当前聊天中引用文件的正文，历史通过服务端记录的 `attachment_mode: "server-text-v1"` 重建，不依赖工具调用才能获得正文。`mode: "chat"` 仅保留旧 API 无工具请求兼容；完整助手默认提供文件和联网工具，不因缺少逐模型工具声明禁用模型。运维明确关闭工具时保留正文附件分析。正文及历史计入上下文预算，超限在派发前返回 `413 / CHAT_ATTACHMENTS_TOO_LARGE` 或 `CHAT_CONTEXT_TOO_LARGE`，不自动截断或重试。客户端不能传正文映射、`attachment_mode`、物理路径或指定其他所有者。
