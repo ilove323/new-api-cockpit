@@ -80,14 +80,37 @@ export class KeysController {
     if (!latest) throw new BalanceError('本次查询中没有找到这个 KEY，请在插件内刷新列表。');
     return latest;
   }
+  private async reconcileTarget(client: KeysClient, signal: AbortSignal, first: KeyPage, id: number): Promise<ModelKey | null | undefined> {
+    // Only a lost acknowledgement needs extra reads. Never infer deletion from
+    // absence on page one, or retain a partial scan as a fresh list snapshot.
+    const found = first.items.find(item => item.id === id);
+    if (found) return found;
+    const seen = new Set(first.items.map(item => item.id));
+    if (seen.size !== first.items.length || first.page !== 1) return undefined;
+    const pages = Math.ceil(first.total / 50);
+    if (pages > 200) return undefined;
+    for (let number = 2; number <= pages; number++) {
+      const page = await client.list(number, signal);
+      if (page.total !== first.total || page.page !== number) return undefined;
+      const target = page.items.find(item => item.id === id);
+      if (target) return target;
+      for (const item of page.items) {
+        if (seen.has(item.id)) return undefined;
+        seen.add(item.id);
+      }
+    }
+    return seen.size === first.total ? null : undefined;
+  }
   private async write(task: (client: KeysClient, signal: AbortSignal, page: KeyPage) => Promise<void>, message: string,
-    verify?: (page: KeyPage) => boolean | undefined): Promise<OperationResult> {
+    verify?: (page: KeyPage) => boolean | undefined,
+    reconcile?: (client: KeysClient, signal: AbortSignal, before: KeyPage, after: KeyPage) => Promise<boolean | undefined>,
+    firstPage = false): Promise<OperationResult> {
     if (!this.client) return {applied: false, message: '请先配置账户连接。'};
     if (this.state.busy || this.state.loading) return {applied: false, message: '正在处理，请勿重复操作。'};
     const generation = this.generation, client = this.client, signal = this.abort.signal;
     this.state.busy = true; this.changed();
     try {
-      const before = await this.readPage(this.state.page?.page || 1, true);
+      const before = await this.readPage(firstPage ? 1 : this.state.page?.page || 1, true);
       if (!before || !this.current(generation)) return {applied: false, message: '账户连接已变化。'};
       let failure: unknown, failed = false;
       try {await task(client, signal, before);} catch (error) {failure = error; failed = true;}
@@ -97,7 +120,12 @@ export class KeysController {
       let after: KeyPage | undefined;
       try {after = await this.readPage(1, true);} catch (error) {if (!failed) this.report(error, generation);}
       if (!this.current(generation)) return {applied: false, message: '账户连接已变化；切回原连接后在插件内刷新即可查看结果。'};
-      const verified = after ? verify?.(after) : undefined;
+      let verified = after ? verify?.(after) : undefined;
+      if (failed && failure instanceof KeyWriteError && failure.uncertain && verified === undefined && after && reconcile) {
+        try {verified = await reconcile(client, signal, before, after);}
+        catch (error) {this.report(error, generation);}
+        if (!this.current(generation)) return {applied: false, message: '账户连接已变化。'};
+      }
       if (failed) {
         if (failure instanceof KeyWriteError && failure.uncertain && verified === true) {
           this.state.error = undefined; return {applied: true, message};
@@ -119,7 +147,19 @@ export class KeysController {
     return this.write(async (client, signal) => {
       const groups = await this.groups(); if (!this.current(ticket)) throw new BalanceError('账户连接已变化。');
       await client.create(input, signal, groups);
-    }, 'KEY 已申请');
+    }, 'KEY 已申请', undefined, async (_client, _signal, before, after) => {
+      // New API does not return the new ID. A unique addition to the newest
+      // page is evidence only when the collection grew by exactly one. Multiple
+      // simultaneous additions or matching names remain explicitly uncertain.
+      if (before.page !== 1 || after.page !== 1 || after.total !== before.total + 1) return undefined;
+      const high = Math.max(0, ...before.items.map(key => key.id));
+      const added = after.items.filter(key => key.id > high);
+      if (added.length !== 1) return undefined;
+      const key = added[0];
+      return key.name === input.name?.trim() && key.group === input.group && key.expired_time === input.expired_time &&
+        key.unlimited_quota === input.unlimited_quota && (input.unlimited_quota || key.remain_quota <= input.remain_quota)
+        ? true : undefined;
+    }, true);
   }
   remove(key: ModelKey): Promise<OperationResult> {
     const ticket = this.ticket();
@@ -130,6 +170,9 @@ export class KeysController {
     }, 'KEY 已删除', page => {
       if (page.items.some(item => item.id === key.id)) return false;
       return page.page === 1 && page.items.length === page.total ? true : undefined;
+    }, async (client, signal, _before, after) => {
+      const target = await this.reconcileTarget(client, signal, after, key.id);
+      return target === null ? true : target ? false : undefined;
     }).then(result => {if (result.applied && this.current(ticket)) this.secrets.delete(key.id); return result;});
   }
   changeGroup(key: ModelKey, group: string): Promise<OperationResult> {
@@ -137,7 +180,8 @@ export class KeysController {
     return this.write(async (client, signal, page) => {
       const groups = await this.groups(); if (!this.current(ticket)) throw new BalanceError('账户连接已变化。');
       await client.changeGroup(this.selected(page, key), group, signal, groups);
-    }, 'KEY 分组已修改', page => {const item = page.items.find(item => item.id === key.id); return item ? item.group === group : undefined;});
+    }, 'KEY 分组已修改', page => {const item = page.items.find(item => item.id === key.id); return item ? item.group === group : undefined;},
+    async (client, signal, _before, after) => (await this.reconcileTarget(client, signal, after, key.id))?.group === group || undefined);
   }
   async copy(key: ModelKey, consume: (key: string) => PromiseLike<unknown>): Promise<void> {
     if (!this.client || this.state.busy || this.state.loading) throw new BalanceError('请等待当前操作结束。');

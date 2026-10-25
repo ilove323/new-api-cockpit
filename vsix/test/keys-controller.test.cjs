@@ -152,6 +152,43 @@ test('a group change with a lost acknowledgement is confirmed by the updated gro
   assert.equal(f.counts.changeGroup, 1); assert.equal(f.controller.state.page.items[0].group, '');
   assert.equal(f.controller.state.error, undefined);
 });
+test('a second-page group change with a lost acknowledgement is read back without repeating the write', async t => {
+  const f = await fixture(t), pages = []; let applied = false;
+  f.fake.list = async page => {
+    pages.push(page);
+    const rows = Array.from({length: 100}, (_, i) => ({...KEY, id: 100 - i, group: applied && i === 99 ? '' : 'auto'}));
+    return {page, total: rows.length, items: rows.slice((page - 1) * 50, page * 50)};
+  };
+  f.fake.changeGroup = async () => {f.counts.changeGroup++; applied = true; throw new KeyWriteError('lost acknowledgement', true);};
+  await f.controller.load(2);
+  assert.equal((await f.controller.changeGroup(KEY, '')).applied, true);
+  assert.equal(f.counts.changeGroup, 1); assert.deepEqual(pages, [2, 2, 1, 2]);
+  assert.equal(f.controller.state.page.page, 1); assert.equal(f.controller.state.error, undefined);
+});
+test('deletion outside the first page requires a complete consistent readback', async t => {
+  const f = await fixture(t); let applied = false;
+  f.fake.list = async page => {
+    const rows = Array.from({length: 100}, (_, i) => ({...KEY, id: 100 - i})).filter(key => !applied || key.id !== KEY.id);
+    return {page, total: rows.length, items: rows.slice((page - 1) * 50, page * 50)};
+  };
+  f.fake.remove = async () => {f.counts.remove++; applied = true; throw new KeyWriteError('lost acknowledgement', true);};
+  await f.controller.load(2);
+  assert.equal((await f.controller.remove(KEY)).applied, true); assert.equal(f.counts.remove, 1);
+});
+test('new key with a lost acknowledgement is confirmed by its unique addition, including from page two', async t => {
+  const f = await fixture(t), create = f.fake.create;
+  f.fake.create = async input => {await create(input); throw new KeyWriteError('lost acknowledgement', true);};
+  await f.controller.load(2);
+  assert.equal((await f.controller.create({name: 'new unique', group: 'auto', expired_time: -1, unlimited_quota: true, remain_quota: 0})).applied, true);
+  assert.equal(f.counts.create, 1); assert.equal(f.controller.state.page.page, 1); assert.equal(f.controller.state.error, undefined);
+});
+test('concurrent matching additions never guess which create succeeded or resend it', async t => {
+  const f = await fixture(t), create = f.fake.create;
+  f.fake.create = async input => {await create(input); await create(input); throw new KeyWriteError('lost acknowledgement', true);};
+  const result = await f.controller.create({name: 'same name', group: 'auto', expired_time: -1, unlimited_quota: true, remain_quota: 0});
+  assert.equal(result.applied, false); assert.equal(f.counts.create, 2, 'two simulated concurrent additions, no third request');
+  assert.equal(f.controller.state.busy, false);
+});
 test('an unchanged server record is not reported as a successful delete', async t => {
   const f = await fixture(t); f.fake.remove = async () => {f.counts.remove++;};
   assert.equal((await f.controller.remove(KEY)).applied, false);
