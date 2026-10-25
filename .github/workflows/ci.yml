@@ -48,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends antiword fonts-wqy-zenhei
-      - run: pip install . ruff build
+      - run: pip install . ruff build 'setuptools>=77'
       - run: ruff check src tests deploy
       - run: ruff format --check src tests deploy
       - run: python -m unittest discover -s tests

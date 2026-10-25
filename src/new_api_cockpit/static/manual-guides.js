@@ -867,7 +867,7 @@
     const url = rootOrigin(origin) + '/cockpit/mcp';
     if (id === 'codex') return block('Codex · 合并到 config.toml（MCP 使用独立的用户 PAT）', 'toml',
       '[mcp_servers.newapi_account]\nurl = ' + JSON.stringify(url)
-      + '\nbearer_token_env_var = "NEW_API_USER_PAT"\nenabled_tools = ["get_balance", "get_usage"]', false);
+      + '\nbearer_token_env_var = "NEW_API_USER_PAT"\nenabled_tools = ["get_balance", "get_usage", "list_keys", "list_key_groups", "create_key", "delete_key", "change_key_group", "reveal_key"]', false);
     if (id === 'cursor') return block('Cursor · 合并到 MCP 配置（替换用户 PAT 占位符）', 'json', json({
       mcpServers: {newapi_account: {url, headers: {Authorization: 'Bearer USER_API_TOKEN'}}},
     }), false);

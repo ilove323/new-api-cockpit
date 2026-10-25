@@ -1,7 +1,7 @@
     <section class="page-panel manual-mcp" aria-labelledby="manual-mcp-title">
-      <div class="page-heading"><div><h2 id="manual-mcp-title">账户 MCP：查询本人余额与用量</h2><p class="hint">使用本人的用户 API PAT，不使用模型 KEY，也不调用模型。</p></div></div>
+      <div class="page-heading"><div><h2 id="manual-mcp-title">账户 MCP：余额、用量与 KEY 管理</h2><p class="hint">使用本人的用户 API PAT 认证，不调用模型。KEY 管理能力与插件一致；不提供 Claude/Codex 配置草稿。</p></div></div>
       <ol class="manual-steps">
-        <li class="manual-step"><span class="manual-step-number">1</span><div><h3>创建用户 API PAT</h3><p>打开 <a href="/security">安全与访问</a>，创建本人的 API 访问令牌。勾选 profile:read（读取本人资料和余额）与 usage:read（读取本人用量），设置有效期。不授予管理或写权限。本页不读取、代建或展示你的 PAT。</p></div></li>
+        <li class="manual-step"><span class="manual-step-number">1</span><div><h3>创建用户 API PAT</h3><p>打开 <a href="/security">安全与访问</a>，创建本人的 API 访问令牌并设置有效期。余额需要 profile:read，用量另需 usage:read；KEY 列表需要 api_key:read，申请、删除、改组另需 api_key:write，读取完整密钥另需 api_key:reveal。按需要授权，仅查余额不用授予 KEY 权限。本页不读取、代建或展示你的 PAT。</p></div></li>
         <li class="manual-step"><span class="manual-step-number">2</span><div><h3>添加远程 HTTP MCP</h3><p>选择支持 Streamable HTTP 及自定义 Bearer 凭据的客户端，地址使用本步的 /cockpit/mcp，不是 /v1。Authorization 为 Bearer 加你的用户 PAT。不支持自定义请求头、只支持 OAuth 的客户端不能直接使用此静态 PAT 配置。</p>
             <dl class="manual-definitions"><div><dt>本网站 MCP 地址</dt><dd><code id="manual-mcp-url">/cockpit/mcp</code></dd></div></dl>
             <label for="manual-mcp-client">配置示例<select id="manual-mcp-client"><option value="codex">Codex · config.toml</option><option value="cursor">Cursor · MCP JSON</option></select></label>
@@ -14,10 +14,10 @@ printf '请输入用户 API PAT: '; read -r -s NEW_API_USER_PAT; printf '\n'; ex
 # Windows PowerShell
 $env:NEW_API_USER_PAT = [System.Net.NetworkCredential]::new('', (Read-Host '用户 API PAT' -AsSecureString)).Password</pre></details>
         </div></li>
-        <li class="manual-step"><span class="manual-step-number">3</span><div><h3>询问并核对结果</h3><p>保存配置后重连 MCP，确认能看到 get_balance 和 get_usage。可询问“我的余额还剩多少”“今天用了多少 Token”。默认查询北京时间今天到现在；自定义时间区间最长 31 天，结束时刻不包含。无论账号是不是管理员，都只能查自己的数据。</p></div></li>
+        <li class="manual-step"><span class="manual-step-number">3</span><div><h3>使用账户和 KEY 工具</h3><p>保存配置后重连 MCP。get_balance 查询余额；get_usage 查询用量，默认北京时间今天到现在，自定义区间最长 31 天。KEY 工具有 list_keys、list_key_groups、create_key、delete_key、change_key_group、reveal_key。先查询本人 KEY 和可用分组，再使用返回的 ID 操作。旧配置如果只启用了两项查询工具，需要更新 enabled_tools。</p><p>例如：“列出我的 KEY 和可用分组”“申请一个叫 Codex 的 KEY，auto 分组，不单独限额”“把 KEY 123 改到 auto 分组”。删除或读取完整密钥应明确说明具体 KEY。每次修改前后查询，结果不明时不会自动重发，也不用去网页核对。</p></div></li>
       </ol>
 
-      <p class="manual-notice">MCP 只返回本人账户和消费汇总，不提供充值、修改额度、读取模型 KEY、查看他人或读取提示词的工具。金额沿用 Cockpit 的 quota / 500000 账面单位，不自动换汇；按模型最多列出 20 项，总计仍覆盖全部模型。撤销或过期的 PAT 下次请求即失效。请通过 HTTPS 使用远程 MCP。</p>
+      <p class="manual-notice">只能操作本人账户和 KEY，不提供充值、修改账户余额、查看他人或读取提示词。完整 KEY 仅在显式调用 reveal_key 时返回，请勿分享包含密钥的对话。改组使用 New API 官方 PUT，不能保证与同时发生的模型消费原子隔离。金额按 quota / 500000 换算；用量按模型最多列 20 项，总计覆盖全部。撤销或过期的 PAT 下次请求即失效，请使用 HTTPS。</p>
       <p class="hint">本服务兼容 2025-03-26、2025-06-18 和 2025-11-25 协议，采用 <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener noreferrer">MCP Streamable HTTP</a> 的 JSON 响应方式，不提供旧式 SSE 地址或 OAuth 登录。</p>
     </section>
 

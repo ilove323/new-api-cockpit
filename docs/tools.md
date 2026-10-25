@@ -32,7 +32,8 @@
 ## 账户 MCP
 
 辅助工具的账户 MCP 区保留原来的配置步骤、Codex/Cursor 占位符示例和复制功能；不依赖模型令牌或模型选择，也不读取用户 PAT。
-使用本人用户 API PAT，`profile:read` 查询余额，`usage:read` 查询本人用量；不需要 KEY 管理写权限。
+使用本人用户 API PAT，`profile:read` 查询余额，`usage:read` 查询本人用量；还提供与插件一致的 KEY 列表、可用分组、申请、删除、改组和密钥读取，分别需要 `api_key:read` / `api_key:write` / `api_key:reveal`。仅查询余额时无须授予 KEY 权限。
+用量查询只在 MCP 提供；Claude/Codex 配置草稿只在插件提供，MCP 不生成或写入客户端配置。
 服务地址为本站 `/cockpit/mcp`，不是模型的 `/v1`。具体协议、时间/金额口径和接入示例见[账户 MCP](mcp.md)。
 
 ## 构建与打包

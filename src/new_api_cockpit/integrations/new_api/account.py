@@ -1,7 +1,8 @@
-"""Only the configured New API's own-account GET endpoints are reachable."""
+"""Fixed-origin own-account transport. No admin fallback or automatic retries."""
 
 import json
 import os
+import re
 from http.client import HTTPException
 from urllib import error, request
 from urllib.parse import urlsplit
@@ -26,6 +27,43 @@ def read(path, credential):
     # proxy settings, cookies, upstream error bodies, or model-generation APIs.
     if path != "/api/user/self" and not path.startswith("/api/log/self/stat?"):
         raise AccountError("不允许的账户查询。", 400)
+    data = _exchange(path, credential)
+    if not isinstance(data, dict):
+        raise AccountError("New API 账户查询响应无效。")
+    return data
+
+
+def own_keys(path, credential, *, method="GET", body=None):
+    """Only official, owner-scoped token routes; never accept an arbitrary URL."""
+    allowed = (
+        method == "GET"
+        and (
+            path == "/api/user/self/groups"
+            or re.fullmatch(r"/api/token/\?p=[1-9][0-9]{0,3}&page_size=50", path)
+            or re.fullmatch(r"/api/token/[1-9][0-9]{0,14}", path)
+        )
+        or method in {"POST", "PUT"}
+        and path == "/api/token/"
+        or method == "POST"
+        and re.fullmatch(r"/api/token/[1-9][0-9]{0,14}/key", path)
+        or method == "DELETE"
+        and re.fullmatch(r"/api/token/[1-9][0-9]{0,14}", path)
+    )
+    if not allowed or method in {"GET", "DELETE"} and body is not None:
+        raise AccountError("不允许的本人 KEY 操作。", 400)
+    scope = (
+        "profile:read"
+        if path == "/api/user/self/groups"
+        else "api_key:reveal"
+        if path.endswith("/key")
+        else "api_key:read"
+        if method == "GET"
+        else "api_key:write"
+    )
+    return _exchange(path, credential, method=method, payload=body, scope=scope)
+
+
+def _exchange(path, credential, *, method="GET", payload=None, scope=None):
     base = os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000").rstrip("/")
     try:
         parsed = urlsplit(base)
@@ -40,25 +78,28 @@ def read(path, credential):
             raise ValueError()
         req = request.Request(
             base + path,
+            method=method,
+            data=json.dumps(payload).encode() if payload is not None else None,
             headers={
                 "Authorization": "Bearer " + credential,
                 "Accept": "application/json",
+                **({"Content-Type": "application/json"} if payload is not None else {}),
             },
         )
         opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
         with opener.open(req, timeout=5) as response:
             if response.status != 200:
                 raise AccountError("账户查询服务暂不可用。")
-            raw = response.read(65537)
-        if len(raw) > 65536:
+            limit = 262144 if scope else 65536
+            raw = response.read(limit + 1)
+        if len(raw) > limit:
             raise ValueError()
         body = json.loads(raw)
+        if scope and isinstance(body, dict) and body.get("success") is False:
+            raise AccountError("New API 拒绝 KEY 操作，请检查权限、分组和额度。", 400)
         if not isinstance(body, dict) or body.get("success") is not True:
             raise ValueError()
-        data = body.get("data")
-        if not isinstance(data, dict):
-            raise ValueError()
-        return data
+        return body.get("data")
     except error.HTTPError as exc:
         status = exc.code
         wait = retry_after(exc.headers.get("Retry-After")) if exc.headers else None
@@ -71,7 +112,14 @@ def read(path, credential):
             raise AccountError("用户 API 访问令牌无效、过期或已撤销。", 401) from None
         if status == 403:
             raise AccountError(
-                "用户 API 访问令牌缺少 profile:read 或 usage:read 权限。", 403
+                "用户 API 访问令牌缺少 "
+                + (scope or "profile:read 或 usage:read")
+                + " 权限。",
+                403,
+            ) from None
+        if scope and status in {400, 404, 405, 413}:
+            raise AccountError(
+                "New API 拒绝 KEY 操作，请检查参数与站点版本。", status
             ) from None
         raise AccountError("New API 账户查询暂不可用，未自动重试。") from None
     except (error.URLError, OSError, ValueError, HTTPException) as exc:

@@ -1,7 +1,7 @@
 """A small stateless MCP 2025 Streamable HTTP endpoint (JSON responses).
 
-No browser-cookie authentication, sessions, credential storage, write tools,
-OAuth impersonation, sampling, model calls, or arbitrary upstream forwarding.
+No browser-cookie authentication, sessions, credential storage, OAuth
+impersonation, sampling, model calls, or arbitrary upstream forwarding.
 """
 
 import json
@@ -12,11 +12,11 @@ from urllib.parse import urlsplit
 from flask import Blueprint, jsonify, make_response, request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
-from . import service, upstream
+from . import keys, service, upstream
 
 ENDPOINT = "account_mcp.endpoint"
 VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
-INFO = {"name": "new-api-cockpit-account", "version": "1.0.0"}
+INFO = {"name": "new-api-cockpit-account", "version": "1.1.0"}
 ANNOTATIONS = {
     "readOnlyHint": True,
     "destructiveHint": False,
@@ -55,7 +55,7 @@ TOOLS = [
         },
         "annotations": ANNOTATIONS,
     },
-]
+] + keys.TOOLS
 
 
 def rpc_error(code, message, ident=None, status=200):
@@ -204,7 +204,7 @@ def create_blueprint():
                 else VERSIONS[0],
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": INFO,
-                "instructions": "仅查询当前 PAT 所属用户；不能充值、改额度、读取 KEY 或查看他人。金额为账面单位，不自动换汇。",
+                "instructions": "仅操作当前 PAT 所属用户；支持余额、用量及本人 KEY 列表、分组、申请、删除、改组和显式读取。不能充值、修改账户额度、查看他人或写本机配置。删除和读取完整 KEY 前须取得用户明确指示；结果未知时先查列表，不能自动重发创建。金额为账面单位。",
             }
         elif method == "ping":
             result = {}
@@ -214,7 +214,9 @@ def create_blueprint():
             if set(params) - {"name", "arguments", "_meta"}:
                 return rpc_error(-32602, "工具参数无效。", ident)
             name, arguments = params.get("name"), params.get("arguments", {})
-            if not isinstance(name, str) or name not in {"get_balance", "get_usage"}:
+            if not isinstance(name, str) or name not in {
+                tool["name"] for tool in TOOLS
+            }:
                 return rpc_error(-32602, "未知工具。", ident)
             if not isinstance(arguments, dict):
                 return rpc_error(-32602, "arguments 必须为对象。", ident)
@@ -223,8 +225,10 @@ def create_blueprint():
                     if arguments:
                         raise ValueError("余额查询不接受参数，只能查询本人。")
                     data = service.balance(user)
-                else:
+                elif name == "get_usage":
                     data = service.usage(user, access, arguments)
+                else:
+                    data = keys.call(name, user, access, arguments)
                 result = {
                     "content": [
                         {"type": "text", "text": json.dumps(data, ensure_ascii=False)}

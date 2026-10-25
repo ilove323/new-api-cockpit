@@ -55,6 +55,7 @@ API 文档页面通过浏览器登录打开；页面内调试可用当前会话�
 账户 MCP `/cockpit/mcp` 是独立例外，接受启用普通用户或管理员的本人 API PAT，但拒绝浏览器 Cookie/JWT 和模型 KEY。
 不经过管理员 PAT 的附加权限查询，也不会让普通用户 PAT 获得任何现有管理 API 权限。
 每次向 New API 验证 `profile:read`；查用量还执行 `usage:read`，源 SQL 在聚合前绑定已验证用户 ID。
+KEY 列表、修改和完整密钥读取分别通过本人接口检查 `api_key:read`、`api_key:write`、`api_key:reveal`。MCP 不使用管理员代管或自动补建所属用户 PAT，不能操作他人 KEY。
 具体约定、禁用开关和客户端配置见[账户 MCP](mcp.md)。
 
 ## 部署要求

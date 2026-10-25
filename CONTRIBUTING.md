@@ -9,7 +9,7 @@ Linux 源码检查还需要 `antiword` 和文泉驿正黑字体；Debian / Ubunt
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/pip install ruff build
+.venv/bin/pip install ruff build 'setuptools>=77'
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/ruff check src tests deploy
 .venv/bin/ruff format --check src tests deploy
@@ -39,6 +39,7 @@ MCP_SDK_PYTHON=/tmp/cockpit-mcp-sdk/bin/python .venv/bin/python -m unittest disc
 
 该测试在 loopback 随机端口启动短生命周期 fixture，验证现代客户端自动回退到支持的 MCP 生命周期、列工具与两项查询。
 `test_account_mcp.py` 另验证 PAT/模型 KEY/会话边界和读权限；配置隔离 PostgreSQL 后会实际执行用户隔离、缓存归一化与时间边界 SQL。
+`test_account_mcp_keys.py` 覆盖本人 KEY 归属、官方 PUT、修改前后查询、回执丢失读回、敏感结果与请求白名单；不操作真实 KEY，不调用模型。MCP 不提供客户端配置草稿，VS Code 插件不提供用量查询。
 
 SQL 集成测试使用独立 PostgreSQL 库。在当前终端设置仅属于测试库的
 `PGHOST`、`PGPORT`、`PGUSER`、`PGPASSWORD`、`PGDATABASE` 和 `MONITOR_DATABASE_URL` 后运行：

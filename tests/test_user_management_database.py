@@ -133,12 +133,23 @@ class UserManagementDatabaseTest(unittest.TestCase):
         )
 
     def test_pat_api_identity_revocation_permissions_and_audit_on_real_fixture(self):
-        """Real SQL/auth/routes/audit; only the official mutation is mocked."""
+        """Real SQL/auth/routes/audit; upstream identity and mutation are fixtures."""
         client = app.test_client()
         real_connect = psycopg.connect
 
         def fixture_connect(*args, **kwargs):
             return real_connect(*(args or (DSN,)), **kwargs)
+
+        def upstream_identity(path, credential):
+            self.assertEqual(path, "/api/user/self")
+            with real_connect(DSN, row_factory=dict_row) as conn:
+                user = conn.execute(
+                    "SELECT * FROM users WHERE access_token=%s AND deleted_at IS NULL",
+                    (credential,),
+                ).fetchone()
+            if user is None:
+                raise auth.account.AccountError("fixture revoked", 401)
+            return user
 
         with real_connect(DSN) as conn:
             conn.execute("UPDATE users SET access_token='fixture-user-pat' WHERE id=2")
@@ -156,6 +167,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
         body = {"action": "group", "changes": {"group": "b"}}
         with (
             patch.object(auth.psycopg, "connect", side_effect=fixture_connect),
+            patch.object(auth.account, "read", side_effect=upstream_identity),
             patch.object(auth, "verify_session") as session,
         ):
             for credential in (
@@ -168,7 +180,12 @@ class UserManagementDatabaseTest(unittest.TestCase):
                     "/cockpit/api/keys/options",
                     headers={"Authorization": "Bearer " + credential},
                 )
-                self.assertEqual(response.status_code, 401)
+                self.assertEqual(
+                    response.status_code,
+                    403
+                    if credential in {"fixture-user-pat", "fixture-disabled-pat"}
+                    else 401,
+                )
             response = client.get("/cockpit/api/keys/options", headers=headers)
             self.assertEqual(
                 response.json["operator"], {"id": 3, "username": "manager", "role": 10}
@@ -222,7 +239,7 @@ class UserManagementDatabaseTest(unittest.TestCase):
                 conn.execute("UPDATE users SET role=1 WHERE id=3")
             self.assertEqual(
                 client.get("/cockpit/api/keys/options", headers=headers).status_code,
-                401,
+                403,
             )
             session.assert_not_called()
 

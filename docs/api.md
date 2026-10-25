@@ -809,7 +809,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
 ## 模型使用（本人令牌）
 
 账户 MCP 使用独立路径 `/cockpit/mcp`、JSON-RPC 和用户 API PAT，不复用管理员 REST API 或模型 KEY；
-提供 `get_balance`、`get_usage` 两个本人只读工具，详见[账户 MCP](mcp.md)。
+提供 `get_balance`、`get_usage` 及本人 KEY 列表、分组、申请、删除、改组、密钥读取共八项工具，详见[账户 MCP](mcp.md)。不提供配置草稿或跨用户操作。
 
 | 方法 | 地址 | 用途 |
 | --- | --- | --- |
