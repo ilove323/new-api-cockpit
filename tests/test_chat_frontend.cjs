@@ -35,6 +35,24 @@ test('all output versions, empty conversations and tool results survive event pr
   assert.equal(usageText({usage: {prompt_tokens: 0, completion_tokens: 1, total_tokens: 1}, usage_complete: false}), '用量部分：输入 0 / 输出 1 / 合计 1 Token；费用以 New API 记录为准');
   assert.equal(usageText({usage: {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}, usage_complete: true}), '用量完整：输入 0 / 输出 0 / 合计 0 Token；费用以 New API 记录为准');
 });
+test('incremental projection processes only new events and resets replaced histories', () => {
+  const projector = S.createEventProjector(), source = {message_id: MID, text: 'first'};
+  let reads = 0;
+  const first = {...event(1, 'assistant.delta', source), get data() { reads++; return source; }};
+  let events = [first];
+  assert.equal(projector.update(events).runs[0].messages.get(MID).text, 'first');
+  assert.equal(reads, 1);
+  projector.update(events); assert.equal(reads, 1);
+  events = S.mergeEvents(events, [event(2, 'assistant.delta', {message_id: MID, text: '-next'})], CID);
+  const value = projector.update(events);
+  assert.equal(reads, 1);
+  assert.equal(value.runs[0].messages.get(MID).text, 'first-next');
+  assert.deepEqual(value, S.projectEvents(events));
+  const replacement = [event(1, 'assistant.delta', {message_id: MID, text: 'replacement'})];
+  assert.equal(projector.update(replacement).runs[0].messages.get(MID).text, 'replacement');
+  assert.deepEqual(projector.update([]).runs, []);
+  assert.equal(projector.update(replacement).runs[0].messages.get(MID).text, 'replacement');
+});
 test('tool timeline stays interleaved with assistant messages; per-request usage deduplicates and remains partial', () => {
   const events = [event(1, 'assistant.message', {message_id: MID, text: 'before tool'}), event(2, 'tool.call', {call_id: 'a', name: 'list_files', arguments: {}}), event(3, 'tool.result', {call_id: 'a', name: 'list_files', ok: true, result: {}}), event(4, 'assistant.message', {message_id: SID, text: 'after tool'}), event(5, 'run.usage', {request_index: 1, prompt_tokens: 2, completion_tokens: 3, total_tokens: 5}), event(6, 'run.usage', {request_index: 1, prompt_tokens: 2, completion_tokens: 3, total_tokens: 5}), event(7, 'run.usage', {request_index: 2, prompt_tokens: 5, completion_tokens: 8, total_tokens: 13})];
   const run = S.projectEvents(events).runs[0];
@@ -144,6 +162,15 @@ test('temporary authentication outages preserve the current scope and never repl
     await assert.rejects(api.start(CID, {}, {onEvent() {}}), error => error.status === status);
     assert.equal(calls, 1); assert.equal(clears, 0); assert.equal(scope.current(ticket), true);
   }
+});
+
+test('snapshot recovery sends one GET and preserves rate-limit delay without automatic retries', async () => {
+  const scope = new S.Scope(), calls = [];
+  const api = createAPI({scope, fetch: async (url, options) => {calls.push({url, options}); return new Response('{}', {status: 429, headers: {'Retry-After': '1800'}});}});
+  await assert.rejects(api.sync(CID, 4, 200, 'a'.repeat(64), 7), error => error.retryAfterMs === 1800000);
+  assert.equal(calls.length, 1); assert.equal(calls[0].options.method, 'GET');
+  const query = new URL(calls[0].url, 'http://fixture.test').searchParams;
+  assert.equal(query.get('after_seq'), '4'); assert.equal(query.get('context_revision'), '7');
 });
 
 test('Skill strict frontmatter permits text only and rejects extra permissions/YAML features', () => {

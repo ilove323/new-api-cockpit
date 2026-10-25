@@ -9,12 +9,14 @@
   function createChatApp({window: win, document: doc, api: injectedAPI, scope = new C.Scope()}) {
     const $ = id => doc.getElementById(id), status = (text, error = false) => { $('chat-status').textContent = text; $('chat-status').classList.toggle('error', error); };
     const selectionCache = C.createSelectionCache({ownerUserId: Number($('chat-root')?.dataset?.ownerUserId), storage: () => win.localStorage});
+    const eventProjector = C.createEventProjector();
     let selection = {...selectionCache.read(), mode: 'files'};
-    let timer = null, modelsVersion = 0, listVersion = 0, historyVersion = 0, contextVersion = 0, paint = null, listLoading = false, creating = false;
+    let timer = null, modelsVersion = 0, listVersion = 0, historyVersion = 0, contextVersion = 0, paint = null, listLoading = false, creating = false, filesRevision = '', outputView = '', attachmentView = '', pollFailures = 0, pollRetryAfter = 0;
     const s = {config: null, context: null, tokens: [], models: [], modelsTokenId: null, modelsLoading: false, conversations: [], cursor: null, cursors: new Set(), total: 0, meta: null, events: [], files: [], skills: [], attachments: [], pendingUploads: [], deletedFiles: new Map(), deletingFileId: null, runStates: new Map(), historyStatus: 'idle', historyUntilSeq: null, historyError: null, sending: false, stopping: false, uploading: false, selecting: false, undoing: false, contextLoading: false, uncertain: false, controller: null, pendingRequestId: null, pendingText: null};
     function rememberSelection() { if (!scope.blocked) selectionCache.write(selection); }
     function clearView() {
       win.clearTimeout(timer); timer = null; historyVersion++;
+      filesRevision = ''; outputView = ''; attachmentView = ''; pollFailures = 0; pollRetryAfter = 0;
       if (paint !== null) win.cancelAnimationFrame(paint); paint = null;
       Object.assign(s, {meta: null, events: [], files: [], skills: [], attachments: [], pendingUploads: [], deletedFiles: new Map(), deletingFileId: null, runStates: new Map(), historyStatus: 'idle', historyUntilSeq: null, historyError: null, sending: false, stopping: false, uploading: false, selecting: false, undoing: false, uncertain: false, controller: null, pendingRequestId: null, pendingText: null});
       $('chat-candidate-status').textContent = '';
@@ -36,12 +38,11 @@
     const currentHistory = (ticket, version) => valid(ticket) && version === historyVersion;
     function report(error, ticket, prefix = '') { if (valid(ticket) && error.name !== 'StaleResponse') status(prefix + error.message, true); }
     function projection() {
-      const p = C.projectEvents(s.events);
-      for (const run of p.runs) {
+      const p = eventProjector.update(s.events);
+      return {...p, runs: p.runs.map(run => {
         const state = s.runStates.get(run.id);
-        if (state && !C.TERMINAL.has(run.status)) Object.assign(run, state);
-      }
-      return p;
+        return state && !C.TERMINAL.has(run.status) ? {...run, ...state, _seq: run._seq, _identity: run._identity} : run;
+      })};
     }
     function currentRun() { return s.meta?.active_run_id || projection().runs.findLast(r => !C.TERMINAL.has(r.status))?.id || null; }
     function busy() { return s.sending || s.uploading || !!s.deletingFileId || s.selecting || s.undoing || !!currentRun(); }
@@ -234,15 +235,22 @@
     }
     function renderFiles() {
       const files = allFiles(), ticket = scope.ticket(), outputs = files.filter(file => file.kind === 'output').reverse();
-      $('chat-files-list').replaceChildren();
-      for (const file of outputs) {
-        const item = C.button(doc, '', () => downloadCurrentFile(file, ticket), 'chat-file chat-file-entry'); item.dataset.file = file.id; item.title = file.name;
-        item.setAttribute('aria-label', `下载输出 ${file.name} v${file.version}`);
-        const text = C.el(doc, 'span', null, 'chat-file-description');
-        text.append(C.el(doc, 'span', file.name, 'chat-file-name'), C.el(doc, 'small', `v${file.version} · ${C.fileSizeLabel(file.size_bytes)}`, 'hint'));
-        item.append(C.fileIcon(doc, file), text); $('chat-files-list').append(item);
+      const nextOutput = JSON.stringify(outputs.map(file => [file.id, file.name, file.version, file.size_bytes]));
+      if (outputView !== nextOutput) {
+        outputView = nextOutput;
+        $('chat-files-list').replaceChildren();
+        for (const file of outputs) {
+          const item = C.button(doc, '', () => downloadCurrentFile(file, ticket), 'chat-file chat-file-entry'); item.dataset.file = file.id; item.title = file.name;
+          item.setAttribute('aria-label', `下载输出 ${file.name} v${file.version}`);
+          const text = C.el(doc, 'span', null, 'chat-file-description');
+          text.append(C.el(doc, 'span', file.name, 'chat-file-name'), C.el(doc, 'small', `v${file.version} · ${C.fileSizeLabel(file.size_bytes)}`, 'hint'));
+          item.append(C.fileIcon(doc, file), text); $('chat-files-list').append(item);
+        }
+        if (!outputs.length) $('chat-files-list').append(C.el(doc, 'p', '暂无输出', 'hint'));
       }
-      if (!outputs.length) $('chat-files-list').append(C.el(doc, 'p', '暂无输出', 'hint'));
+      const nextAttachments = JSON.stringify([s.attachments.map(id => files.find(file => file.id === id) || {id}), s.pendingUploads.map(file => [file.name, file.size]), canReference(), canDeleteFiles()]);
+      if (attachmentView === nextAttachments) return;
+      attachmentView = nextAttachments;
       const tray = $('chat-attachments'); tray.replaceChildren();
       for (const id of s.attachments) {
         const file = files.find(item => item.id === id);
@@ -296,10 +304,10 @@
       if (immediate) renderCurrent();
       else if (paint === null) { const ticket = scope.ticket(); paint = win.requestAnimationFrame(() => { paint = null; if (valid(ticket)) renderCurrent(); }); }
     }
-    async function loadEvents(ticket, version) {
+    async function loadEvents(ticket, version, firstPage = null) {
       let after = s.events.at(-1)?.seq || 0, until;
       while (true) {
-        const page = await api.events(scope.cid, after, until, s.config?.limits.event_page_max || 200, {ticket}); if (!currentHistory(ticket, version)) return;
+        const page = firstPage || await api.events(scope.cid, after, until, s.config?.limits.event_page_max || 200, {ticket}); firstPage = null; if (!currentHistory(ticket, version)) return;
         if (!Number.isSafeInteger(page.until_seq) || until !== undefined && until !== page.until_seq || typeof page.has_more !== 'boolean' || !Number.isSafeInteger(page.next_after_seq) || page.next_after_seq < after || page.next_after_seq > page.until_seq) throw new Error('事件分页边界无效。');
         if (!Array.isArray(page.events) || (page.events.at(-1)?.seq ?? after) !== page.next_after_seq || page.has_more !== (page.next_after_seq < page.until_seq)
           || page.events.some(event => !Number.isSafeInteger(event?.seq) || event.seq <= after || event.seq > page.until_seq)) throw new Error('事件分页内容与边界不一致。');
@@ -312,7 +320,9 @@
     }
     function schedulePoll(ticket) {
       win.clearTimeout(timer);
-      if (valid(ticket) && currentRun() && !s.sending) timer = win.setTimeout(() => recover(ticket), (s.config?.limits.poll_interval || 2) * 1000);
+      const base = (s.config?.limits.poll_interval || 2) * 1000;
+      const delay = Math.max(Math.min(60000, base * 2 ** pollFailures), pollRetryAfter - Date.now(), doc.hidden ? 10000 : 0);
+      if (valid(ticket) && currentRun() && !s.sending) timer = win.setTimeout(() => Date.now() < pollRetryAfter ? schedulePoll(ticket) : recover(ticket), Math.min(2147483647, delay));
     }
     async function recover(ticket = scope.ticket()) {
       if (!scope.cid || !valid(ticket)) return;
@@ -322,6 +332,24 @@
       Object.assign(s, {historyStatus: 'loading', historyUntilSeq: null, historyError: null});
       win.clearTimeout(timer); timer = null; updateControls();
       try {
+        let files;
+        if (s.config?.features?.recovery_snapshot) {
+          const value = await api.sync(scope.cid, s.events.at(-1)?.seq || 0, s.config?.limits.event_page_max || 200, filesRevision, s.context?.context_revision || 0, {ticket});
+          if (!currentHistory(ticket, version)) return;
+          if (value?.conversation?.id !== scope.cid || value.events?.until_seq !== value.conversation.last_seq || !/^[0-9a-f]{64}$/.test(value.files_revision) || !(value.files === null || Array.isArray(value.files)) || value.files === null && value.files_revision !== filesRevision) throw new Error('聊天恢复快照无效。');
+          restoreSkills(value.conversation); s.meta = value.conversation;
+          await loadEvents(ticket, version, value.events); if (!currentHistory(ticket, version)) return;
+          const rid = s.meta.active_run_id || projection().runs.at(-1)?.id;
+          if ((value.run?.id || undefined) !== rid) throw new Error('运行状态响应与聊天不一致。');
+          if (value.run) {
+            if (!C.isUUID(value.run.id) || !['accepted', 'running', ...C.TERMINAL].includes(value.run.status)) throw new Error('运行状态响应无效。');
+            s.runStates.set(value.run.id, value.run);
+          }
+          files = {files: value.files === null ? s.files : value.files}; filesRevision = value.files_revision;
+          if (value.context) {s.context = value.context; updateControls();}
+        } else {
+        // Older servers advertise no snapshot endpoint; never guess support by
+        // sending a request and retrying after a failed response.
         const value = await api.conversation(scope.cid, {ticket}); if (!currentHistory(ticket, version)) return;
         if (value?.conversation?.id !== scope.cid) throw new Error('聊天状态响应归属无效。');
         restoreSkills(value.conversation); s.meta = value.conversation; updateControls();
@@ -336,24 +364,27 @@
             await loadEvents(ticket, version); if (!currentHistory(ticket, version)) return;
           }
         }
-        const files = await api.files(scope.cid, {ticket}); if (!currentHistory(ticket, version)) return;
+        files = await api.files(scope.cid, {ticket}); if (!currentHistory(ticket, version)) return;
+        }
         s.files = files.files;
         for (const file of s.files) if (file.deleted_at) s.deletedFiles.set(file.id, file);
         s.attachments = s.attachments.filter(id => !s.deletedFiles.has(id));
         const contextRevision = projection().runs.reduce((revision, run) => Math.max(revision, C.ownerMemoryAudit(run, ownerUserId())?.after.context_revision || 0, Number.isSafeInteger(run.memory_reverted_context_revision) ? run.memory_reverted_context_revision : 0), 0);
-        if (s.context && s.context.context_revision < contextRevision) {
+        if (!s.config?.features?.recovery_snapshot && s.context && s.context.context_revision < contextRevision) {
           const context = await api.context({ticket}); if (!currentHistory(ticket, version)) return;
           s.context = context; updateControls();
         }
         s.historyStatus = 'ready';
         if (!historyReady()) throw new Error('历史事件未达到已提交高水位，请只读刷新。');
         s.uncertain = false; updateControls(); renderCurrent(); updateListItem(s.meta);
+        pollFailures = 0; pollRetryAfter = 0;
         if (!s.sending) {
           const last = projection().runs.at(-1);
           status(currentRun() ? '正在只读查询运行状态，不会继续或重发生成。' : last?.uncertain ? '历史已恢复。该轮结果不确定，可能已计费；请核对 New API 用量。' : '已完整恢复已提交历史；没有重新调用模型。');
         }
       } catch (error) {
         if (currentHistory(ticket, version)) {
+          pollFailures = Math.min(6, pollFailures + 1); pollRetryAfter = Math.max(pollRetryAfter, Date.now() + (error.retryAfterMs || 0));
           s.historyStatus = 'failed'; s.historyError = error.message;
           report(error, ticket, '只读恢复未完成，现有内容保留；发送已禁用：');
         }
@@ -580,7 +611,10 @@
       }).catch(error => report(error, ticket, '限制配置未载入，发送/上传禁用：'));
       const tokens = api.tokens({ticket}).then(async value => { if (valid(ticket)) { s.tokens = value.tokens; if (renderTokens()) await loadModels(); } }).catch(error => report(error, ticket, 'KEY 摘要未读取；历史仍可查看：'));
       const cid = new URL(win.location.href).searchParams.get('conversation');
-      const history = C.isUUID(cid) ? openConversation(cid, false) : Promise.resolve();
+      // Capability discovery must finish before choosing the recovery protocol.
+      // Other startup requests remain parallel; a config failure still permits
+      // legacy read-only history rather than making another discovery request.
+      const history = config.then(() => C.isUUID(cid) && valid(ticket) ? openConversation(cid, false) : undefined);
       await Promise.all([config, tokens, loadContext({silent: true}), loadList(), history]);
       if (valid(ticket)) updateControls();
     }

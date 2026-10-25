@@ -54,7 +54,7 @@ class Node {
   close() { this.open = false; }
   fire(name) { return this.handlers.get(name)?.({preventDefault() {}}); }
 }
-async function fixture(t, {target = storage(), owner = 1, seed, models, tokens, modelHook, createHook, uploadHook, configHook, ready = true} = {}) {
+async function fixture(t, {target = storage(), owner = 1, seed, models, tokens, modelHook, createHook, uploadHook, configHook, ready = true, snapshot = false} = {}) {
   if (seed) cache(target, owner).write(seed);
   const nodes = new Map(), handlers = new Map();
   const doc = {getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: tag => new Node(tag), createTextNode: text => { const n = new Node('#text'); n.textContent = text; return n; }, createDocumentFragment: () => new Node('#fragment'), documentElement: {scrollHeight: 0}};
@@ -66,7 +66,7 @@ async function fixture(t, {target = storage(), owner = 1, seed, models, tokens, 
   const addChat = cid => { f.rows.set(cid, {id: cid, title: 'synthetic chat', revision: 0, last_seq: 0, storage_state: 'ok', active_run_id: null, loaded_skill_ids: [], last_selection: {token_id: 8, model: 'historical-model', mode: 'chat'}}); f.events.set(cid, []); f.files.set(cid, []); event(cid, 'conversation.created', {title: 'synthetic chat'}); };
   addChat(CID); addChat(OTHER);
   f.api = {
-    config: async () => { if (configHook) await configHook(); return {modes: ['chat', 'files'], allowed_file_extensions: ['.txt'], limits: {user_text_bytes: 32768, attachments_per_turn: 8, event_page_max: 200, upload_file_bytes: 50 * 1048576}}; },
+    config: async () => { if (configHook) await configHook(); return {features: {recovery_snapshot: snapshot}, modes: ['chat', 'files'], allowed_file_extensions: ['.txt'], limits: {user_text_bytes: 32768, attachments_per_turn: 8, event_page_max: 200, upload_file_bytes: 50 * 1048576}}; },
     context: async () => ({context_revision: 0, skills: [], limits: {skills_per_run: 3}}),
     tokens: async () => ({tokens: tokens || [{id: 7, usable: true, name: 'private-key-label', key_masked: 'never-cache-this'}, {id: 8, usable: true}]}),
     models: async (tokenId, options) => { f.modelsCalls.push({tokenId, ticket: clone(options.ticket)}); return modelHook ? modelHook(tokenId, options) : {models: models || [model('model-a'), model('model-b')]}; },
@@ -79,12 +79,42 @@ async function fixture(t, {target = storage(), owner = 1, seed, models, tokens, 
     files: async cid => ({files: clone(f.files.get(cid))}), run: async (_cid, rid) => ({run: {id: rid, status: 'completed'}}),
     start: async (cid, body, options) => { f.starts.push(clone(body)); const rid = randomUUID(); options.onEvent(event(cid, 'run.accepted', {...body, message_id: randomUUID(), context_snapshot: {context_revision: 0, skill_ids: []}}, rid)); options.onEvent(event(cid, 'run.terminal', {status: 'completed'}, rid)); return {terminal: true}; },
   };
+  f.syncCalls = [];
+  f.api.sync = async (cid, after, _limit, filesRevision) => {
+    f.syncCalls.push({cid, after, filesRevision});
+    const events = f.events.get(cid), high = events.length, rid = events.findLast(e => e.run_id)?.run_id;
+    return {conversation: clone(f.rows.get(cid)), events: {events: clone(events.filter(e => e.seq > after)), until_seq: high, next_after_seq: high, has_more: false}, run: rid ? {id: rid, status: 'completed'} : null,
+      files_revision: 'a'.repeat(64), files: filesRevision ? null : clone(f.files.get(cid)), context: null};
+  };
   f.app = createChatApp({window: win, document: doc, api: f.api}); t.after(() => f.app.clearAll());
   if (ready) await f.app.ready;
   f.select = async (tokenId = 7, modelId = 'model-a', mode = 'files') => { $('chat-token').value = String(tokenId); await $('chat-token').fire('change'); await $('chat-model-load').fire('click'); $('chat-model').value = modelId; await $('chat-model').fire('change'); };
   f.send = async () => { $('chat-text').value = 'private synthetic message'; await f.app.send({preventDefault() {}}); };
   return f;
 }
+
+test('advertised recovery snapshot replaces four requests and preserves draft plus unchanged files', async t => {
+  const f = await fixture(t, {snapshot: true});
+  for (const name of ['conversation', 'events', 'run', 'files']) f.api[name] = async () => assert.fail('legacy recovery request: ' + name);
+  await f.app.openConversation(CID); f.$('chat-text').value = 'unsent draft';
+  await f.app.recover();
+  assert.equal(f.syncCalls.length, 2);
+  assert.equal(f.syncCalls[1].after, 1); assert.equal(f.syncCalls[1].filesRevision, 'a'.repeat(64));
+  assert.equal(f.$('chat-text').value, 'unsent draft'); assert.equal(f.app.state.historyStatus, 'ready');
+});
+
+test('failed active recovery backs off and cannot poll before Retry-After', async t => {
+  const f = await fixture(t, {snapshot: true}); await f.app.openConversation(CID);
+  f.app.state.meta.active_run_id = randomUUID(); f.$('chat-text').value = 'keep this draft';
+  const timers = []; f.win.setTimeout = (callback, delay) => { timers.push({callback, delay}); return timers.length; };
+  let reads = 0;
+  f.api.sync = async () => { reads++; throw Object.assign(new Error('rate limited'), {retryAfterMs: 20000}); };
+  await f.app.recover();
+  assert.equal(reads, 1); assert.ok(timers.at(-1).delay >= 19000);
+  timers.at(-1).callback();
+  assert.equal(reads, 1, 'an early timer must only reschedule, not call the server');
+  assert.equal(f.$('chat-text').value, 'keep this draft'); assert.equal(f.starts.length, 0);
+});
 
 test('conversation last_selection never chooses or overrides the global selectors', async t => {
   const f = await fixture(t); await f.app.openConversation(CID);

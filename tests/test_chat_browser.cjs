@@ -30,6 +30,7 @@ function fixture(options = {}) {
   const f = {requests: [], errors: [], external: [], skills: [20, 21, 22, 23].map(n => skill(n)), contextRevision: 5, profiles: [profile('MEMORY.md', 'private-memory-A'), profile('SOUL.md'), profile('IDENTITY.md')], mode: options.mode || 'sse', forceConflict: false, unknownSave: false, unknownCreate: false, hold: null};
   f.limits = {profile_bytes: {'MEMORY.md': 8192, 'SOUL.md': 4096, 'IDENTITY.md': 2048}, skill_file_bytes: 8192, skill_name_chars: 64, skill_description_chars: 256, skills_per_user: 64, skills_per_run: 3, personal_context_bytes: 32768};
   f.config = {schema_version: 1, limits: {user_text_bytes: 32768, attachments_per_turn: 8, title_chars: 80, upload_file_bytes: 2097152, event_page_max: 200, list_page_default: 50, poll_interval: 2, sse_frame_bytes: 262144}, allowed_file_extensions: ['.md', '.txt', '.html', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'], modes: ['chat', 'files']};
+  if (options.snapshot) f.config.features = {recovery_snapshot: true};
   f.files = [10, 11, 12].map((n, i) => ({id: id(n), name: i ? 'report.md' : 'source.md', kind: i ? 'output' : 'upload', version: i || null, size_bytes: 50, created_at: '2026-10-15T00:00:00Z', download_path: 'https://evil.test/do-not-use'}));
   f.conversations = Array.from({length: 105}, (_, n) => ({id: n ? id(100 + n) : CID, title: n ? `历史聊天 ${n}` : '完整历史', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z', revision: n ? 1 : 205, last_seq: n ? 1 : 205, active_run_id: null, storage_state: 'ok', last_run_status: n % 3 === 0 ? 'failed' : n % 3 === 1 ? 'interrupted' : 'completed', last_selection: {token_id: 7, model: 'fixture-chat', mode: 'chat'}}));
   for (const meta of f.conversations) meta.loaded_skill_ids = [];
@@ -98,6 +99,13 @@ function fixture(options = {}) {
         meta.revision = events.at(-1).seq; meta.last_seq = meta.revision;
       }
       return json({conversation: clone(meta)});
+    }
+    if ((match = /^\/conversations\/([^/]+)\/sync$/.exec(p))) {
+      const cid = match[1], meta = f.conversations.find(c => c.id === cid), events = cid === CID ? f.events : f.otherEvents.get(cid) || [], files = cid === CID ? f.files : f.otherFiles.get(cid) || [];
+      const after = Number(url.searchParams.get('after_seq') || 0), until = events.at(-1)?.seq || 0, page = events.filter(e => e.seq > after).slice(0, 200), next = page.at(-1)?.seq || after;
+      const filesRevision = require('node:crypto').createHash('sha256').update(JSON.stringify(files)).digest('hex');
+      const rid = meta.active_run_id || events.findLast(e => e.run_id)?.run_id;
+      return json({conversation: clone(meta), events: {events: page, until_seq: until, next_after_seq: next, has_more: next < until, storage_state: 'ok'}, run: clone(f.runs.get(rid) || null), files: url.searchParams.get('files_revision') === filesRevision ? null : clone(files), files_revision: filesRevision, context: null});
     }
     if ((match = /^\/conversations\/([^/]+)\/events$/.exec(p))) {
       const events = match[1] === CID ? f.events : f.otherEvents.get(match[1]) || [e(1, 'conversation.created', {title: '其他聊天'}, null, match[1])], after = Number(url.searchParams.get('after_seq') || 0), until = Number(url.searchParams.get('until_seq') || events.at(-1).seq);
@@ -575,4 +583,56 @@ test('browser: delayed delete response cannot repopulate another chat or account
   await page.getByRole('button',{name:'删除附件 source.md',exact:true}).click();await arrival;
   await page.evaluate(()=>window.dispatchEvent(new Event('cockpit-auth-changed')));f.hold.release();
   await page.waitForFunction(()=>document.getElementById('chat-text').disabled);assert.equal(await page.locator('.chat-attachment').count(),0);assert.equal(await page.inputValue('#chat-text'),'');
+});
+
+test('browser: snapshot recovery uses one state request plus only required event pages', async t => {
+  const env = await setup(t, {snapshot: true}); if (!env) return;
+  const {page, f} = env;
+  const reads = f.requests.filter(r => r.path.startsWith(`/conversations/${CID}`));
+  assert.equal(reads.filter(r => r.path.endsWith('/sync')).length, 1);
+  assert.equal(reads.filter(r => r.path.endsWith('/events')).length, 1);
+  assert.equal(reads.some(r => r.path === `/conversations/${CID}` || r.path.endsWith('/files') || /\/runs\/[^/]+$/.test(r.path)), false);
+  assert.equal(await page.locator('.chat-assistant').count(), 1);
+  assert.equal(f.requests.every(r => r.method === 'GET'), true);
+});
+
+test('browser: streaming patches retain old message nodes, selection, details and reading position', async t => {
+  const env = await setup(t); if (!env) return;
+  const result = await env.page.evaluate(() => {
+    const C = window.CockpitChat, target = document.createElement('div'); target.id = 'incremental-fixture'; document.body.append(target);
+    const projector = C.createEventProjector(), events = [], ids = n => `${n.toString(16).padStart(8, '0')}-2222-4222-8222-222222222222`;
+    const emit = (type, data, run_id) => events.push({v: 1, seq: events.length + 1, conversation_id: ids(999), type, data, run_id});
+    for (let n = 1; n <= 20; n++) {
+      emit('run.accepted', {text: `question ${n}`, attachment_ids: [], model: 'synthetic'}, ids(n));
+      emit('assistant.message', {message_id: ids(100 + n), text: `saved answer ${n}\n` + 'paragraph\n'.repeat(15), complete: true, tool_calls: []}, ids(n));
+      emit('assistant.reasoning', {message_id: ids(100 + n), text: 'public summary', kind: 'summary', field: 'thinking'}, ids(n));
+      emit('run.terminal', {status: 'completed', uncertain: false}, ids(n));
+    }
+    emit('run.accepted', {text: 'current question', attachment_ids: [], model: 'synthetic'}, ids(21));
+    emit('assistant.delta', {message_id: ids(121), text: 'current'}, ids(21));
+    // Recovery overlays create fresh view objects, while the underlying
+    // journal-derived identity and revision stay unchanged between polls.
+    const draw = () => C.renderRuns(document, target, projector.update(events).runs.map(run => ({...run, _seq: run._seq, _identity: run._identity})));
+    draw();
+    const article = target.children[0], saved = article.querySelector('.chat-assistant'), detail = saved.querySelector('details'); detail.open = true;
+    const text = saved.querySelector('p').firstChild, range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 5);
+    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    window.scrollTo(0, saved.getBoundingClientRect().top + window.scrollY - 50); const scroll = window.scrollY;
+    const changes = [], observer = new MutationObserver(items => changes.push(...items)); observer.observe(target, {childList: true, subtree: true, characterData: true});
+    emit('assistant.delta', {message_id: ids(121), text: '-next'}, ids(21)); draw();
+    const records = observer.takeRecords();
+    const retained = saved === target.children[0].querySelector('.chat-assistant') && article === target.children[0];
+    const selected = selection.toString(), open = detail.open, readingDelta = Math.abs(window.scrollY - scroll);
+    const oldTouched = records.some(r => article.contains(r.target));
+    draw(); const unchangedWrites = observer.takeRecords().length; observer.disconnect();
+    const streamingText = target.lastElementChild.querySelector('.chat-assistant p').firstChild;
+    selection.setBaseAndExtent(streamingText, 0, streamingText, 7);
+    emit('assistant.delta', {message_id: ids(121), text: '-again'}, ids(21)); draw();
+    const streamingSelection = selection.toString();
+    emit('assistant.message', {message_id: ids(121), text: 'current-next-again', complete: true, tool_calls: []}, ids(21)); draw();
+    return {retained, selected, streamingSelection, finalSelection: selection.toString(), open, readingDelta, oldTouched, unchangedWrites, latest: target.lastElementChild.querySelector('.chat-assistant').textContent};
+  });
+  assert.equal(result.retained, true); assert.equal(result.selected, 'saved'); assert.equal(result.open, true);
+  assert.equal(result.oldTouched, false); assert.equal(result.unchangedWrites, 0); assert.ok(result.readingDelta < 2);
+  assert.equal(result.streamingSelection, 'current'); assert.equal(result.finalSelection, 'current'); assert.match(result.latest, /current-next-again/);
 });
