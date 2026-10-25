@@ -8,6 +8,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ChatDeploymentTest(unittest.TestCase):
+    def test_receipt_redis_templates_skip_root_entrypoint_traversal(self):
+        for filename in (
+            "docker-compose.yml",
+            "compose.release.yml",
+            "deploy/full-stack/compose.yml",
+        ):
+            text = (ROOT / filename).read_text()
+            service = text.split("\n  image-studio-receipts:\n", 1)[1]
+            service = re.split(r"\n(?:  [a-z][a-z0-9-]*:|[a-z][a-z0-9-]*:)", service)[0]
+            self.assertRegex(service, r'user: ["\']?999:1000')
+            self.assertIn("cap_drop:", service)
+            self.assertNotIn("cap_add:", service)
+
     def test_chat_pool_uses_only_explicit_environment_not_shared_credentials(self):
         expected = {
             "COCKPIT_PROCESS_ROLE",
