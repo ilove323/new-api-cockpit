@@ -42,10 +42,12 @@
       <button type="submit" id="submit">{{ icon('search') }}查询</button>
     </form>
     <div class="presets" aria-label="快捷时间范围">
+      <button type="button" data-preset="previous-three-months">前三个月</button>
       <button type="button" data-preset="month">上个月</button>
       <button type="button" data-preset="current-month">本月</button>
       <button type="button" data-preset="30">近30天</button>
       <button type="button" data-preset="7">近7天</button>
+      <button type="button" data-preset="yesterday">昨天</button>
       <button type="button" data-preset="1">近1天</button>
     </div>
     <p id="status" role="status" aria-live="polite">等待查询</p>

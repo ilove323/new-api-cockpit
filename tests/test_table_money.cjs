@@ -63,6 +63,7 @@ function harness({search='',preferences}={}){
     rowMoneyFormula:row=>row.amount,totalMoneyFormula:(rows,amount)=>amount,
   };
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root,'presets.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(root,'app.js'),'utf8'),context);
   return {elements,columns,headers,storage,requests,context,defaultResponse,respond:fn=>{respond=fn;},run:code=>vm.runInContext(code,context),select:(id,value)=>{
     const input=get(id+'-options').querySelectorAll('label').flatMap(el=>el.children).find(el=>el.tag==='input'&&el.value===value);
@@ -73,6 +74,24 @@ const row={user_id:1,username:'tester',model_name:'gpt',tier_name:'low',token_id
   request_count:2,total_tokens:1000000,input_tokens:800000,output_tokens:10,
   cache_read_tokens:199990,cache_write_tokens:0,group_ratio:3.456789,
   input_price:2,output_price:10.123456,cache_price:0.0049,write_price:null,amount:1234.567891};
+test('calendar shortcut clicks fill Beijing bounds and query the current ledger once',async()=>{
+  for(const [preset,start,end] of [
+    ['previous-three-months','2026-07-01T00:00:00','2026-09-30T23:59:59'],
+    ['yesterday','2026-10-26T00:00:00','2026-10-26T23:59:59'],
+  ]){
+    const h=harness();h.run("Date.now=()=>Date.parse('2026-10-26T18:20:54.987Z')");
+    const buttons=h.context.document.querySelectorAll('[data-preset]'),button=buttons.find(b=>b.dataset.preset===preset);
+    assert.ok(button);await button.fire('click');
+    for(let i=0;i<20;i++)await Promise.resolve();
+    assert.equal(h.elements.get('start').value,start);assert.equal(h.elements.get('end').value,end);
+    const requests=h.requests.filter(url=>url.startsWith('/cockpit/api/statistics/usage?'));
+    assert.equal(requests.length,1);
+    const params=new URL(requests[0],'https://fixture.invalid').searchParams;
+    assert.equal(params.get('start'),start);assert.equal(params.get('end'),end);assert.equal(params.get('scope_id'),'7');
+    assert.equal(button.attrs['aria-pressed'],'true');assert.equal(button.disabled,false);
+    assert.ok(buttons.filter(b=>b!==button).every(b=>b.attrs['aria-pressed']==='false'));
+  }
+});
 test('table currency formatter fixes two decimals, including zeros, rounding and missing values',()=>{
   const h=harness();
   for(const [value,expected] of [[2,'2.00'],[0,'0.00'],[0.0049,'0.00'],[0.005,'0.01'],[-12.3456,'-12.35'],['1234.567891','1,234.57'],[null,'—']]){
