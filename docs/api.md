@@ -113,6 +113,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | `GET` | `/cockpit/api/statistics/alert` | 即时检查并按配置发送报警 |
 | `GET` | `/cockpit/api/statistics/scopes` | 渠道标签账本 |
 | `GET` | `/cockpit/api/statistics/usage` | 用户模型用量、合计、排名 |
+| `GET` | `/cockpit/api/statistics/channel-flow` | 全部启用渠道的各用户消费金额、请求数及渠道内占比 |
 | `GET` | `/cockpit/api/statistics/usage/by-token` | 按令牌拆分用量 |
 | `GET` | `/cockpit/api/statistics/usage/tokens` | 区间令牌选项 |
 | `GET` | `/cockpit/api/statistics/usage/groups` | 区间日志分组选项 |
@@ -768,6 +769,29 @@ curl --fail-with-body "$BASE_URL/cockpit/api/quality/summary?start=2026-10-09&en
 路由信息不充分、日志关闭或已删除时，不能保证完整可用率。
 超过 1000 个模型/渠道组合、异常 JSON 回退超过上限返回 503；查询超时返回 504，缩小时间或筛选范围后再查。
 详细规则见[渠道质量](quality.md)。
+
+## 渠道分流
+
+`GET /cockpit/api/statistics/channel-flow?start=2026-10-01&end=2026-10-31`
+
+仅管理员可访问；受限管理员 PAT 需要 `log:read` 与 `channel:read`。只接受 `start`、`end`，北京时间、包含结束秒，单次最多 367 天。
+不接受 `scope_id`、用户、模型、KEY 或分组筛选，始终统计当前全部启用渠道（`channels.status=1`）在所选时间内的 `type=2` 消费日志。
+
+响应的 `rows` 每项是一个渠道：
+
+| 字段 | 含义 |
+|---|---|
+| `channel_id` / `channel_name` | 当前渠道 ID / 名称；同名渠道仍按 ID 区分 |
+| `amount` | 渠道消费金额，十进制字符串，来自 `SUM(quota)/500000` |
+| `request_count` / `user_count` | 消费日志条数 / 不同消费用户 ID 数 |
+| `users` | 按用户 ID 汇总，包含 ID、用户名、显示名、消费金额、请求数和 `percentage` |
+| `users[].percentage` | 该用户金额占所在渠道全部用户金额的百分比，十进制字符串；渠道总金额为零时为 `null` |
+
+渠道及各渠道的用户均按金额倒序。无消费的启用渠道保留，`users: []`；禁用或删除的渠道不显示。
+优先读取当前用户名，用户已不存在时保留日志名；同名不同 ID 不合并，改名不拆行。KEY 和模型不拆分，未读取凭据。
+单次查询最多返回 10000 条渠道/用户聚合行（含无消费渠道）；超过上限返回 503，不返回部分合计。源库只读，查询超时 60 秒。
+网页只在选中第四个排名标签时读取，重复选中复用当前查询结果；重新查询时间范围后失效，不增加逐用户 New API 调用。
+现有统计与 Excel 导出不变，渠道分流暂不加入 Excel。
 
 ## 智力测试接口
 

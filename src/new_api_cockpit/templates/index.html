@@ -9,6 +9,7 @@
   <script defer src="{{ url_for('static', filename='presets.js') }}"></script>
   <script defer src="{{ url_for('static', filename='money-tooltip.js') }}"></script>
   <script defer src="{{ url_for('static', filename='scopes.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='channel-flow.js') }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='balance.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='channel.css') }}">
@@ -68,6 +69,7 @@
         <button id="tab-model" role="tab" type="button" data-ranking="model_amount" aria-selected="true" aria-controls="chart">模型消费</button>
         <button id="tab-token" role="tab" type="button" data-ranking="user_tokens" aria-selected="false" aria-controls="chart" tabindex="-1">用户 Token</button>
         <button id="tab-amount" role="tab" type="button" data-ranking="user_amount" aria-selected="false" aria-controls="chart" tabindex="-1">用户消费</button>
+        <button id="tab-channel-flow" role="tab" type="button" data-ranking="channel_flow" aria-selected="false" aria-controls="chart" tabindex="-1">渠道分流</button>
       </div>
       <div id="chart" role="tabpanel" aria-labelledby="tab-model"></div>
     </section>

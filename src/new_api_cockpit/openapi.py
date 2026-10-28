@@ -1144,6 +1144,46 @@ def document():
         )
     ops += [
         operation(
+            "GET",
+            "/cockpit/api/statistics/channel-flow",
+            "按用户拆分全部启用渠道消费",
+            "用量统计",
+            obj(
+                {
+                    "start": text(),
+                    "end": text(),
+                    "rows": array(
+                        obj(
+                            {
+                                "channel_id": integer(),
+                                "channel_name": text(),
+                                "amount": MONEY,
+                                "request_count": integer(),
+                                "user_count": integer(),
+                                "users": array(
+                                    obj(
+                                        {
+                                            "user_id": {"type": ["integer", "null"]},
+                                            "username": text(),
+                                            "display_name": text(),
+                                            "amount": MONEY,
+                                            "request_count": integer(),
+                                            "percentage": {
+                                                "type": ["string", "null"],
+                                                "description": "占所在渠道总消费的百分比；100 表示 100%，渠道总金额为零时为 null。",
+                                            },
+                                        }
+                                    )
+                                ),
+                            }
+                        )
+                    ),
+                }
+            ),
+            params=DATES,
+            description="仅管理员。按北京时间查询全部 status=1 渠道，不接受账本、用户、模型、令牌或分组筛选。只聚合 type=2 消费日志，金额为 SUM(quota)/500000，不按当前价格重算。用户按 ID 合并，优先显示当前用户名；已删除用户保留日志名。每个用户 percentage 为其消费占所在渠道全部消费的百分比；渠道金额为零时为 null。保留没有消费的启用渠道，不包含已禁用或删除渠道。最多 367 天、10000 条渠道/用户聚合行（含无消费渠道），超过上限返回 503，不返回部分合计。源库只读单次聚合，无额外 New API 调用。",
+        ),
+        operation(
             "POST",
             "/cockpit/api/statistics/usage/details",
             "读取查询快照的公式详情",

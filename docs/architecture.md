@@ -77,6 +77,7 @@ chat：独立有限运行池（默认关闭）
 | `frontend/studio/`、`static/studio-upstream.js` | 固定版本的画板与视图源码、标注擦除和图层合成适配，构建为本地静态资源 |
 | `static/studio-lightbox.js` | 候选大图缩放、拖动、双指操作与独立对比，不修改主图 |
 | `report.py`、`usage.sql`、`metadata_fallback.py` | 按请求价格和日志倍率拆行，原始用量聚合、异常日志兼容、排名与 Excel |
+| `channel_flow.py`、`static/channel-flow.js` | 第四个排名标签按用户拆分全部启用渠道的历史消费，只读聚合、按需查询，不读取 KEY |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
 | `report_snapshots.py` | 按管理员与账本隔离、限时保留的不可变展示详情 |
 | `balance.py`、`scopes.py`、`catalog_sync.py` | 账本、渠道库存、月度逐渠道费用、余额与报警 |

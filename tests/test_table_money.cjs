@@ -23,7 +23,7 @@ function harness({search='',preferences}={}){
   for(const match of html.matchAll(/<(input|th|button)\b([^>]*)>/g)){
     const attrs=Object.fromEntries([...match[2].matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]]));
     if(!attrs['data-column-toggle']&&!attrs['data-column']&&!Object.keys(attrs).some(k=>/data-(detail-mode|model-mode|preset|ranking)/.test(k)))continue;
-    const el=attrs.id?get(attrs.id):new Element();el.tag=match[1];el.attrs=attrs;
+    const el=attrs.id?get(attrs.id):new Element();el.tag=match[1];el.attrs=attrs;el.id=attrs.id||'';
     el.checked=/\bchecked\b/.test(match[2]);el.hidden=/\bhidden\b/.test(match[2]);
     for(const [key,value] of Object.entries(attrs))if(key.startsWith('data-'))el.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=value;
     if(attrs['data-column-toggle'])columns.set(attrs['data-column-toggle'],el);
@@ -100,6 +100,24 @@ test('table currency formatter fixes two decimals, including zeros, rounding and
   assert.equal(h.run('tableMoney(undefined)'),'—');
   assert.equal(h.run('number(3.456789)'),'3.456789');
   assert.equal(h.run("priceDisplay({pricing_mode:'expression'},'input_price')"),'无法拆分');
+});
+
+test('fourth ranking tab queries all channels for the displayed report, not unsent inputs or detail filters',async()=>{
+  const h=harness(),calls=[];
+  h.context.window.CockpitChannelFlow={reset(){calls.push(['reset']);},hide(){calls.push(['hide']);},show(container,range){calls.push(['show',range]);}};
+  const ids=[...html.matchAll(/data-ranking="([^"]+)"/g)].map(match=>match[1]);
+  assert.deepEqual(ids,['model_amount','user_tokens','user_amount','channel_flow']);
+  await h.run('query()');
+  assert.equal(calls.filter(row=>row[0]==='show').length,0,'Normal page queries do not load channel flow');
+  const before=h.requests.length;
+  h.elements.get('start').value='2026-10-04T00:00:00';
+  await h.elements.get('tab-channel-flow').fire('click');
+  const shown=calls.filter(row=>row[0]==='show').at(-1)[1];
+  assert.deepEqual(JSON.parse(JSON.stringify(shown)),{start:h.run('snapshot.start'),end:h.run('snapshot.end')});
+  assert.equal(h.elements.get('chart').attrs['aria-labelledby'],'tab-channel-flow');
+  assert.equal(h.requests.length,before,'The extra view does not query tokens or repeat the report');
+  await h.elements.get('tab-model').fire('click');
+  assert.equal(h.elements.get('chart').attrs['aria-labelledby'],'tab-model');
 });
 test('usage rows, monetary prices, optional unit prices and footer use two decimals only',()=>{
   const h=harness();h.run(`snapshot={rows:[${JSON.stringify(row)}]};renderDetails()`);

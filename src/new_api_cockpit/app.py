@@ -38,6 +38,7 @@ from new_api_cockpit import (
     operation_records,
     openapi,
     quality,
+    channel_flow,
     intelligence,
     manual,
     client_downloads,
@@ -1097,6 +1098,16 @@ def usage():
         rankings=rankings(rows),
         updated_at=datetime.now(TZ).isoformat(timespec="seconds"),
     )
+
+
+@app.get("/cockpit/api/statistics/channel-flow")
+def channel_flow_usage():
+    return jsonify(channel_flow.load(*channel_flow.parameters(request.args)))
+
+
+@app.errorhandler(channel_flow.FlowUnavailable)
+def channel_flow_unavailable(exc):
+    return jsonify(error=str(exc)), 503
 
 
 @app.get("/cockpit/api/statistics/usage/by-token")
