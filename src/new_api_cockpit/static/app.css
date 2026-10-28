@@ -28,6 +28,14 @@
 .bar-row:nth-child(3n+2) .bar { background: oklch(0.65 0.15 200); }
 .bar-row:nth-child(3n) .bar { background: oklch(0.7 0.12 280); }
 .bar-value { text-align: right; font-variant-numeric: tabular-nums; }
+.channel-flow-hint,.channel-flow-empty { margin: 0; color: var(--ui-muted-text); font-size: 12px; }
+.channel-flow-channel { display: grid; gap: 12px; padding-block: 4px 16px; border-bottom: 1px solid var(--ui-border); min-width: 0; }
+.channel-flow-channel:last-child { border-bottom: 0; padding-bottom: 4px; }
+.channel-flow-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.channel-flow-heading h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.channel-flow-total { color: var(--ui-muted-text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.channel-flow-value { display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.channel-flow-percentage { min-width: 62px; color: var(--ui-muted-text); }
 .table-heading { display: grid; gap: 12px; margin-bottom: 12px; }
 .detail-title { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .detail-title h2 { margin-right: auto; }

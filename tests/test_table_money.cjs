@@ -23,7 +23,7 @@ function harness({search='',preferences}={}){
   for(const match of html.matchAll(/<(input|th|button)\b([^>]*)>/g)){
     const attrs=Object.fromEntries([...match[2].matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]]));
     if(!attrs['data-column-toggle']&&!attrs['data-column']&&!Object.keys(attrs).some(k=>/data-(detail-mode|model-mode|preset|ranking)/.test(k)))continue;
-    const el=attrs.id?get(attrs.id):new Element();el.tag=match[1];el.attrs=attrs;
+    const el=attrs.id?get(attrs.id):new Element();el.tag=match[1];el.attrs=attrs;el.id=attrs.id||'';
     el.checked=/\bchecked\b/.test(match[2]);el.hidden=/\bhidden\b/.test(match[2]);
     for(const [key,value] of Object.entries(attrs))if(key.startsWith('data-'))el.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=value;
     if(attrs['data-column-toggle'])columns.set(attrs['data-column-toggle'],el);
@@ -63,6 +63,7 @@ function harness({search='',preferences}={}){
     rowMoneyFormula:row=>row.amount,totalMoneyFormula:(rows,amount)=>amount,
   };
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root,'presets.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(root,'app.js'),'utf8'),context);
   return {elements,columns,headers,storage,requests,context,defaultResponse,respond:fn=>{respond=fn;},run:code=>vm.runInContext(code,context),select:(id,value)=>{
     const input=get(id+'-options').querySelectorAll('label').flatMap(el=>el.children).find(el=>el.tag==='input'&&el.value===value);
@@ -73,6 +74,24 @@ const row={user_id:1,username:'tester',model_name:'gpt',tier_name:'low',token_id
   request_count:2,total_tokens:1000000,input_tokens:800000,output_tokens:10,
   cache_read_tokens:199990,cache_write_tokens:0,group_ratio:3.456789,
   input_price:2,output_price:10.123456,cache_price:0.0049,write_price:null,amount:1234.567891};
+test('calendar shortcut clicks fill Beijing bounds and query the current ledger once',async()=>{
+  for(const [preset,start,end] of [
+    ['previous-three-months','2026-07-01T00:00:00','2026-09-30T23:59:59'],
+    ['yesterday','2026-10-26T00:00:00','2026-10-26T23:59:59'],
+  ]){
+    const h=harness();h.run("Date.now=()=>Date.parse('2026-10-26T18:20:54.987Z')");
+    const buttons=h.context.document.querySelectorAll('[data-preset]'),button=buttons.find(b=>b.dataset.preset===preset);
+    assert.ok(button);await button.fire('click');
+    for(let i=0;i<20;i++)await Promise.resolve();
+    assert.equal(h.elements.get('start').value,start);assert.equal(h.elements.get('end').value,end);
+    const requests=h.requests.filter(url=>url.startsWith('/cockpit/api/statistics/usage?'));
+    assert.equal(requests.length,1);
+    const params=new URL(requests[0],'https://fixture.invalid').searchParams;
+    assert.equal(params.get('start'),start);assert.equal(params.get('end'),end);assert.equal(params.get('scope_id'),'7');
+    assert.equal(button.attrs['aria-pressed'],'true');assert.equal(button.disabled,false);
+    assert.ok(buttons.filter(b=>b!==button).every(b=>b.attrs['aria-pressed']==='false'));
+  }
+});
 test('table currency formatter fixes two decimals, including zeros, rounding and missing values',()=>{
   const h=harness();
   for(const [value,expected] of [[2,'2.00'],[0,'0.00'],[0.0049,'0.00'],[0.005,'0.01'],[-12.3456,'-12.35'],['1234.567891','1,234.57'],[null,'—']]){
@@ -81,6 +100,24 @@ test('table currency formatter fixes two decimals, including zeros, rounding and
   assert.equal(h.run('tableMoney(undefined)'),'—');
   assert.equal(h.run('number(3.456789)'),'3.456789');
   assert.equal(h.run("priceDisplay({pricing_mode:'expression'},'input_price')"),'无法拆分');
+});
+
+test('fourth ranking tab queries all channels for the displayed report, not unsent inputs or detail filters',async()=>{
+  const h=harness(),calls=[];
+  h.context.window.CockpitChannelFlow={reset(){calls.push(['reset']);},hide(){calls.push(['hide']);},show(container,range){calls.push(['show',range]);}};
+  const ids=[...html.matchAll(/data-ranking="([^"]+)"/g)].map(match=>match[1]);
+  assert.deepEqual(ids,['model_amount','user_tokens','user_amount','channel_flow']);
+  await h.run('query()');
+  assert.equal(calls.filter(row=>row[0]==='show').length,0,'Normal page queries do not load channel flow');
+  const before=h.requests.length;
+  h.elements.get('start').value='2026-10-04T00:00:00';
+  await h.elements.get('tab-channel-flow').fire('click');
+  const shown=calls.filter(row=>row[0]==='show').at(-1)[1];
+  assert.deepEqual(JSON.parse(JSON.stringify(shown)),{start:h.run('snapshot.start'),end:h.run('snapshot.end')});
+  assert.equal(h.elements.get('chart').attrs['aria-labelledby'],'tab-channel-flow');
+  assert.equal(h.requests.length,before,'The extra view does not query tokens or repeat the report');
+  await h.elements.get('tab-model').fire('click');
+  assert.equal(h.elements.get('chart').attrs['aria-labelledby'],'tab-model');
 });
 test('usage rows, monetary prices, optional unit prices and footer use two decimals only',()=>{
   const h=harness();h.run(`snapshot={rows:[${JSON.stringify(row)}]};renderDetails()`);

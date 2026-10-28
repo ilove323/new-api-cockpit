@@ -45,6 +45,8 @@ WRITE_BALANCE = {
 
 
 def required_scopes(endpoint, method):
+    if endpoint == "channel_flow_usage":
+        return {"log:read", "channel:read"}
     if endpoint == "api_schema":
         return {"profile:read"}
     if endpoint in READ_LOGS:

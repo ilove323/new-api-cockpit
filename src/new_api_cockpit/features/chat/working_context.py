@@ -3,7 +3,7 @@
 The caller supplies ONE authorized chat's committed events and does all I/O,
 billing, cancellation and auxiliary-call accounting. A pending plan has
 ``messages=None``: it must be finalized before dispatching the main request.
-See docs/design/ai-assistant-v2/context.md for the persistence/wire contract.
+See docs/chat-internals.md for the current persistence/wire contract.
 """
 
 import copy

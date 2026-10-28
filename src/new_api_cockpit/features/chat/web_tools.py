@@ -2,7 +2,7 @@
 
 The only subprocess is a fixed isolated DNS helper with an empty environment.
 Cancellation/run deadlines escape as sanitized ChatError, like the file tools;
-ordinary web failures are bounded JSON. See the v2 network design for limits.
+ordinary web failures are bounded JSON. See docs/chat-internals.md for boundaries.
 """
 
 from dataclasses import dataclass, field

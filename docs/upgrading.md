@@ -66,7 +66,11 @@ docker exec -i <PostgreSQL容器名> pg_restore -l \
 
 ## 准备与切换
 
-Cockpit v0.4.1 随附 VS Code 插件 0.4.2。插件可独立连接 New API，余额不再依赖 Cockpit MCP；已有连接和刷新等待时间保留。KEY 改组沿用官方 PUT。本次只需更新 Cockpit 镜像，不需要修改 New API 镜像。
+Cockpit v0.4.2 随附 VS Code 插件仍为 0.4.2，插件功能不变。只更新 Cockpit 镜像，不需要修改 New API、PostgreSQL 或 Redis 镜像；与 v0.4.1 相比没有新增 SQL 迁移或源库权限。
+
+本版鹈鹕测试改为流式 SVG，生成最多 300 秒。同步 [Nginx 示例](../nginx.conf.example)中 `/cockpit/api/intelligence/test` 的精确 location：读取超时 360 秒，关闭缓冲、缓存及 gzip；执行 `nginx -t` 后平滑 reload，不改其他路由、端口或证书。渠道分流只使用现有源库只读权限，不新建表、角色或定时任务。
+
+插件从 v0.4.1 起可独立连接 New API，余额不再依赖 Cockpit MCP；已有连接和刷新等待时间保留。KEY 改组继续使用官方 PUT。
 
 先准备新镜像，再停止应用，避免停机期间等待构建或下载。保留 `.env`、端口、网络、协议文件和私有 override，
 不要直接覆盖环境参数。下面两种方式选一种，所有命令都在同一个实际 Compose 项目中执行。

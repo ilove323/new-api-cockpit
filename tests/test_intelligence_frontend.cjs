@@ -17,8 +17,8 @@ async function verifyPreview(cryptoMode){
     submit(){forms.push({target:this.target,action:this.action,method:this.method,fields:Object.fromEntries(this.children.map(n=>[n.name,n.value]))});}
   }
   const elements=new Map([...html.matchAll(/id="([^"]+)"/g)].map(m=>[m[1],new Element()]));
-  const forms=[],calls=[],pending=[],events={};let unique=0,authChecks=0;
-  const context={document:{getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),body:new Element('body'),querySelector:()=>({content:'fixture-session'}),addEventListener:(name,fn)=>events[name]=fn},window:{addEventListener:(name,fn)=>events[name]=fn,CockpitAuth:{ensure:async()=>{authChecks++;}}},AbortSignal,AbortController,crypto:{randomUUID:()=>String(++unique)},console,fetch:(url,init)=>{calls.push({url,init});return new Promise(resolve=>pending.push(resolve));}};
+  const forms=[],calls=[],pending=[],events={},timers=new Map();let unique=0,authChecks=0,nextTimer=0;
+  const context={document:{getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),body:new Element('body'),querySelector:()=>({content:'fixture-session'}),addEventListener:(name,fn)=>events[name]=fn},window:{addEventListener:(name,fn)=>events[name]=fn,CockpitAuth:{ensure:async()=>{authChecks++;}}},AbortSignal,AbortController,TextDecoder,setTimeout:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearTimeout:id=>timers.delete(id),crypto:{randomUUID:()=>String(++unique)},console,fetch:(url,init)=>{calls.push({url,init});return new Promise(resolve=>pending.push(resolve));}};
   if(cryptoMode==='without-randomUUID')context.crypto={};
   if(cryptoMode==='without-crypto')delete context.crypto;
   const settle=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
@@ -33,6 +33,8 @@ async function verifyPreview(cryptoMode){
   await elements.get('intelligence-test').fire('submit');assert.equal(calls.length,2);
   assert.deepEqual(JSON.parse(calls[1].init.body),{model:'model-b'});
   assert.equal(calls[1].init.method,'POST');assert.equal(calls[1].init.headers['X-Intelligence-Request'],'1');
+  assert.equal(calls[1].init.headers.Accept,'text/event-stream');
+  assert.match(elements.get('intelligence-status').textContent,/正在校验模型.*秒/);
   const output='<html><svg/><script>window.test=1</script></html>';
   pending[1]({ok:true,json:async()=>({model:'model-b',group:'actual',elapsed_ms:1234,html:output,source:output,warning:''})});await first;
   assert.equal(elements.get('intelligence-source').textContent,output);
@@ -86,6 +88,56 @@ async function verifyPreview(cryptoMode){
   assert.equal(new Set(forms.map(form=>form.target)).size,forms.length);
   assert.equal(calls.filter(call=>call.url==='/cockpit/api/intelligence/test').length,5);
   assert.equal(elements.get('intelligence-status').textContent,'生成完成。');
+  assert.equal(timers.size,0,'The local elapsed timer stops after completion');
+
+  // Incremental SSE: Unicode split between byte chunks, CRLF split between
+  // chunks, thinking status without thinking text, then a single final preview.
+  function openStream(){
+    let wire,cancelled=false;
+    const body=new ReadableStream({start(value){wire=value;},cancel(){cancelled=true;}});
+    const response={ok:true,headers:{get:()=> 'text/event-stream; charset=utf-8'},body};
+    const send=event=>{
+      const bytes=new TextEncoder().encode('event: '+event.type+'\r\ndata: '+JSON.stringify(event)+'\r\n\r\n');
+      for(let i=0;i<bytes.length;i+=3)wire.enqueue(bytes.slice(i,i+3));
+    };
+    return {response,send,close:()=>wire.close(),cancelled:()=>cancelled};
+  }
+  const streamed=elements.get('intelligence-test').fire('submit'),wire=openStream();
+  pending[6](wire.response);await settle();
+  wire.send({type:'status',stage:'thinking'});
+  // Drain several small network chunks, not a polling request.
+  for(let i=0;i<100;i++)await Promise.resolve();
+  assert.match(elements.get('intelligence-status').textContent,/模型正在思考/);
+  wire.send({type:'text',text:'<svg><text>鹈鹕'});
+  for(let i=0;i<100;i++)await Promise.resolve();
+  assert.equal(elements.get('intelligence-source').textContent,'<svg><text>鹈鹕');
+  assert.match(elements.get('intelligence-status').textContent,/正在生成 SVG.*字符.*秒/);
+  assert.equal(elements.get('intelligence-preview').hidden,true);
+  assert.equal(elements.get('intelligence-effect').disabled,true);
+  const svg='<svg><text>鹈鹕</text></svg>';
+  wire.send({type:'result',result:{model:'model-b',group:'b',elapsed_ms:20,html:output,source:svg,warning:''}});
+  await streamed;
+  assert.equal(elements.get('intelligence-source').textContent,svg);
+  assert.equal(forms.length,4);assert.equal(wire.cancelled(),true);
+  assert.equal(timers.size,0);
+
+  const partial=elements.get('intelligence-test').fire('submit'),broken=openStream();
+  pending[7](broken.response);await settle();
+  broken.send({type:'text',text:'<svg>partial'});
+  broken.send({type:'error',status:504,error:'模型生成超时',uncertain:true});
+  await partial;
+  assert.equal(elements.get('intelligence-source').textContent,'<svg>partial');
+  assert.equal(elements.get('intelligence-status').textContent,'模型生成超时');
+  assert.equal(elements.get('intelligence-effect').disabled,true);
+  assert.equal(forms.length,4);assert.equal(calls.length,8,'A streamed failure never retries');
+  assert.equal(broken.cancelled(),true);assert.equal(timers.size,0);
+
+  const interrupted=elements.get('intelligence-test').fire('submit'),cut=openStream();
+  pending[8](cut.response);await settle();cut.send({type:'text',text:'<svg>unfinished'});cut.close();
+  await interrupted;
+  assert.match(elements.get('intelligence-status').textContent,/生成连接中断/);
+  assert.equal(elements.get('intelligence-source').textContent,'<svg>unfinished');
+  assert.equal(calls.length,9);assert.equal(forms.length,4);assert.equal(timers.size,0);
   assert.equal(unique,0,'Preview target names must not depend on Crypto APIs');
   for(const forbidden of ['localStorage','sessionStorage','indexedDB','/runs','setInterval','innerHTML'])assert.equal(script.includes(forbidden),false);
   assert.equal(html.includes('history'),false);

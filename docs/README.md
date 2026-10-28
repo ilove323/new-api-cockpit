@@ -25,7 +25,6 @@
 
 - [贡献与验证](../CONTRIBUTING.md)：离线回归、隔离数据库、可选浏览器验证和打包。
 - [整体架构](architecture.md)、[界面规范](ui.md)、[性能机制](performance.md)、[工作站源码维护](image-studio-sources.md)。
-- [聊天基础契约](design/ai-assistant-v1/README.md)：HTTP、存储、运行限制、个人上下文和模块依赖方向。
-- [聊天扩展契约](design/ai-assistant-v2/README.md)：三协议、受控联网、公开推理、自动记忆、自适应上下文及当前前端行为；与基础设计不同时以扩展契约为准。
+- [聊天开发说明](chat-internals.md)：当前 HTTP、存储、协议、文件/联网、个人上下文和前端约束；不再维护分期设计稿。
 
 具体服务器地址、账号、凭据、部署操作和一次性数据处理不写入公共文档，应保存在部署方管理的受保护记录中。

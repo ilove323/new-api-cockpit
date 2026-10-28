@@ -1,4 +1,4 @@
-/* Fetch one database aggregate; user and model filters only affect the detail table. */
+/* Usage aggregate plus an on-demand channel split; detail filters stay local. */
 const $ = id => document.getElementById(id);
 let snapshot = null;
 let tokenSnapshot = null;
@@ -339,9 +339,12 @@ function render() {
   const data=snapshot.rows.filter(row=>!failureOnly(row));
   renderSummary(data);
   renderDetailView();
-  renderRanking(data);
+  return renderRanking(data);
 }
 function renderRanking(data) {
+  if(ranking==='channel_flow')return window.CockpitChannelFlow.show($('chart'),{start:snapshot.start,end:snapshot.end});
+  window.CockpitChannelFlow?.hide();
+  $('chart').setAttribute('aria-busy','false');
   const models=new Map();data.forEach(r=>models.set(r.model_name,(models.get(r.model_name)||0)+Number(r.amount)));
   const tokens=ranking==='user_tokens';
   const entries=ranking==='model_amount'?[...models].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])):
@@ -368,7 +371,11 @@ tabs.forEach((tab,i)=>{
     ranking=tab.dataset.ranking;
     tabs.forEach(t=>{t.setAttribute('aria-selected',String(t===tab));t.tabIndex=t===tab?0:-1;});
     $('chart').setAttribute('aria-labelledby',tab.id);
-    if(snapshot)render();
+    if(ranking!=='channel_flow')window.CockpitChannelFlow?.hide();
+    if(snapshot){
+      if(ranking==='channel_flow'&&$('submit').disabled){$('chart').textContent='正在查询…';return;}
+      return render();
+    }
   });
   tab.addEventListener('keydown',event=>{
     let target;
@@ -382,6 +389,8 @@ tabs.forEach((tab,i)=>{
 async function query(event,range){
   event?.preventDefault();if(!Scope.current||$('submit').disabled)return;
   const ticket=Scope.epoch,includeFailures=failureMode();
+  window.CockpitChannelFlow?.reset();
+  if(ranking==='channel_flow'){$('chart').replaceChildren();$('chart').textContent='正在查询…';}
   $('submit').disabled=true;document.querySelectorAll('[data-preset]').forEach(b=>b.disabled=true);
   $('column-failure-requests').disabled=true;
   $('export').disabled=true;$('status').className='';$('status').textContent='正在查询…';
@@ -401,7 +410,7 @@ async function query(event,range){
     Scope.guard(ticket);$('updated').textContent='更新于 '+snapshot.updated_at.replace('T',' ').slice(0,19)+' 北京时间';render();$('export').disabled=false;
   }catch(error){
     if(ticket!==Scope.epoch)return;
-    if(snapshot){$('column-failure-requests').checked=snapshotIncludesFailures;saveVisibleColumns();renderDetails();$('export').disabled=false;}
+    if(snapshot){$('column-failure-requests').checked=snapshotIncludesFailures;saveVisibleColumns();renderDetails();if(ranking==='channel_flow')renderRanking(snapshot.rows);$('export').disabled=false;}
     $('status').className='error';$('status').textContent=error.message;
   }
   finally{if(ticket===Scope.epoch){$('submit').disabled=false;$('column-failure-requests').disabled=false;document.querySelectorAll('[data-preset]').forEach(b=>b.disabled=false);}}

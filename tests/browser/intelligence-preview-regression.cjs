@@ -47,7 +47,14 @@ async function openPage(context,origin,tab){
       assert.deepEqual(request.postDataJSON(),{model:'fixture-model'});
       state.tag=tab+'-'+(++state.generations);
       const html=fixture.results[state.tag].html;
-      await route.fulfill({json:{model:'fixture-model',group:'fixture-group',elapsed_ms:10,html,source:html,warning:''}});return;
+      assert.equal(request.headers().accept,'text/event-stream');
+      const events=[
+        {type:'status',stage:'waiting'},
+        {type:'text',text:html.slice(0,20)},
+        {type:'text',text:html.slice(20)},
+        {type:'result',result:{model:'fixture-model',group:'fixture-group',elapsed_ms:10,html,source:html,warning:''}},
+      ];
+      await route.fulfill({contentType:'text/event-stream',body:events.map(event=>'event: '+event.type+'\ndata: '+JSON.stringify(event)+'\n\n').join('')});return;
     }
     if(url.pathname==='/cockpit/api/intelligence/preview'){
       assert.equal(request.method(),'POST');assert.equal(request.headers().origin,origin);

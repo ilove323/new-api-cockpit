@@ -32,9 +32,9 @@
 
 | 页面 | 地址 | 可以做什么 |
 | --- | --- | --- |
-| 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
+| 用量统计 | `/cockpit/statistics/` | 按用户、模型、令牌和分组筛选，查看 Token、消费排名、渠道用户消费占比和价格明细，导出 Excel；从明细跳到相同时间段的 New API 日志 |
 | 渠道质量 | `/cockpit/quality/` | 查看性能健康和高频模型，比较渠道成功率、失败码、首字与总耗时分位数、平均输出 token/s 和费用，跳到对应日志 |
-| 智力测试 | `/cockpit/intelligence/` | 选择模型做鹈鹕骑车测试，直接查看生成的 SVG 动画和 HTML 源码；结果仅留在当前页面 |
+| 智力测试 | `/cockpit/intelligence/` | 原版鹈鹕骑车 SVG 测试，流式显示状态和源码，完成后预览；结果仅留在当前页面 |
 | 生图工作站 | `/cockpit/image-studio` | 使用本人 KEY 中可用的生图模型创作图片，选区、文字和箭头指导修改，编辑标注并放大比较候选 |
 | AI 助手（默认关闭） | `/cockpit/chat/` | 本人 KEY 三协议聊天、附件读取与引用、文档和图片输出、按需联网、完整历史与自适应上下文、自动 Memory |
 | 用户管理 | `/cockpit/users/` | 编辑资料、密码、用户组和状态；按组选择用户，预览后批量增减额度；设置每天、每周或每月执行的额度规则 |
@@ -116,7 +116,7 @@ New API 与 Cockpit 的浏览器入口须同协议、同主机、同端口，账
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [工作站源码维护](docs/image-studio-sources.md) · [贡献指南](CONTRIBUTING.md)
-- AI 助手：[使用、隔离与配置](docs/chat.md) · [接口与设计](docs/design/ai-assistant-v2/README.md)（默认关闭，需单独配置聊天请求池）
+- AI 助手：[使用、隔离与配置](docs/chat.md) · [开发说明](docs/chat-internals.md)（默认关闭，需单独配置聊天请求池）
 
 完整分类见[文档导航](docs/README.md)；最新源码变化见[变更记录](CHANGELOG.md)。公共文档不记录具体服务器的部署状态。
 

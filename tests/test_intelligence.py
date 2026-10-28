@@ -50,6 +50,13 @@ def token(**changes):
     )
 
 
+def generation_events(response, endpoint):
+    text, reason = intel.generated_text(response, endpoint)
+    if text:
+        yield {"type": "text", "text": text}
+    yield {"type": "finish", "reason": reason}
+
+
 class IntelligenceTest(unittest.TestCase):
     def test_member_page_models_test_and_preview_keep_the_owner_and_hide_admin_links(
         self,
@@ -262,7 +269,12 @@ class IntelligenceTest(unittest.TestCase):
                 patch.object(
                     intel,
                     "upstream",
-                    side_effect=[{"data": [{"id": "model-a"}]}, response],
+                    return_value={"data": [{"id": "model-a"}]},
+                ),
+                patch.object(
+                    intel,
+                    "stream_upstream",
+                    return_value=generation_events(response, endpoint),
                 ) as api,
             ):
                 result = intel.run(MEMBER, "member-jwt", {"model": "model-a"})
@@ -544,6 +556,17 @@ class IntelligenceTest(unittest.TestCase):
                 self.assertIn(intel.PROMPT, json.dumps(payload, ensure_ascii=False))
                 self.assertNotIn("sk-fixture", json.dumps(payload))
                 self.assertNotIn("temperature", payload)
+                self.assertTrue(payload["stream"])
+                self.assertEqual(
+                    payload["messages"],
+                    [
+                        {
+                            "role": "user",
+                            "content": "Generate an SVG of a pelican riding a bicycle",
+                        }
+                    ],
+                )
+                self.assertNotIn("system", payload)
                 for field in (
                     "max_tokens",
                     "max_completion_tokens",
@@ -594,17 +617,22 @@ class IntelligenceTest(unittest.TestCase):
                 patch.object(
                     intel,
                     "upstream",
-                    side_effect=[{"data": [{"id": "model-a"}]}, response],
+                    return_value={"data": [{"id": "model-a"}]},
+                ) as query,
+                patch.object(
+                    intel,
+                    "stream_upstream",
+                    return_value=generation_events(response, endpoint),
                 ) as api,
             ):
                 result = intel.run(ACTOR, "fixture-pat", {"model": "model-a"})
             self.assertEqual(result["html"], HTML)
             self.assertEqual(result["source"], HTML)
             self.assertEqual(result["channel_id"], 25)
-            self.assertEqual(api.call_count, 2)
-            self.assertEqual(api.call_args_list[0].args, ("/v1/models", KEY, 1))
+            self.assertEqual(api.call_count, 1)
+            self.assertEqual(query.call_args.args, ("/v1/models", KEY, 1))
             self.assertEqual(api.call_args.args, (path, KEY + "-25", 1))
-            self.assertTrue(api.call_args.kwargs["generation"])
+            self.assertEqual(api.call_args.kwargs["endpoint"], endpoint)
             headers = api.call_args.kwargs["headers"]
             self.assertEqual(
                 headers.get("x-api-key"),
@@ -636,15 +664,17 @@ class IntelligenceTest(unittest.TestCase):
             patch.object(
                 intel,
                 "upstream",
-                side_effect=[
-                    {"data": [{"id": "model-a"}]},
-                    intel.GenerationError("failure"),
-                ],
+                return_value={"data": [{"id": "model-a"}]},
+            ),
+            patch.object(
+                intel,
+                "stream_upstream",
+                side_effect=intel.GenerationError("failure"),
             ) as api,
             self.assertRaises(intel.GenerationError),
         ):
             intel.run(ACTOR, "fixture-pat", {"model": "model-a"})
-        self.assertEqual(api.call_count, 2)
+        self.assertEqual(api.call_count, 1)
         self.assertEqual(api.call_args.args[:2], ("/v1/chat/completions", KEY + "-25"))
 
     def test_upstream_truncation_keeps_source_and_names_the_actual_stop_reason(self):
@@ -662,13 +692,18 @@ class IntelligenceTest(unittest.TestCase):
             patch.object(
                 intel,
                 "upstream",
-                side_effect=[
-                    {"data": [{"id": "model-a"}]},
+                return_value={"data": [{"id": "model-a"}]},
+            ),
+            patch.object(
+                intel,
+                "stream_upstream",
+                return_value=generation_events(
                     {
                         "content": [{"type": "text", "text": HTML}],
                         "stop_reason": "max_tokens",
                     },
-                ],
+                    "anthropic",
+                ),
             ) as api,
         ):
             result = intel.run(ACTOR, "fixture-pat", {"model": "model-a"})
@@ -677,7 +712,7 @@ class IntelligenceTest(unittest.TestCase):
         self.assertIn("New API 或上游的输出上限", result["warning"])
         self.assertIn("max_tokens", result["warning"])
         self.assertNotIn("8192", result["warning"])
-        self.assertEqual(api.call_count, 2)
+        self.assertEqual(api.call_count, 1)
 
     def test_html_only_unwraps_fence_and_does_not_repair_drawing_or_animation(self):
         self.assertEqual(intel.extract_html("```html\n" + HTML + "\n```"), HTML)
@@ -685,7 +720,6 @@ class IntelligenceTest(unittest.TestCase):
         for text in (
             None,
             "",
-            "<svg/>",
             "<html></html>",
             "<html><svg>",
             "x" * (intel.MAX_HTML_BYTES + 1),
@@ -695,6 +729,30 @@ class IntelligenceTest(unittest.TestCase):
                 self.assertRaises(intel.IntelligenceError),
             ):
                 intel.extract_html(text)
+
+    def test_original_svg_is_wrapped_without_rewriting_it_or_expanding_entities(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text>鹈鹕</text></svg>'
+        for source in (
+            svg,
+            "```svg\n" + svg + "\n```",
+            "```xml\n" + svg + "\n```",
+            "<svg/>",
+        ):
+            with self.subTest(source=source[:20]):
+                html = intel.extract_html(source)
+                self.assertIn("<html>", html)
+                self.assertIn(svg if "鹈鹕" in source else "<svg/>", html)
+        for source in (
+            "<svg>",
+            '<!DOCTYPE svg [<!ENTITY x "expand">]><svg>&x;</svg>',
+            "<svg/><script>1</script>",
+        ):
+            with (
+                self.subTest(source=source),
+                self.assertRaises(intel.IntelligenceError),
+            ):
+                intel.extract_html(source)
+        self.assertEqual(intel.GENERATION_TIMEOUT, 300)
 
     def test_preview_reuses_only_packaged_script_not_generated_documents(self):
         intel._preview_script.cache_clear()

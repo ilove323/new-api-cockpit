@@ -120,7 +120,7 @@ curl --fail-with-body http://127.0.0.1:8091/healthz
 把 [nginx.conf.example](../nginx.conf.example) 的 `/cockpit` 与 `/cockpit/` location 加入现有 HTTPS `server` 块，
 New API 的 `/`、`/api/` 和 `/sign-in` 等路由继续转发到 New API。
 生图/改图的两个精确 location 转发到独立图片池 `127.0.0.1:8092`，配置见[生图工作站请求池](#生图工作站请求池)。
-同步智力测试还需加入示例中 `/cockpit/api/intelligence/test` 的精确 location，读取超时为 300 秒；
+流式智力测试还需加入示例中 `/cockpit/api/intelligence/test` 的精确 location，读取超时为 360 秒，并关闭缓冲、缓存与 gzip；模型生成本身最多 300 秒。
 `/cockpit/api/intelligence/preview` 的精确 location 允许最多 2 MiB 表单，用于承载编码后的预览 HTML。
 其他接口继续使用普通 `/cockpit/` 的超时配置。已有 Nginx 不会随应用代码自动更新。
 业务页面、`/cockpit/docs/`、统一的 `/cockpit/api/` 接口和静态资源均由 Cockpit 处理。

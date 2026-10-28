@@ -113,6 +113,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | `GET` | `/cockpit/api/statistics/alert` | 即时检查并按配置发送报警 |
 | `GET` | `/cockpit/api/statistics/scopes` | 渠道标签账本 |
 | `GET` | `/cockpit/api/statistics/usage` | 用户模型用量、合计、排名 |
+| `GET` | `/cockpit/api/statistics/channel-flow` | 全部启用渠道的各用户消费金额、请求数及渠道内占比 |
 | `GET` | `/cockpit/api/statistics/usage/by-token` | 按令牌拆分用量 |
 | `GET` | `/cockpit/api/statistics/usage/tokens` | 区间令牌选项 |
 | `GET` | `/cockpit/api/statistics/usage/groups` | 区间日志分组选项 |
@@ -131,7 +132,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/users" \
 | `GET` | `/cockpit/api/quality/summary` | 渠道质量、性能健康与筛选选项 |
 | `GET` | `/cockpit/api/quality/trends` | 渠道质量、小时趋势和历史价格 |
 | `GET` | `/cockpit/api/intelligence/models` | 可测试模型及自动分组 |
-| `POST` | `/cockpit/api/intelligence/test` | 同步鹈鹕骑车测试，真实计费 |
+| `POST` | `/cockpit/api/intelligence/test` | 鹈鹕骑车 SVG 测试，支持流式状态和源码，真实计费 |
 | `POST` | `/cockpit/api/intelligence/preview` | 当前 HTML 的沙箱预览，不调用模型 |
 | `GET` | `/cockpit/api/image-studio/tokens` | 本人 KEY 脱敏摘要 |
 | `POST` | `/cockpit/api/image-studio/models` | 所选 KEY 的模型、操作能力与参数，不生成内容 |
@@ -769,12 +770,35 @@ curl --fail-with-body "$BASE_URL/cockpit/api/quality/summary?start=2026-10-09&en
 超过 1000 个模型/渠道组合、异常 JSON 回退超过上限返回 503；查询超时返回 504，缩小时间或筛选范围后再查。
 详细规则见[渠道质量](quality.md)。
 
+## 渠道分流
+
+`GET /cockpit/api/statistics/channel-flow?start=2026-10-01&end=2026-10-31`
+
+仅管理员可访问；受限管理员 PAT 需要 `log:read` 与 `channel:read`。只接受 `start`、`end`，北京时间、包含结束秒，单次最多 367 天。
+不接受 `scope_id`、用户、模型、KEY 或分组筛选，始终统计当前全部启用渠道（`channels.status=1`）在所选时间内的 `type=2` 消费日志。
+
+响应的 `rows` 每项是一个渠道：
+
+| 字段 | 含义 |
+|---|---|
+| `channel_id` / `channel_name` | 当前渠道 ID / 名称；同名渠道仍按 ID 区分 |
+| `amount` | 渠道消费金额，十进制字符串，来自 `SUM(quota)/500000` |
+| `request_count` / `user_count` | 消费日志条数 / 不同消费用户 ID 数 |
+| `users` | 按用户 ID 汇总，包含 ID、用户名、显示名、消费金额、请求数和 `percentage` |
+| `users[].percentage` | 该用户金额占所在渠道全部用户金额的百分比，十进制字符串；渠道总金额为零时为 `null` |
+
+渠道及各渠道的用户均按金额倒序。无消费的启用渠道保留，`users: []`；禁用或删除的渠道不显示。
+优先读取当前用户名，用户已不存在时保留日志名；同名不同 ID 不合并，改名不拆行。KEY 和模型不拆分，未读取凭据。
+单次查询最多返回 10000 条渠道/用户聚合行（含无消费渠道）；超过上限返回 503，不返回部分合计。源库只读，查询超时 60 秒。
+网页只在选中第四个排名标签时读取，重复选中复用当前查询结果；重新查询时间范围后失效，不增加逐用户 New API 调用。
+现有统计与 Excel 导出不变，渠道分流暂不加入 Excel。
+
 ## 智力测试接口
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/cockpit/api/intelligence/models` | 查询当前用户可测试模型、自动分组、文本端点、固定题目及专用 KEY 名称；不补建 PAT/KEY |
-| `POST` | `/cockpit/api/intelligence/test` | 同步生成鹈鹕骑车 HTML，正常计费 |
+| `POST` | `/cockpit/api/intelligence/test` | 生成鹈鹕骑车 SVG；按 Accept 返回 SSE 或一次性 JSON，正常计费 |
 | `POST` | `/cockpit/api/intelligence/preview` | 当前请求内沙箱预览 HTML，不调用模型、不保存 |
 
 均接受启用用户的有效登录会话或管理员 PAT，不能指定另一用户的身份。普通用户读取官方 `/api/user/models`，使用自己的会话操作测试 KEY，不创建 PAT；管理员继续使用本人 PAT 和受限补建能力。
@@ -786,7 +810,20 @@ curl --fail-with-body "$BASE_URL/cockpit/api/quality/summary?start=2026-10-09&en
 测试返回 `model`、`group`、`channel_id`、`channel_type`、`endpoint`、`key_name`、`elapsed_ms`、`html`、`source`、`warning`。普通用户请求没有固定实际渠道，响应中的 `channel_id`、`channel_type` 为 null。
 Cockpit 不发送输出 Token 上限参数；Claude 必需的 `max_tokens` 由 New API 的模型配置补齐，实际仍受上游限制。
 `html` 为 null 表示结果不能预览，仍可查看 `source` 与 `warning`；不代表可以原样重试而不计费。
-同一用户并发返回 409，不排队。模型生成最多 180 秒，超时返回 504、`uncertain: true`，不自动重试。
+题目固定为 `Generate an SVG of a pelican riding a bicycle`，不附加系统提示词；原题不要求动画。完整 SVG 套上预览外壳后放入 `html`，`source` 保留模型实际输出，兼容返回完整 HTML 内嵌 SVG 的模型。
+同一用户并发返回 409，不排队。模型生成使用 `stream: true`，总时限 300 秒，不因持续输出延长，不自动重试。
+默认返回一次性 JSON；网页及需要实时状态的调用加 `Accept: text/event-stream`，在同一个 POST 响应中接收以下 SSE 事件：
+
+| event | data 内容 |
+|---|---|
+| `status` | `{"type":"status","stage":"checking/key/waiting/thinking"}`，分别表示模型核验、准备 KEY、等待响应、上游报告思考 |
+| `text` | `{"type":"text","text":"新增源码"}`，不是完整文档；不可提前执行或当作完成结果 |
+| `heartbeat` | `{"type":"heartbeat"}`，表示连接仍有上游活动；不是固定周期推送 |
+| `result` | `{"type":"result","result":{...}}`，`result` 与原 JSON 成功响应结构一致 |
+| `error` | `{"type":"error","status":504,"error":"模型生成超时…","uncertain":true}`，结束本次调用，不自动重试 |
+
+输入或并发错误发生在响应头发出前时，仍返回 HTTP 400/409 等错误；响应开始后发生的错误通过 `error` 事件返回。JSON 客户端生成超时仍返回 HTTP 504、`uncertain: true`。SSE 客户端不能仅凭 HTTP 200 判断成功，需要等到 `result`；断流后不得自动重放收费请求。
+OpenAI/Claude 的思考内容不返回；只有状态。若上游忽略流式参数而返回 JSON，直接消费这一份响应，不另发调用。
 生成响应没有任务 ID，不提供历史或结果查询接口，刷新页面不能找回。
 
 测试 KEY 名为 `cockpit-智力测试专用`，只在当前用户名下查找或创建，永久保留。
@@ -798,6 +835,15 @@ curl --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
   -H "Authorization: Bearer $ADMIN_PAT" \
   -H 'Content-Type: application/json' -H 'X-Intelligence-Request: 1' \
   --data '{"model":"gpt-6-astra"}'
+```
+
+流式调用使用相同路径及请求体，增加 Accept 并禁用客户端输出缓冲：
+
+```bash
+curl -N --fail-with-body "$BASE_URL/cockpit/api/intelligence/test" \
+  -H "Authorization: Bearer $ADMIN_PAT" \
+  -H 'Content-Type: application/json' -H 'X-Intelligence-Request: 1' \
+  -H 'Accept: text/event-stream' --data '{"model":"gpt-6-astra"}'
 ```
 
 预览 JSON 只接受 `{"html":"完整 HTML 文档"}`，同样携带确认头，最多 512 KiB，返回 `text/html`。
@@ -918,8 +964,8 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 ## AI 助手（需显式启用）
 
 页面 `/cockpit/chat/`，个人设置 `/cockpit/chat/settings/`。聊天数据仅属本人，管理员也不能查看他人记录。
-完整字段、分页、流式事件、幂等与错误见[聊天接口契约](design/ai-assistant-v1/chat-api.md)及[扩展契约](design/ai-assistant-v2/contracts.md)，
-Skill/Memory 的版本与快照见[个人上下文契约](design/ai-assistant-v1/user-context.md)。
+完整字段和错误由站点交互式 API 文档及 `features/chat/openapi.py` 维护；
+分页、流式恢复、幂等和 Skill/Memory 的版本约束见[聊天开发说明](chat-internals.md)。
 所有读写需要已验证会话和匹配的 `X-Cockpit-Session`；写入另需同源及 `X-Cockpit-Chat: 1`。
 普通 JSON 使用 application/json，文件上传使用 multipart/form-data；付费轮次不自动重试。
 所有聊天接口在交互式文档中禁用试运行，不使用文档页的管理员PAT调用。

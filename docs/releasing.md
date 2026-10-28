@@ -39,7 +39,9 @@ Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/packag
 
 安装包不包含应用源码、构建 override、`.env`、真实账号、密钥、数据或部署日志。部署密钥在目标服务器首次生成，不从构建环境打包带出。
 
-`v0.4.1` 随附插件 `0.4.2`：插件直接调用 New API 本人账户和令牌接口，不依赖 Cockpit 或账户 MCP；KEY 改组沿用官方 PUT，不构建、发布或升级 New API 镜像。
+`v0.4.2` 随附插件仍为 `0.4.2`，本次没有修改插件功能。新增渠道分流、时间快捷范围和流式鹈鹕测试；没有新的 SQL 迁移或源库权限要求。已有实例只更新 Cockpit 池，并同步智力测试的 Nginx location，不升级 New API、PostgreSQL 或 Redis。
+
+`v0.4.1` 起，插件直接调用 New API 本人账户和令牌接口，不依赖 Cockpit 或账户 MCP；KEY 改组沿用官方 PUT，不构建、发布或升级 New API 镜像。
 
 `v0.4.0` 是首次同时提供全量安装包、聊天、账户 MCP 和 VS Code 插件的正式版本。`v0.3.0` 的既有附件不包含这些组件，不能补传新版安装包来伪装旧版本兼容。
 

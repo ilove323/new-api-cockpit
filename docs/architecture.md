@@ -1,7 +1,7 @@
 # 架构
 
 > 当前开发分支包含默认关闭的 AI 助手，并将聊天/生图业务分别归档到独立功能目录。
-> [设计契约](design/ai-assistant-v2/README.md)与[配置说明](chat.md)保留完整边界；本地实现/离线验证不代表已发布或部署。
+> [聊天开发说明](chat-internals.md)与[配置说明](chat.md)保留完整边界；本地实现/离线验证不代表已发布或部署。
 
 ## 运行拓扑
 
@@ -64,7 +64,7 @@ chat：独立有限运行池（默认关闭）
 | `openapi.py`、`static/api-docs*.js` | 显式接口契约、请求示例、单次调试与操作确认；不替代后端授权 |
 | `runtime.py`、`gunicorn_conf.py`、`timers.py`、`quota_timer.py` | 启动迁移、进程生命周期、两种内置调度与健康检查 |
 | `quality.py`、`quality.sql`、`static/quality.js` | 只读渠道尝试去重、当前标签对比、结果分类、性能健康、耗时分位数和历史价格查询 |
-| `intelligence.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 同步鹈鹕骑车测试、本人专用 KEY 复用与自适应沙箱预览，不保存结果 |
+| `intelligence.py`、`intelligence_stream.py`、`static/intelligence.js`、`static/intelligence-preview.js` | 流式鹈鹕骑车 SVG 测试、本人专用 KEY 复用与自适应沙箱预览，不保存结果 |
 | `manual.py`、`static/manual*.js` | 本人令牌和模型查询、十二类工具的详细接入教程、脱敏预览及显式含 KEY 复制，不生成内容或保存凭据 |
 | `features/account_mcp/` | 无状态 MCP HTTP；New API 校验本人 PAT 与权限，复用统计 SQL 并在源查询强制 user_id，仅提供本人余额和用量 |
 | `integrations/new_api/`、`platform/` | 注入式本人令牌、模型限制/目录、源库只读连接和已验证身份契约；旧personal_tokens是兼容别名 |
@@ -77,6 +77,7 @@ chat：独立有限运行池（默认关闭）
 | `frontend/studio/`、`static/studio-upstream.js` | 固定版本的画板与视图源码、标注擦除和图层合成适配，构建为本地静态资源 |
 | `static/studio-lightbox.js` | 候选大图缩放、拖动、双指操作与独立对比，不修改主图 |
 | `report.py`、`usage.sql`、`metadata_fallback.py` | 按请求价格和日志倍率拆行，原始用量聚合、异常日志兼容、排名与 Excel |
+| `channel_flow.py`、`static/channel-flow.js` | 第四个排名标签按用户拆分全部启用渠道的历史消费，只读聚合、按需查询，不读取 KEY |
 | `historical_prices.py`、`expression_prices.py` | 还原请求价格、安全解析表达式、匹配当前档位 |
 | `report_snapshots.py` | 按管理员与账本隔离、限时保留的不可变展示详情 |
 | `balance.py`、`scopes.py`、`catalog_sync.py` | 账本、渠道库存、月度逐渠道费用、余额与报警 |
@@ -149,7 +150,8 @@ HTTP 接口为 `/cockpit/api/quality/summary` 和 `/cockpit/api/quality/trends`�
 
 ## 智力测试
 
-`/cockpit/intelligence/` 发起同步生成，请求内完成模型目录核验、专用 KEY 准备和调用。
+`/cockpit/intelligence/` 发起流式生成，请求内完成模型目录核验、专用 KEY 准备和调用，生成部分最多 300 秒。
+OpenAI/Claude SSE 在当前请求内解析为状态与文本，不转发思考原文；完成后才允许预览。非 SSE API 客户端收集同一次调用后返回 JSON。
 当前用户在不同 Web 进程间通过 session advisory lock 串行使用其测试 KEY；不创建后台任务、线程池或新表。
 生成结果只返回浏览器。预览把当前 HTML 同源 POST 到独立沙箱响应，不放在 URL、文件或服务端缓存里。
 尺寸测量脚本是随包分发的固定资源，每个应用进程加载一次；生成内容不参与缓存。
