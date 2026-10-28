@@ -116,7 +116,7 @@ New API 与 Cockpit 的浏览器入口须同协议、同主机、同端口，账
 - 管理功能：[用户与令牌](docs/users.md) · [手工与定时配额](docs/quota.md) · [登录与会话](docs/authentication.md)
 - 程序接入：[交互式文档](docs/interactive-api.md) · [API 参考](docs/api.md)
 - 开发：[架构](docs/architecture.md) · [性能机制](docs/performance.md) · [界面规范](docs/ui.md) · [工作站源码维护](docs/image-studio-sources.md) · [贡献指南](CONTRIBUTING.md)
-- AI 助手：[使用、隔离与配置](docs/chat.md) · [接口与设计](docs/design/ai-assistant-v2/README.md)（默认关闭，需单独配置聊天请求池）
+- AI 助手：[使用、隔离与配置](docs/chat.md) · [开发说明](docs/chat-internals.md)（默认关闭，需单独配置聊天请求池）
 
 完整分类见[文档导航](docs/README.md)；最新源码变化见[变更记录](CHANGELOG.md)。公共文档不记录具体服务器的部署状态。
 

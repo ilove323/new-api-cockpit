@@ -107,6 +107,8 @@ Playwright 必须能通过标准 Node 模块查找找到；单独安装开发工
 
 智力测试预览的离线浏览器回归：`node tests/browser/intelligence-preview-regression.cjs`。它模拟 HTTP/HTTPS 页面、缺少 `randomUUID`、双标签页、重播和页面恢复，所有模型响应均为虚构数据；使用本机 Chromium 时设置 `COCKPIT_BROWSER_EXECUTABLE`。
 
+渠道分流的离线浏览器回归：`node tests/browser/channel-flow-regression.cjs`，覆盖桌面/手机布局、第四个标签、结果复用、时间查询更新及零金额/无消费渠道。`test_channel_flow.py` 包含只读 SQL、金额和权限回归；配置独立 PostgreSQL 后检查真实 SQL，不连接站点数据库。
+
 通过 Issue 说明问题，通过 PR 提交修改；PR 说明行为变化、验证结果及升级影响。
 Python 单元与 PostgreSQL 集成测试统一由 `unittest discover` 执行，不需要额外的手工检查脚本。
 迁移脚本追加到 `src/new_api_cockpit/migrations/`，编号递增，不修改已发布迁移。

@@ -964,8 +964,8 @@ KEY 在查询模型时只留于后台；复制接口只用于显式的含 KEY �
 ## AI 助手（需显式启用）
 
 页面 `/cockpit/chat/`，个人设置 `/cockpit/chat/settings/`。聊天数据仅属本人，管理员也不能查看他人记录。
-完整字段、分页、流式事件、幂等与错误见[聊天接口契约](design/ai-assistant-v1/chat-api.md)及[扩展契约](design/ai-assistant-v2/contracts.md)，
-Skill/Memory 的版本与快照见[个人上下文契约](design/ai-assistant-v1/user-context.md)。
+完整字段和错误由站点交互式 API 文档及 `features/chat/openapi.py` 维护；
+分页、流式恢复、幂等和 Skill/Memory 的版本约束见[聊天开发说明](chat-internals.md)。
 所有读写需要已验证会话和匹配的 `X-Cockpit-Session`；写入另需同源及 `X-Cockpit-Chat: 1`。
 普通 JSON 使用 application/json，文件上传使用 multipart/form-data；付费轮次不自动重试。
 所有聊天接口在交互式文档中禁用试运行，不使用文档页的管理员PAT调用。
