@@ -19,6 +19,8 @@ from flask import (
     send_file,
     redirect,
     make_response,
+    Response,
+    stream_with_context,
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg
@@ -703,11 +705,58 @@ def intelligence_test():
     request.max_content_length = 4096
     if request.headers.get("X-Intelligence-Request") != "1" or not request.is_json:
         return jsonify(error="请使用 JSON 和 X-Intelligence-Request: 1 发起测试。"), 403
-    return jsonify(
-        intelligence.run(
-            g.current_user, new_api_credential(), request.get_json(silent=True)
-        )
+    identity, credential, body = (
+        g.current_user,
+        new_api_credential(),
+        request.get_json(silent=True),
     )
+    if (
+        request.accept_mimetypes.best_match(["application/json", "text/event-stream"])
+        != "text/event-stream"
+    ):
+        return jsonify(intelligence.run(identity, credential, body))
+    events = intelligence.run_events(identity, credential, body)
+    # Validate the input and acquire the per-user lock before sending HTTP 200.
+    first = next(events)
+
+    def encode(event):
+        return f"event: {event['type']}\ndata: {app.json.dumps(event)}\n\n"
+
+    def generate():
+        try:
+            yield encode(first)
+            for event in events:
+                yield encode(event)
+        except (
+            intelligence.IntelligenceError,
+            user_management.ManagementError,
+            psycopg.Error,
+        ) as exc:
+            error = app.make_response(app.handle_user_exception(exc))
+            yield encode(
+                {"type": "error", "status": error.status_code, **error.get_json()}
+            )
+        except Exception as exc:
+            # Never send exception bodies, credentials, or generated content.
+            app.logger.error("Intelligence stream failed: %s", type(exc).__name__)
+            yield encode(
+                {
+                    "type": "error",
+                    "status": 502,
+                    "error": "生成连接异常，请稍后再试。",
+                    "uncertain": True,
+                }
+            )
+        finally:
+            events.close()
+
+    response = Response(
+        stream_with_context(generate()),
+        content_type="text/event-stream; charset=utf-8",
+        headers={"X-Accel-Buffering": "no"},
+    )
+    response.call_on_close(events.close)
+    return response
 
 
 @app.post("/cockpit/api/intelligence/preview")

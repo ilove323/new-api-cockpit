@@ -1,10 +1,10 @@
-"""Synchronous, stateless HTML challenge using the current user's test KEY.
+"""Request-scoped, stateless SVG challenge using the current user's test KEY.
 
 Only KEY creation/configuration uses the existing management audit. Results and
 HTML are never written to a database, file, cache, queue, or background executor.
 """
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from functools import cache
 from html.parser import HTMLParser
 from http.client import HTTPConnection, HTTPSConnection, HTTPException
@@ -14,19 +14,17 @@ import os
 import re
 import time
 from urllib.parse import urlsplit
+from xml.etree import ElementTree
 
 from . import balance, quota, user_management as management
 from .locks import INTELLIGENCE_NAMESPACE
+from .intelligence_stream import DrawingStream
 
-PROMPT = "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画"
-INSTRUCTIONS = (
-    "请只返回完整的单文件 HTML 文档，不要解释，不要 Markdown 代码围栏。"
-    "使用内联 SVG 绘图，CSS 和 JavaScript 必须内联，不加载外部图片、字体、库或网络资源。"
-)
+PROMPT = "Generate an SVG of a pelican riding a bicycle"
 KEY_NAME = "cockpit-智力测试专用"
 MAX_HTML_BYTES = 512 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-GENERATION_TIMEOUT = 180
+GENERATION_TIMEOUT = 300
 TEXT_ENDPOINTS = {"openai", "openai-response", "anthropic", "gemini"}
 ANTHROPIC_CHANNEL_TYPE = 14
 PREVIEW_CSP = (
@@ -59,7 +57,8 @@ def _invalid_constant(_value):
     raise ValueError("Non-finite JSON")
 
 
-def upstream(path, credential, user_id, *, body=None, generation=False, headers=None):
+@contextmanager
+def _response(path, credential, user_id, *, body=None, generation=False, headers=None):
     """Fixed internal origin, bounded reads/deadline, no redirects or retries."""
     base = urlsplit(os.environ.get("NEW_API_INTERNAL_URL", "http://new-api:3000"))
     if (
@@ -106,35 +105,29 @@ def upstream(path, credential, user_id, *, body=None, generation=False, headers=
         with connection.getresponse() as response:
             if response.status != 200:
                 raise error(f"New API 请求失败（HTTP {response.status}），未自动重试。")
-            chunks, size = [], 0
-            expected_size = response.length
-            # read1 closes the response at its final declared byte. With
-            # Connection: close this also releases the socket, so do not touch
-            # it again after a complete read. Still reject premature EOF below.
-            while not response.isclosed():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError()
-                sock.settimeout(remaining)
-                chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - size))
-                if time.monotonic() >= deadline:
-                    raise TimeoutError()
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > MAX_RESPONSE_BYTES:
-                    raise error("New API 响应过大，未自动重试。")
-                chunks.append(chunk)
-            if expected_size is not None and size != expected_size:
-                raise error("New API 响应不完整，未自动重试。")
-            result = json.loads(b"".join(chunks), parse_constant=_invalid_constant)
-        if (
-            not isinstance(result, dict)
-            or result.get("error")
-            or result.get("success") is False
-        ):
-            raise error("New API 拒绝请求，请检查模型、分组和账户余额；未自动重试。")
-        return result
+
+            def chunks():
+                size = 0
+                expected_size = response.length
+                # Do not touch a socket released by a complete read1().
+                while not response.isclosed():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError()
+                    sock.settimeout(remaining)
+                    chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - size))
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError()
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > MAX_RESPONSE_BYTES:
+                        raise error("New API 响应过大，未自动重试。")
+                    yield chunk
+                if expected_size is not None and size != expected_size:
+                    raise error("New API 响应不完整，未自动重试。")
+
+            yield response, chunks()
     except TimeoutError:
         raise (
             GenerationTimeout("模型生成超时，可能已产生费用；未自动重试。")
@@ -148,6 +141,60 @@ def upstream(path, credential, user_id, *, body=None, generation=False, headers=
     finally:
         if connection is not None:
             connection.close()
+
+
+def _json_result(chunks, error):
+    result = json.loads(b"".join(chunks), parse_constant=_invalid_constant)
+    if (
+        not isinstance(result, dict)
+        or result.get("error")
+        or result.get("success") is False
+    ):
+        raise error("New API 拒绝请求，请检查模型、分组和账户余额；未自动重试。")
+    return result
+
+
+def upstream(path, credential, user_id, *, body=None, generation=False, headers=None):
+    with _response(
+        path, credential, user_id, body=body, generation=generation, headers=headers
+    ) as (_, chunks):
+        return _json_result(chunks, GenerationError if generation else Unavailable)
+
+
+def stream_upstream(path, credential, user_id, *, body, endpoint, headers):
+    """One paid request. A JSON-only upstream is consumed once, never replayed."""
+    with _response(
+        path,
+        credential,
+        user_id,
+        body=body,
+        generation=True,
+        headers={
+            **headers,
+            "Accept": "text/event-stream",
+            "Accept-Encoding": "identity",
+        },
+    ) as (response, chunks):
+        content_type = (
+            response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+        )
+        if content_type == "text/event-stream":
+            parser = DrawingStream(endpoint)
+            for chunk in chunks:
+                yield from parser.feed(chunk)
+                if parser.done:
+                    break
+            parser.end()
+            yield {"type": "finish", "reason": parser.reason}
+        elif content_type == "application/json" or content_type.endswith("+json"):
+            text, reason = generated_text(
+                _json_result(chunks, GenerationError), endpoint
+            )
+            if text:
+                yield {"type": "text", "text": text}
+            yield {"type": "finish", "reason": reason}
+        else:
+            raise GenerationError("New API 返回的生成响应格式无效。")
 
 
 def model_catalog(credential, user_id):
@@ -403,11 +450,8 @@ def generation_request(choice):
             "/v1/chat/completions",
             dict(
                 model=model,
-                messages=[
-                    {"role": "system", "content": INSTRUCTIONS},
-                    {"role": "user", "content": PROMPT},
-                ],
-                stream=False,
+                messages=[{"role": "user", "content": PROMPT}],
+                stream=True,
             ),
             {},
         )
@@ -416,9 +460,8 @@ def generation_request(choice):
             "/v1/messages",
             dict(
                 model=model,
-                system=INSTRUCTIONS,
                 messages=[{"role": "user", "content": PROMPT}],
-                stream=False,
+                stream=True,
             ),
             {"anthropic-version": "2023-06-01"},
         )
@@ -453,7 +496,8 @@ def generated_text(result, endpoint):
         reason = item.get("finish_reason")
         return content if isinstance(content, str) else blocks(content), (
             reason
-            if isinstance(reason, str) and reason in {"length", "content_filter"}
+            if isinstance(reason, str)
+            and reason in {"length", "content_filter", "tool_calls", "function_call"}
             else None
         )
     if endpoint == "anthropic":
@@ -462,7 +506,13 @@ def generated_text(result, endpoint):
             reason
             if isinstance(reason, str)
             and reason
-            in {"max_tokens", "model_context_window_exceeded", "refusal", "pause_turn"}
+            in {
+                "max_tokens",
+                "model_context_window_exceeded",
+                "refusal",
+                "pause_turn",
+                "tool_use",
+            }
             else None
         )
     raise GenerationError("模型响应的测试协议无效，未自动重试。")
@@ -486,19 +536,35 @@ class DocumentCheck(HTMLParser):
 
 def extract_html(text):
     if not isinstance(text, str) or not text.strip():
-        raise IntelligenceError("模型没有返回可用的 HTML。")
+        raise IntelligenceError("模型没有返回可用的 SVG。")
     if len(text.encode()) > MAX_HTML_BYTES:
         raise IntelligenceError("生成内容超过预览大小限制。")
     text = text.strip()
-    fence = re.fullmatch(r"```(?:html)?\s*\n(.*?)\n```", text, re.S | re.I)
+    fence = re.fullmatch(r"```(?:html|svg|xml)?\s*\n(.*?)\n```", text, re.S | re.I)
     html = fence[1].strip() if fence else text
     check = DocumentCheck()
     check.feed(html)
-    if not (check.html and check.closed and check.svg):
-        raise IntelligenceError(
-            "模型没有返回包含 SVG 的完整 HTML；可切换源码查看原始输出。"
-        )
-    return html
+    if check.html and check.closed and check.svg:
+        return html
+    # The original benchmark asks for SVG, not HTML. Wrap only a complete SVG;
+    # do not repair a drawing, execute it, or expand XML entities on the server.
+    if not re.search(r"<!\s*(?:DOCTYPE|ENTITY)", html, re.I):
+        try:
+            root = ElementTree.fromstring(html)
+            if root.tag in {"svg", "{http://www.w3.org/2000/svg}svg"}:
+                document = (
+                    '<!doctype html><html><head><meta charset="utf-8">'
+                    "<style>body{margin:0;min-height:100vh;display:grid;place-items:center}"
+                    "svg{max-width:100%;max-height:100vh}</style></head><body>"
+                    + html
+                    + "</body></html>"
+                )
+                if len(document.encode()) > MAX_HTML_BYTES:
+                    raise IntelligenceError("生成内容超过预览大小限制。")
+                return document
+        except ElementTree.ParseError:
+            pass
+    raise IntelligenceError("模型没有返回完整 SVG；可切换源码查看原始输出。")
 
 
 @cache
@@ -512,7 +578,7 @@ def preview_document(text):
     return extract_html(text) + "\n<script>" + _preview_script() + "</script>"
 
 
-def run(identity, credential, body):
+def run_events(identity, credential, body):
     if not isinstance(body, dict) or set(body) != {"model"}:
         raise IntelligenceError(
             "只需提供一个模型，不允许指定用户、分组、KEY 或提示词。"
@@ -527,12 +593,14 @@ def run(identity, credential, body):
     ):
         raise IntelligenceError("请选择有效的模型。")
     with exclusive_test(identity["id"]):
+        yield {"type": "status", "stage": "checking"}
         choices = model_options(identity, credential)["rows"]
         choice = next((row for row in choices if row["model"] == model), None)
         if choice is None:
             raise IntelligenceError("该模型没有当前用户可用的启用渠道或文本生成接口。")
         operator = _operator(identity)
         is_admin = operator["role"] >= 10
+        yield {"type": "status", "stage": "key"}
         key = test_key(
             operator, choice, **({"credential": credential} if not is_admin else {})
         )
@@ -553,22 +621,41 @@ def run(identity, credential, body):
         if choice["endpoint"] == "anthropic":
             headers["x-api-key"] = channel_key
         start = time.monotonic()
-        response = upstream(
+        yield {"type": "status", "stage": "waiting"}
+        parts, size, oversized, stop_reason = [], 0, False, None
+        events = stream_upstream(
             path,
             channel_key,
             operator["id"],
             body=payload,
             headers=headers,
-            generation=True,
+            endpoint=choice["endpoint"],
         )
+        # Close resources when this request ends or notices a disconnect; a
+        # blocking upstream read is still bounded by the generation deadline.
+        with closing(events):
+            for event in events:
+                if event["type"] == "text":
+                    if oversized:
+                        continue
+                    encoded = event["text"].encode()
+                    room = MAX_HTML_BYTES - size
+                    oversized |= len(encoded) > room
+                    text = encoded[:room].decode("utf-8", errors="ignore")
+                    if text:
+                        parts.append(text)
+                        size += len(text.encode())
+                        yield {"type": "text", "text": text}
+                elif event["type"] == "finish":
+                    stop_reason = event["reason"]
+                else:
+                    yield event
         elapsed = round((time.monotonic() - start) * 1000)
-        text, stop_reason = generated_text(response, choice["endpoint"])
+        text = "".join(parts)
         warning, html = "", None
-        encoded = text.encode()
-        if len(encoded) > MAX_HTML_BYTES:
-            text = encoded[:MAX_HTML_BYTES].decode("utf-8", errors="ignore")
+        if oversized:
             warning = "生成内容过大，只显示部分源码，不预览。"
-        elif stop_reason:
+        elif stop_reason not in {None, "stop", "end_turn", "stop_sequence"}:
             reasons = {
                 "length": "模型达到 New API 或上游的输出上限",
                 "max_tokens": "模型达到 New API 或上游的输出上限",
@@ -576,14 +663,20 @@ def run(identity, credential, body):
                 "content_filter": "输出被上游内容规则拦截",
                 "refusal": "模型拒绝了本次生成",
                 "pause_turn": "上游暂停了本次生成",
+                "tool_calls": "模型返回了工具调用，而不是 SVG",
+                "function_call": "模型返回了工具调用，而不是 SVG",
+                "tool_use": "模型返回了工具调用，而不是 SVG",
             }
-            warning = reasons[stop_reason] + f"（{stop_reason}），不预览；未自动重试。"
+            warning = (
+                reasons.get(stop_reason, "模型未正常完成生成")
+                + f"（{stop_reason}），不预览；未自动重试。"
+            )
         else:
             try:
                 html = extract_html(text)
             except IntelligenceError as exc:
                 warning = str(exc)
-        return dict(
+        result = dict(
             model=model,
             group=choice["group"],
             endpoint=choice["endpoint"],
@@ -595,3 +688,12 @@ def run(identity, credential, body):
             source=text,
             warning=warning,
         )
+    yield {"type": "result", "result": result}
+
+
+def run(identity, credential, body):
+    """JSON clients use exactly the same streaming model call, collected once."""
+    with closing(run_events(identity, credential, body)) as events:
+        for event in events:
+            if event["type"] == "result":
+                return event["result"]

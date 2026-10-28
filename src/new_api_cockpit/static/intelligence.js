@@ -1,9 +1,10 @@
-/* One synchronous, charged request. No background job, history or result storage. */
+/* One charged streaming request. No retry, background job or result storage. */
 (function(){
   'use strict';
   if(typeof document==='undefined')return;
   const $=id=>document.getElementById(id);if(!$('intelligence-test'))return;
   let models=[],result=null,busy=false,frame=null,ticket=0,controller=null;
+  let clock=null,started=0,stage='checking',received=0;
   // Only names this page's preview frames, never an auth or model request ID.
   let previewSequence=0;
   let previewWidth=1280,previewHeight=900,previewGrowths=0;
@@ -28,9 +29,65 @@
     previewWidth=Math.max(previewWidth,Math.ceil(data.width));previewHeight=Math.max(previewHeight,Math.ceil(data.height));fit();
   });
   const status=(message='',error=false)=>{const node=$('intelligence-status');node.textContent=message;node.hidden=!message;node.className=error?'error':'';};
+  function stopClock(){if(clock!==null)clearTimeout(clock);clock=null;}
+  function progress(next){
+    if(next)stage=next;
+    const labels={checking:'正在校验模型',key:'正在准备测试 KEY',waiting:'等待模型响应',thinking:'模型正在思考',generating:'正在生成 SVG'};
+    status((labels[stage]||labels.waiting)+(received?' · '+received+' 字符':'')+' · 已用 '+Math.floor((Date.now()-started)/1000)+' 秒');
+  }
+  function startClock(){
+    started=Date.now();stage='checking';received=0;
+    const current=ticket;
+    function tick(){if(current!==ticket||!busy)return;progress();clock=setTimeout(tick,1000);}
+    tick();
+  }
   function clear(){
+    stopClock();
     ticket++;controller?.abort();controller=null;result=null;frame=null;$('intelligence-preview').replaceChildren();$('intelligence-source').textContent='';
     $('intelligence-result').hidden=true;$('intelligence-result-info').textContent='';
+    $('intelligence-test').setAttribute('aria-busy','false');
+  }
+
+  async function consume(response,onEvent){
+    if(!(response.headers?.get('Content-Type')||'').toLowerCase().includes('text/event-stream')){
+      let data;try{data=await response.json();}catch{throw new Error('生成请求失败（HTTP '+response.status+'）。');}
+      if(!response.ok)throw new Error(data.error||'测试失败。');return data;
+    }
+    if(!response.ok||!response.body)throw new Error('生成连接不可用。');
+    const reader=response.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});
+    let line='',data=[],type='',skipLF=false,terminal=false,output=null,size=0;
+    function endLine(){
+      if(!line){
+        if(data.length){
+          let event;try{event=JSON.parse(data.join('\n'));}catch{throw new Error('生成状态格式无效。');}
+          if(!event||event.type!==type)throw new Error('生成状态格式无效。');
+          if(type==='error')throw new Error(event.error||'模型生成失败。');
+          if(type==='result'){output=event.result;terminal=true;}
+          else if(type==='status'||type==='text'||type==='heartbeat')onEvent(event);
+        }
+        data=[];type='';size=0;return;
+      }
+      const split=line.indexOf(':'),field=split<0?line:line.slice(0,split);
+      let value=split<0?'':line.slice(split+1);if(value.startsWith(' '))value=value.slice(1);
+      if(field==='data')data.push(value);if(field==='event')type=value;line='';
+    }
+    try{
+      while(!terminal){
+        const chunk=await reader.read();
+        const text=decoder.decode(chunk.value||new Uint8Array(),{stream:!chunk.done});
+        for(const char of text){
+          if(char==='\n'&&skipLF){skipLF=false;continue;}skipLF=char==='\r';
+          if(++size>8*1024*1024)throw new Error('生成状态超过大小限制。');
+          if(char==='\r'||char==='\n')endLine();else line+=char;
+          if(terminal)break;
+        }
+        if(chunk.done)break;
+      }
+      if(!terminal||!output)throw new Error('生成连接中断，收到的源码已保留。');
+      return output;
+    }finally{
+      try{await reader.cancel();}catch{}reader.releaseLock();
+    }
   }
   function select(){
     const choice=models.find(row=>row.model===$('intelligence-model').value);
@@ -55,7 +112,7 @@
     // Generation may outlast the access token. Refresh before the form POST,
     // without replaying inference or accepting a different login account.
     await window.CockpitAuth.ensure();if(current!==ticket||result?.html!==html)return;
-    frame=document.createElement('iframe');frame.name='cockpit-pelican-'+(++previewSequence);frame.title='鹈鹕骑车测试生成的动画';
+    frame=document.createElement('iframe');frame.name='cockpit-pelican-'+(++previewSequence);frame.title='鹈鹕骑车测试生成的 SVG';
     frame.setAttribute('sandbox','allow-scripts');frame.referrerPolicy='no-referrer';
     previewWidth=1280;previewHeight=900;previewGrowths=0;
     $('intelligence-preview').replaceChildren(frame);
@@ -78,16 +135,32 @@
     event.preventDefault();if(busy||!$('intelligence-model').value)return;
     const model=$('intelligence-model').value;busy=true;clear();select();$('intelligence-model').disabled=true;$('intelligence-search').disabled=true;
     const current=ticket;controller=new AbortController();
-    status('正在等待模型生成，请勿刷新或重复提交…');
+    $('intelligence-test').setAttribute('aria-busy','true');
+    for(const id of ['intelligence-effect','intelligence-replay','intelligence-fullscreen'])$(id).disabled=true;
+    startClock();
     try{
-      const response=await fetch('/cockpit/api/intelligence/test',{method:'POST',headers:{'Content-Type':'application/json','X-Intelligence-Request':'1'},body:JSON.stringify({model}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(300000)])});
-      const data=await response.json();if(current!==ticket)return;if(!response.ok)throw new Error(data.error||'测试失败；未自动重试。');
+      // The backend allows 300 s for generation; leave room for KEY preparation
+      // and delivering the final event. This does not extend model generation.
+      const response=await fetch('/cockpit/api/intelligence/test',{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream','X-Intelligence-Request':'1'},body:JSON.stringify({model}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(420000)])});
+      const data=await consume(response,event=>{
+        if(current!==ticket)return;
+        if(event.type==='status')progress(event.stage);
+        if(event.type==='text'&&typeof event.text==='string'){
+          received+=Array.from(event.text).length;
+          $('intelligence-source').textContent+=event.text;$('intelligence-result').hidden=false;
+          $('intelligence-result-info').textContent=model+' · 生成中';tab(true);progress('generating');
+        }
+      });
+      if(current!==ticket)return;stopClock();
       result=data;$('intelligence-source').textContent=data.source||'';$('intelligence-result').hidden=false;
       $('intelligence-result-info').textContent=data.model+' · '+data.group+' · '+(data.elapsed_ms/1000).toFixed(2)+' 秒';
       $('intelligence-effect').disabled=!data.html;$('intelligence-replay').disabled=!data.html;$('intelligence-fullscreen').disabled=!data.html;
       if(data.html)await preview();else tab(true);if(current===ticket)status(data.warning||'生成完成。',Boolean(data.warning));
-    }catch(error){if(current===ticket)status(error.name==='TimeoutError'?'等待超时，模型请求可能仍在执行或已产生费用；未自动重试。':error.message,true);}
-    finally{if(current===ticket){busy=false;controller=null;$('intelligence-search').disabled=false;options();}}
+    }catch(error){if(current===ticket){
+      $('intelligence-result-info').textContent=received?model+' · 未完成':'';
+      status(error.name==='TimeoutError'?'等待超时，收到的源码已保留。':error.message,true);
+    }}
+    finally{if(current===ticket){stopClock();busy=false;controller=null;$('intelligence-test').setAttribute('aria-busy','false');$('intelligence-search').disabled=false;options();}}
   });
   $('intelligence-effect').addEventListener('click',()=>tab(false));$('intelligence-source-button').addEventListener('click',()=>tab(true));
   $('intelligence-replay').addEventListener('click',()=>preview().catch(error=>status(error.message,true)));

@@ -34,10 +34,18 @@ def chunked(body):
     )
 
 
-def respond(body, framing="length", *, close=True, status=200, declared=None):
+def respond(
+    body,
+    framing="length",
+    *,
+    close=True,
+    status=200,
+    declared=None,
+    content_type="application/json",
+):
     def reply(handler):
         handler.send_response(status)
-        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Type", content_type)
         if framing == "length":
             handler.send_header(
                 "Content-Length", str(len(body) if declared is None else declared)
