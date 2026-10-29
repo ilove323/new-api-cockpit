@@ -78,7 +78,7 @@ const row={user_id:1,username:'tester',model_name:'gpt',tier_name:'low',token_id
   input_price:2,output_price:10.123456,cache_price:0.0049,write_price:null,amount:1234.567891};
 test('calendar shortcut clicks fill Beijing bounds and query the current ledger once',async()=>{
   for(const [preset,start,end] of [
-    ['previous-three-months','2026-07-01T00:00:00','2026-09-30T23:59:59'],
+    ['three-months','2026-08-01T00:00:00','2026-10-27T02:20:54'],
     ['yesterday','2026-10-26T00:00:00','2026-10-26T23:59:59'],
   ]){
     const h=harness();h.run("Date.now=()=>Date.parse('2026-10-26T18:20:54.987Z')");

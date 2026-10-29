@@ -2,12 +2,12 @@
 function presetRange(preset, now = Date.now()) {
   const shanghai = new Date(Math.floor(now / 1000) * 1000 + 8 * 3600000);
   let start, end = shanghai;
-  if (preset === 'previous-three-months' || preset === 'month') {
-    const months = preset === 'previous-three-months' ? 3 : 1;
-    start = new Date(Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth() - months, 1));
+  if (preset === 'month') {
+    start = new Date(Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth() - 1, 1));
     end = new Date(Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth(), 1) - 1000);
-  } else if (preset === 'current-month') {
-    start = new Date(Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth(), 1));
+  } else if (preset === 'current-month' || preset === 'three-months') {
+    const months = preset === 'three-months' ? 2 : 0;
+    start = new Date(Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth() - months, 1));
   } else if (preset === 'yesterday') {
     const midnight = Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth(), shanghai.getUTCDate());
     start = new Date(midnight - 86400000);
