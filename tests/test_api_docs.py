@@ -11,6 +11,30 @@ from new_api_cockpit.openapi import document, serialized_document
 
 
 class APIDocsTest(unittest.TestCase):
+    def test_wecom_schema_has_masked_response_and_write_only_webhook(self):
+        spec = document()
+        path = spec["paths"]["/cockpit/api/statistics/balance/channel"]
+        self.assertIn(
+            "wecom_webhook",
+            spec["components"]["schemas"]["Notification"]["properties"]["channel"][
+                "enum"
+            ],
+        )
+        variants = path["put"]["requestBody"]["content"]["application/json"]["schema"][
+            "oneOf"
+        ]
+        wecom = next(
+            v
+            for v in variants
+            if v["properties"]["channel"]["const"] == "wecom_webhook"
+        )
+        self.assertTrue(wecom["properties"]["webhook_url"]["writeOnly"])
+        self.assertEqual(wecom["properties"]["mentioned_list"]["maxItems"], 100)
+        self.assertNotIn("signing_enabled", wecom["properties"])
+        self.assertNotIn(
+            "webhook_url", spec["components"]["schemas"]["Notification"]["properties"]
+        )
+
     def test_contract_json_is_reused_but_each_request_still_authenticates(self):
         serialized_document.cache_clear()
         self.addCleanup(serialized_document.cache_clear)

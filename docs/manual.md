@@ -1,193 +1,188 @@
 # 模型使用
 
-入口：`/cockpit/manual`。普通用户登录后也能进入，用自己的令牌接入客户端；其他管理页面仍只对管理员开放。
+入口：`/cockpit/manual`。登录后选择自己的模型 KEY 和模型，再按客户端教程配置。
+账户 MCP、VS Code 余额插件放在[辅助工具](tools.md)，不与模型接入混用。
 
-## 使用步骤
+## 页面操作
 
-1. 选择本人令牌，读取模型，再选择实际模型 ID。
-2. 选择工具、系统和接口协议。CC Switch 还需要选择目标客户端。
-3. 按步骤填写连接信息，在对应步骤复制配置或命令，再到客户端中选择模型。
+1. 选本人令牌，读取模型，选择要用的模型 ID。
+2. 用工具下拉框选择客户端。列表保留全部十五个客户端，选中后显示完整适用范围和协议。
+3. 选择 macOS、Windows 或 Linux / WSL。Claude Code、Codex、CodeBuddy 还可以选择 CLI、桌面或扩展等接入方式，只展示该方式的步骤。
+4. 在对应步骤复制地址、KEY、配置文件或启动命令，保存后到客户端选择模型。
 
-地址取当前页面的 `location.origin`，保留域名、HTTPS 和端口，不包含 `/cockpit`。
-没有令牌时，页面链接到 New API 的 `/keys`，不是管理员的 `/cockpit/keys/`。
+工具选择不再铺开十五张卡片。令牌详情与“接入配置说明”默认收起，需要时展开。
+切换工具、系统、接入方式、协议只更新本地教程，不重新读取令牌、模型或 KEY。
+模型列表不自动选择第一项，也不根据模型名称猜测支持的协议。
 
-模型不自动选第一项，也不根据名称判断 GLM、Claude 或 GPT 能否使用某个接口。
-三种协议始终列在下拉框中，按客户端的接入方式启用：Codex 原生用 Responses，Claude Code 原生用 Messages；CC Switch 可以通过本地路由转换协议。
-`/v1/models` 返回的协议元数据不作为客户端协议白名单。
+### 复制什么，填在哪里
 
-## 模型选择与配置
+- **图形界面**：按行展示字段名和值，每行可单独复制。地址只复制地址，模型只复制 ID，KEY 行明确标注“复制 KEY”；也可复制全部字段作核对，但字段清单不是可导入的文件。
+- **配置文件**：示例放在修改该文件的步骤内，标题显示保存路径。JSON、TOML、YAML 分别复制，不混在一个按钮里。同名连接或模型项替换，其他已有设置保留。
+- **终端命令**：放在执行该命令的步骤内，按钮显示“复制命令”。复制不会自动安装、启动或调用模型。
+- **含 KEY 的片段**：只有明确点击对应复制按钮才读取本人 KEY。预览始终是 `API_KEY`；复制地址、Provider、模型 ID、安装或启动命令不会读取 KEY。
 
-配置里不固定默认模型，不覆盖角色映射、回退模型、允许列表或其他功能参数。
-模型 ID 来自用户当前选择，没有写死的 `default`、`sonnet`、`opus` 或示例模型名。
+每项示例只出现一次，不需要到文末寻找。切换选择、账号或离开页面会取消尚未完成的复制；失败不显示明文 KEY，也不自动重发。
 
-- **Claude Code**：CLI 用 `--model` 选择本次启动的模型，不生成 `ANTHROPIC_MODEL` 或 `ANTHROPIC_DEFAULT_*`。VS Code 的 `claudeCode.environmentVariables` 配置连接；`ANTHROPIC_CUSTOM_MODEL_OPTION` 仅把所选模型加入菜单，不将它设为默认。
-- **Codex**：TOML 只设置 Provider 连接，不写顶层 `model`、搜索开关、推理强度或上下文窗口。CLI 用单独的 `--model` 启动命令。桌面应用和 IDE 扩展通过会话模型菜单选择；自定义别名需要对应模型目录才能显示。
-- **CC Switch**：只生成连接字段和目标工具的启动命令。不生成 Codex 模型映射表，因为其第一行会被 CC Switch 用作默认模型。
-- **OpenClaw**：仅合并 `models.providers.newapi` 的连接和模型目录。不写 `agents.defaults` 或 `models.mode`；在聊天模型菜单中选择模型。
-- **Cursor、TRAE、Qoder、Chatbox**：添加所选模型后，在会话模型菜单中选择，不修改全局默认模型。
-- **curl**：请求体的 `model` 是这一次请求的模型，不是客户端默认配置。
+## 三种协议
 
-CLI 启动命令不含 KEY，复制后不会读取 KEY，也不会自动执行。
+本站地址从当前页面的 `location.origin` 取得，保留 HTTP/HTTPS、域名和端口，不带 `/cockpit`。
 
-### 配置示例的位置
-
-| 客户端 | 对应步骤 |
-| --- | --- |
-| Claude Code | 第 1 步：终端环境；第 2 步：启动命令；第 3 步：VS Code 用户设置 |
-| Codex | 第 2 步：config.toml；第 3 步：auth.json；第 5 步：启动命令 |
-| WorkBuddy | 第 2 步：供应商；第 3 步：URL、KEY、模型 |
-| Hermes | 第 2 步：config.yaml；第 4 步：启动命令 |
-| Claude App | 第 2 步：Gateway 连接；第 3 步：Models |
-| Cursor | 第 1 步：KEY 与开关；第 2 步：网关地址；第 3 步：模型 ID |
-| CC Switch | 第 2 步：连接字段；第 4 步：目标客户端启动命令 |
-| TRAE | 第 2 步：协议、完整 URL、模型 ID 和 KEY |
-| Qoder | 第 2 步：供应商、地址和 KEY；第 3 步：模型 ID |
-| Chatbox | 第 1 步：供应商协议；第 2 步：Host / Path；第 3 步：KEY 和模型 |
-| OpenClaw | 第 2 步：openclaw.json；第 3 步：会话模型引用 |
-| curl | 第 3 步：请求命令 |
-
-账户 MCP 的地址、客户端配置和 PAT 环境变量说明放在第 2 步“添加远程 HTTP MCP”中。
-
-
-## 工具设置
-
-| 工具 | 协议和地址 | 操作入口 | 官方资料 |
-| --- | --- | --- | --- |
-| Claude Code | Messages，根地址 | CLI 环境变量；扩展使用 VS Code 用户设置中的 `claudeCode.environmentVariables` | [网关配置](https://code.claude.com/docs/en/llm-gateway-connect)、[模型参数](https://code.claude.com/docs/en/model-config) |
-| Codex | Responses，根地址 + `/v1` | 用户 `config.toml` 的 Provider + 同目录 `auth.json` 的 KEY；`--model` 选择本次模型 | [Provider](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)、[CLI 参数](https://learn.chatgpt.com/docs/cli/reference) |
-| WorkBuddy | Chat，完整 `/v1/chat/completions` | 桌面设置 → 模型 → 自定义 / Custom；打开高级“自定义协议”，原样使用完整 URL | [官方模型配置](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Model) |
-| Hermes Agent | Chat，根地址 + `/v1` | 当前 profile 的 `config.yaml`，`model.provider: custom`；KEY 放 `model.api_key`，本次启动用 `--model` | [官方配置示例](https://github.com/NousResearch/hermes-agent/blob/main/cli-config.yaml.example) |
-| Claude App（桌面） | Messages，根地址 | Help → Troubleshooting → Enable Developer Mode；Developer → Configure Third-Party Inference → Gateway；Static API key + Bearer | [官方集成指南](https://developers.cloudflare.com/ai-gateway/integrations/coding-agents/claude-desktop/) |
-| Cursor | Chat，根地址 + `/v1` | Settings → Models → OpenAI API Key、Override OpenAI Base URL、Add Custom Model | [KEY 设置](https://cursor.com/help/models-and-usage/api-keys)、[手动添加模型](https://forum.cursor.com/t/cursor-cannot-connect-to-the-third-party-relay-station/164487/5) |
-| CC Switch | Messages 上游用根地址；Chat / Responses 上游用根地址 + `/v1` | 选目标客户端 → 自定义配置；原生协议 Direct，跨协议 Routing | [维护者手册](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/2-providers/2.1-add.md) |
-| TRAE 中文版 | Chat / Messages，完整接口 URL | 设置 → 模型 → 添加模型 → 自定义模型，打开“完整 URL”；对话手动选模型，不使用 Auto | [模型配置](https://docs.trae.cn/ide_models)、[Auto 模式](https://docs.trae.cn/ide_auto-mode) |
-| Qoder 独立应用 | Chat / Responses / Messages，Base URL 为根地址 + `/v1` | Settings → Models → + Add → Provider → Custom；选择 OpenAI Compatible 或 Anthropic Compatible | [独立应用](https://docs.qoder.com/qoder/custom-models)、[IDE 的不同入口](https://docs.qoder.com/zh/user-guide/chat/custom-models) |
-| Chatbox | Chat / Responses：Host 为根地址 + `/v1`，Path 为 `/chat/completions` / `/responses`；Messages：Host 为根地址 + `/v1` | 添加自建供应商，分别选择 OpenAI API Compatible、OpenAI Responses API Compatible、Claude API Compatible | [协议选项源码](https://github.com/chatboxai/chatbox/blob/main/src/renderer/components/settings/provider/AddProviderModal.tsx)、[地址处理](https://github.com/chatboxai/chatbox/blob/main/src/shared/utils/llm_utils.ts) |
-| OpenClaw | Chat / Responses：根地址 + `/v1`；Messages：根地址 | `openclaw.json` 的 `models.providers`，再在聊天中选择 `newapi/模型ID` | [Provider 字段](https://docs.openclaw.ai/gateway/config-tools/custom-providers)、[会话选模](https://docs.openclaw.ai/concepts/models#choose-a-model-for-a-session) |
-| curl | 完整 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` | POSIX shell 或 PowerShell 7.3+ 的 `curl.exe` | [OpenAI 请求](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Messages 请求](https://platform.claude.com/docs/en/api/messages/create) |
-
-Qoder 独立应用和 Qoder IDE 不是同一个配置入口。只有预置服务商、没有自定义 Base URL 字段的客户端，不能把本站 KEY 填进厂商官方接口。
-Chatbox 的 Messages 适配器由客户端追加 `/messages`，与 Claude Code 的地址规则不同。
-CC Switch 跨协议接入需要本地 Routing 持续运行；Codex 的 `wire_api` 仍为 `responses`，不能改成 `chat`。
-
-## 接入前检查
-
-- **两种凭据不要混用**：模型客户端使用 `/keys` 中的模型 KEY（通常 `sk-` 开头）；[账户 MCP](mcp.md) 使用 `/security` 中的用户 API PAT（新式通常 `nap_` 开头）。本页不会为 MCP 读取、生成或复制真实 PAT。
-- 先检查本人令牌启用、到期、额度、分组、模型限制和 IP 白名单。选择模型后，再按客户端确认的协议配置；没有协议元数据时不猜测。
-- 根地址、Base URL 和完整路径各不相同。以本站生成的字段为准，保留 HTTPS 与非默认端口，不重复追加 `/v1`。
-- 修改前备份；JSON/TOML/YAML 按各自格式合并，不覆盖整份已有配置，不更改原默认模型、模型映射、温度或上下文窗口。
-- 保存后完全退出并重开客户端，再为当前会话选择刚配置的提供商与模型。先核对地址/KEY/模型，再手动发送短消息，最后在本站使用日志核对。客户端测试和任务可能计费，教程不会自动执行它们。
-
-## Codex：config.toml + auth.json
-
-默认目录为 macOS/Linux 的 `~/.codex/` 或 Windows 的 `%USERPROFILE%\.codex\`。
-设置 `CODEX_HOME` 后两个文件都放在该目录。先退出客户端，备份两份旧文件；更改认证可能影响共享配置的 CLI 与 IDE。
-
-把以下**连接字段合并**到 `config.toml`，顶层字段放在任何表头前，同名 provider 表只保留一份：
-
-```toml
-model_provider = "newapi"
-cli_auth_credentials_store = "file"
-
-[model_providers.newapi]
-name = "New API"
-base_url = "https://gateway.example.com/v1"
-wire_api = "responses"
-requires_openai_auth = true
-```
-
-`requires_openai_auth` 启用 Codex 的 API Key 认证存储格式，实际请求仍发往自定义 `base_url`。
-不再生成 `env_key = "NEW_API_MODEL_KEY"`。将网页生成的另一个片段保存为同目录 `auth.json`：
-
-```json
-{
-  "auth_mode": "apikey",
-  "OPENAI_API_KEY": "API_KEY"
-}
-```
-
-其中 `API_KEY` 替换为本人**模型调用 KEY**，不是 MCP PAT。网页第 2 步直接显示 config.toml，第 3 步显示 auth.json，并各有复制按钮；只有点击 auth.json 的“复制配置（含 KEY）”才读取所选 KEY。
-不要和旧 OAuth 字段直接混合；不要把认证文件加入仓库、发给他人或记录到工单。
-macOS/Linux 运行 `chmod 600 ~/.codex/auth.json`，自定义目录时相应修改路径；Windows 限本人访问。
-
-重开后运行 `codex login status` 确认认证方式，再用本页生成的 `codex --model='模型ID'` 启动。
-此片段不设置顶层 `model`，不覆盖已有默认模型、搜索、推理或上下文设置。桌面与 IDE 在会话菜单选模。
-如果地址或 KEY 没生效，检查 `CODEX_HOME`、项目级配置、环境中的 `OPENAI_API_KEY` / `CODEX_API_KEY`、启动参数和组织策略。
-`login status` 成功不等于网关模型已验通；真实对话后仍须核对本站日志。
-
-依据：[官方认证与文件存储](https://learn.chatgpt.com/docs/auth#credential-storage)、[提供商认证](https://learn.chatgpt.com/docs/auth#alternative-model-providers)、[配置字段](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)。
-
-## 新增客户端的范围
-
-### WorkBuddy
-
-使用桌面端的自定义模型 UI。完整 URL 模式下须开启高级“自定义协议”，否则客户端会校验并自动补齐标准路径。
-保存后在任务的自定义模型分组中明确选中连接；已有任务不保证自动切换。教程提供字段清单，不伪造 models.json 导入格式。
-KEY 由客户端保存在本机，模型产生的费用由本站账户承担，与产品积分分开。
-
-### Hermes Agent
-
-使用 NousResearch Hermes Agent 的当前 profile 配置，不是任意同名客户端。
-合并到 `~/.hermes/config.yaml` 的 `model` 表；自定义 home/profile 时修改对应目录，不重复添加同名表：
-
-```yaml
-model:
-  provider: "custom"
-  base_url: "https://gateway.example.com/v1"
-  api_key: "API_KEY"
-```
-
-不填写默认模型，使用网页生成的 `hermes --model='模型ID'` 启动本次会话。
-检查环境/启动参数覆盖，保护含 KEY 的 YAML；Windows 按官方支持方式使用 WSL 的 home。
-`auxiliary` 中标题、压缩、视觉等可能独立配置提供商；仅配置主模型不意味着它们全部改走本站。
-
-### Claude App（桌面）
-
-范围是提供 Third-Party Inference 入口的 macOS/Windows 桌面版，不包含网页或手机端。
-更新并启用 Developer Mode 后，在 Gateway 配置中填写本站根地址、Static API key、Bearer 和模型 KEY，再添加真实 Model ID 与显示名。
-若版本要求 Tier alias，应按实际模型手动选择，本页不强制映射 Sonnet/Opus/Haiku，也不承诺任意模型兼容全部客户端工具。
-不要以 Claude Code 的环境变量或 settings.json 代替桌面 Gateway 设置。
-保存后按提示重开、选模；连接测试可能计费。客户端仍可能要求自己的账号、许可或组织策略权限，网关 KEY 不能替代。
-
-## 辅助工具
-
-账户 MCP 已移到 **文档 → 辅助工具**（`/cockpit/tools`），与 VS Code 插件下载和使用说明放在一起，不再混在模型令牌选择页。
-MCP 的 Codex/Cursor 示例与复制功能保留，不读取模型 KEY；旧 MCP 书签会转到新位置。
-插件的账户连接、KEY 管理、Claude / Codex 配置草稿说明见[辅助工具](tools.md)，MCP 完整协议与口径见[账户 MCP](mcp.md)。
-
-## 截图
-
-TRAE 教程的“打开自定义模型”和“管理模型”步骤附有两张官方截图，点击可看原图，并提供原文链接。
-图片作为同源静态资源随应用发布，不从第三方服务器加载，也不带用户信息。保持原图比例，不裁剪。
-图片出处与原始资源见项目 `NOTICE`；截图属于原权利人，不以本项目许可证重新授权。
-
-## KEY 与查询
-
-列表只返回本人令牌，管理员在本页也只能选择自己的令牌。KEY 始终脱敏展示。
-查询模型时，后端使用所选 KEY 调用 `/v1/models`；令牌的分组、模型权限和 IP 限制保持不变。
-不会创建 PAT 或令牌，不修改额度，不调用生成接口。客户端自己的验证、对话和自动请求正常计费。
-
-每项配置和命令都放在使用它的步骤中，各有独立的复制按钮，不再到教程底部切换片段：
-
-- 含 KEY 的配置显示“复制配置（含 KEY）”，点击时读取本人令牌 KEY，填入剪贴板。
-- Provider 引用、CLI 启动命令等不含 KEY 的片段显示“复制配置”，直接复制，不读取 KEY。
-
-真实 KEY 不进入页面预览、URL、日志或浏览器存储。复制失败不显示明文，也不自动重发。
-切换令牌、模型、工具、CC Switch 目标或账号，会取消旧复制操作。
-令牌列表是只读 GET，认证失效时使用共用登录桥接续期并重试一次；模型查询和 KEY 读取不自动重试。
-
-## 接口
-
-| 方法 | 地址 | 返回 |
+| 协议 | 请求接口 | 说明 |
 | --- | --- | --- |
-| GET | `/cockpit/api/manual/tokens` | 本人令牌选项和官方令牌管理路径，仅返回脱敏 KEY |
-| POST | `/cockpit/api/manual/models` | 所选令牌的可用模型及上游声明的协议 |
-| POST | `/cockpit/api/manual/key` | 用于明确复制的完整模型 KEY，禁止缓存 |
+| OpenAI Chat Completions | `/v1/chat/completions` | 不是 Responses 的别名，不能只改 URL 而保留另一种请求体 |
+| OpenAI Responses | `/v1/responses` | Codex 原生使用此接口；客户端还需要正确处理流式事件和工具调用 |
+| Anthropic Messages | `/v1/messages` | Claude Code、Claude Desktop Gateway 使用此接口 |
 
-POST 必须为 JSON，带 `X-Cockpit-Manual: 1`，请求体仅接受 `{"token_id": 123}`。
-网页调用使用同源会话及 `X-Cockpit-Session`；脚本可以用管理员 PAT，但仍只读取该管理员自己的令牌。
-不接受另一用户 ID、任意上游 URL 或模型调用 KEY 作为 Cockpit 认证凭据。
-令牌列表最多读取 2000 个，超出时报错，不静默遗漏。
-这三个接口不允许在 API 文档调试器中执行，避免在那里回显完整 KEY。
+协议下拉框始终列出三种格式，但只启用当前客户端和接入方式支持的选项。
+有多个可用协议时，改变选择会同步改变地址、配置字段和请求结构。
+`/v1/models` 只证明该 KEY 能看到某个模型，不证明其渠道支持所有协议、图片或工具调用。
+客户端能配置一种协议，也不代表本站所有模型都能用这种协议。教程不以模型名做白名单限制，不会自动发送验证请求。
 
-无新增数据库表、迁移、后台任务、教程历史或凭据缓存。
+## 客户端和地址
+
+下表按 **2026-10-30** 的官方文档及维护者源码核对。每个网页教程同时保留官方原文链接。
+“根地址”例如 `https://gateway.example.com`；`/v1` 和完整接口路径已由页面按客户端要求生成，不要再补一次。
+
+| 客户端 / 接入方式 | 支持的协议 | 地址与配置入口 | 官方资料 |
+| --- | --- | --- | --- |
+| Claude Code CLI | Messages | `ANTHROPIC_BASE_URL` 填根地址；在同一个终端配置并启动 | [网关](https://code.claude.com/docs/en/llm-gateway-connect)、[安装](https://code.claude.com/docs/en/setup) |
+| Claude Code VS Code 扩展 | Messages | VS Code **用户设置 JSON** 的 `claudeCode.environmentVariables`，不是项目设置或另一个终端的 export | [扩展](https://code.claude.com/docs/en/vs-code) |
+| Codex CLI / 桌面 / IDE 扩展 | Responses | `/v1`；同一个 `CODEX_HOME` 中的 `config.toml` + `auth.json` | [提供商](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)、[认证](https://learn.chatgpt.com/docs/auth#credential-storage) |
+| WorkBuddy 桌面端 | Chat | 设置 → 模型 → 自定义；开启高级“自定义协议”后填完整 `/v1/chat/completions` | [模型设置](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Model) |
+| Hermes Agent | Chat / Responses / Messages | `config.yaml` 的 `providers.newapi`；OpenAI 用 `/v1`，Messages 用根地址；`transport` 分别为 `chat_completions` / `codex_responses` / `anthropic_messages` | [自定义提供商](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/integrations/providers.md#named-custom-providers) |
+| Claude App / Claude Desktop | Messages | Developer → Configure Third-Party Inference → Gateway；根地址、Static API key、Bearer | [Anthropic 官方 Gateway](https://claude.com/docs/third-party/claude-desktop/gateway) |
+| Cursor 桌面编辑器 | Chat | Settings → Models；OpenAI KEY、Override OpenAI Base URL（`/v1`）、Add Custom Model | [BYOK](https://cursor.com/help/models-and-usage/api-keys)、[维护者说明](https://forum.cursor.com/t/cursor-cannot-connect-to-the-third-party-relay-station/164487/5) |
+| CC Switch | 三种上游协议；非原生格式需本地转换 | 先选 Claude Code / Codex 目标；Messages 上游用根地址，OpenAI 用 `/v1`；非原生格式启用 Routing | [维护者手册](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/2-providers/2.1-add.md) |
+| TRAE 中文版 | Chat / Messages | 设置 → 模型 → 添加模型 → 自定义模型；打开“完整 URL”，按协议填完整接口 | [模型设置](https://docs.trae.cn/ide_models) |
+| 独立 Qoder 应用 | Chat / Responses / Messages | Settings → Models → Add model → Custom；Base URL 用 `/v1`；OpenAI Compatible 内另选 Chat 或 Responses | [独立应用](https://docs.qoder.com/qoder/custom-models) |
+| Chatbox | Chat / Responses / Messages | 自建供应商选择对应类型；API Host 用 `/v1`；OpenAI 另填 `/chat/completions` 或 `/responses`，Claude 类型自行补 `/messages` | [Chat](https://github.com/chatboxai/chatbox/blob/main/src/shared/providers/definitions/models/custom-openai.ts)、[Responses](https://github.com/chatboxai/chatbox/blob/main/src/shared/providers/definitions/models/custom-openai-responses.ts)、[Messages](https://github.com/chatboxai/chatbox/blob/main/src/shared/providers/definitions/models/custom-claude.ts) |
+| OpenClaw | Chat / Responses / Messages | `openclaw.json` 的 `models.providers.newapi`；OpenAI 用 `/v1`，Messages 用根地址 | [自定义提供商](https://docs.openclaw.ai/gateway/config-tools/custom-providers) |
+| Pi Agent | Chat / Responses / Messages | `models.json` 的 `providers.newapi`；OpenAI 用 `/v1`，Messages 用根地址；显式设置 `api` | [模型连接](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md)、[配置字段](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models-configuration.md) |
+| DeepSeek Harness | Chat / Responses / Messages | 本地 Web UI → 设置 → 模型 → 添加模型提供商 → 自定义模型 API；OpenAI 用 `/v1`，Messages 用根地址 | [DeepSeek 官方教程](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md) |
+| CodeBuddy IDE / VS Code 插件 | Chat | 用户级 `models.json`；`url` 用完整 `/v1/chat/completions` | [官方配置结构](https://www.codebuddy.ai/docs/cli/models)、[腾讯 CloudBase 接入](https://docs.cloudbase.net/ai/ai-tools/codebuddy) |
+| CodeBuddy Code CLI | Chat / Responses；Messages 使用独立环境变量入口 | Chat：完整 URL；Responses：`api: openai-responses` 和 `/v1`；Messages：`CODEBUDDY_BASE_URL` 根地址 + `CODEBUDDY_API_KEY` | [Responses](https://www.codebuddy.ai/docs/cli/models#openai-responses-api-configuration-example)、[环境变量](https://www.codebuddy.ai/docs/cli/env-vars) |
+| curl | Chat / Responses / Messages | 完整请求 URL、对应认证头和请求体 | [OpenAI 两种接口](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Messages](https://platform.claude.com/docs/en/api/messages/create)、[curl](https://curl.se/docs/manpage.html) |
+
+Cursor 的 BYOK 不覆盖 Tab 补全。Qoder 独立应用和 Qoder IDE 的入口不同，不把本站 KEY 填进无法修改 URL 的厂商预置提供商。
+CC Switch 的协议转换由本机 Routing 完成，Codex 的 `wire_api` 仍为 `responses`，不是改成 `chat`。
+CodeBuddy 的 Responses 和 Messages 本教程明确限定为 **CLI 方式**，不据此宣称 IDE / 插件也支持。
+
+## Windows、Linux 和 macOS
+
+页面分开选择三个系统，不再把 macOS 与 Linux 合成一个选项。
+
+| 客户端 | macOS | Windows 原生 | Linux / WSL |
+| --- | --- | --- | --- |
+| Claude Code | CLI / 扩展 | CLI / 扩展，命令用 PowerShell | CLI / 扩展 |
+| Codex | CLI / 桌面 / IDE | CLI / 桌面 / IDE | CLI / IDE；[桌面版为预览](https://learn.chatgpt.com/docs/linux/linux-app) |
+| WorkBuddy | 官方桌面版 | 官方桌面版 | 按官方[统信 UOS](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Installation-UOS-Guide) / 银河麒麟说明，不概括为任意发行版 |
+| Hermes Agent | CLI | [原生安装](https://github.com/NousResearch/hermes-agent#quick-install)，不强制 WSL | CLI；WSL 使用 Linux 用户目录 |
+| Claude Desktop | 桌面 Gateway | 桌面 Gateway | [Linux beta](https://code.claude.com/docs/en/desktop-linux)；先检查安装版是否提供 Gateway 入口 |
+| Cursor / TRAE / Qoder / Chatbox | 桌面版 | 桌面版 | 按官方下载页选择发行版和架构，不把桌面版等同于无图形服务器 |
+| CC Switch | 原生桌面版 | 原生桌面版 | 当前要求 glibc 2.35+、WebKitGTK 4.1；RHEL / Rocky / Alma 8–9 不在[支持范围](https://github.com/farion1231/cc-switch#installation) |
+| OpenClaw | CLI / Control UI | [原生 CLI](https://docs.openclaw.ai/platforms/windows)；也可选择 WSL | CLI / Control UI |
+| Pi Agent | CLI | [原生运行需 Bash 环境](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/windows.md)，可用 Git for Windows；也可 WSL | CLI |
+| DeepSeek Harness | 本地 Web UI | 本地 Web UI | 本地 Web UI；[官方 npm 启动方式](https://github.com/deepseek-ai/deepseek-harness#run) |
+| CodeBuddy | IDE / 插件 / CLI | IDE / 插件 / CLI | 按官方安装要求选择包或 CLI |
+| curl | Bash / Zsh | **PowerShell 7.3+ + curl.exe** | Bash |
+
+WSL、SSH、容器或远程扩展的配置写在**客户端实际运行的环境**里。Windows 本机配置不会自动传到 WSL / Linux。
+桌面图标启动的应用也不会自动继承另一个终端里的 `export` 或 `$env:`。
+
+### 常见配置位置
+
+下表是未自定义配置目录、普通用户安装的默认位置；网页会随系统切换显示。
+
+| 内容 | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Codex | `~/.codex/config.toml`、`auth.json` | 同左 | `%USERPROFILE%\.codex\config.toml`、`auth.json` |
+| Hermes | `~/.hermes/config.yaml` | 同左 | `%USERPROFILE%\.hermes\config.yaml` |
+| Pi | `~/.pi/agent/models.json` | 同左 | `%USERPROFILE%\.pi\agent\models.json` |
+| CodeBuddy | `~/.codebuddy/models.json` | 同左 | `%USERPROFILE%\.codebuddy\models.json` |
+| OpenClaw | `~/.openclaw/openclaw.json` | 同左 | `%USERPROFILE%\.openclaw\openclaw.json` |
+| Claude Code 的 VS Code 扩展 | `~/Library/Application Support/Code/User/settings.json` | `~/.config/Code/User/settings.json` | `%APPDATA%\Code\User\settings.json` |
+
+`CODEX_HOME`、`HERMES_HOME` / profile、`PI_CODING_AGENT_DIR` 等自定义目录优先；VS Code Profile、Remote SSH、WSL 以 **Preferences: Open User Settings (JSON)** 实际打开的位置为准。
+修改前备份。文件不要多出 `.txt` 后缀；JSON 不加注释或尾随逗号，TOML 顶层字段放在表头之前。
+macOS/Linux 将含 KEY 的文件设为 `600`；Windows 限本人访问，不放到项目仓库。
+
+## 各步骤中的配置
+
+| 客户端 / 方式 | 放置位置 |
+| --- | --- |
+| Claude Code CLI | 第 2 步：当前终端连接；第 3 步：本次启动命令 |
+| Claude Code VS Code 扩展 | 第 3 步：用户 settings.json，不显示 CLI 环境步骤 |
+| Codex CLI | 第 2 步：config.toml；第 3 步：auth.json；第 5 步：启动命令 |
+| Codex 桌面 / IDE | 第 2、3 步：两个文件；第 5 步：相应界面的重启和选模说明，不显示 CLI 启动命令 |
+| WorkBuddy | 第 2 步：供应商；第 3 步：完整 URL、KEY 和模型 |
+| Hermes | 第 2 步：providers.newapi；第 4 步：指定提供商与模型的命令 |
+| Claude Desktop | 第 2 步：Gateway；第 3 步：Models |
+| Cursor | 第 1 步：KEY；第 2 步：地址；第 3 步：模型 |
+| CC Switch | 第 2 步：连接字段；第 4 步：目标客户端启动命令 |
+| TRAE / Qoder / Chatbox / OpenClaw | 保留各自配置、保存和选模步骤，文件或表单字段紧跟对应步骤 |
+| Pi Agent | 第 1 步：安装命令；第 3 步：models.json；第 4 步：启动命令 |
+| DeepSeek Harness | 第 1 步：本机 Web UI 启动；第 3 步：提供商字段；第 4 步：模型目录 |
+| CodeBuddy IDE / 插件 | 第 3 步：models.json；第 4 步：会话模型 ID |
+| CodeBuddy CLI | 第 3 步：Chat / Responses 文件或 Messages 环境变量；第 4 步：启动命令 |
+| curl | 第 3 步：对应终端和协议的完整请求 |
+
+## 几个容易弄错的地方
+
+### Codex 仍然是 config.toml + auth.json
+
+`config.toml` 设置 `model_provider = "newapi"`、`cli_auth_credentials_store = "file"`；Provider 内写 `/v1` 地址、`wire_api = "responses"` 和 `requires_openai_auth = true`。
+`auth.json` 单独保存 `auth_mode: apikey` 和 `OPENAI_API_KEY`，使用本人模型 KEY，不是用户 PAT；字段结构见 [OpenAI 源码](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs)。
+两个文件在同一个 `CODEX_HOME`。CLI 用 `--model` 选择当前会话；教程不写顶层 `model`，也不覆盖推理、上下文或搜索设置。
+自定义模型别名若不在菜单中，需要匹配的模型目录元数据，不能承诺仅写入连接就一定会显示。
+`codex login status` 只检查认证来源，不证明网关模型已验通。
+
+### Pi Agent 不是旧包名
+
+安装按[当前官方 README](https://github.com/earendil-works/pi/tree/main/packages/coding-agent#readme)，npm 包为 `@earendil-works/pi-coding-agent`，要求 Node.js 22.19+。
+`models.json` 只合并 `providers.newapi`，用 `pi --provider=newapi --model=...` 启动；不设置默认模型、价格、上下文或推理能力。
+Pi 的密钥字符串支持环境插值和命令解析，生成器按[官方转义规则](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md)转义字面 `$` 和开头的 `!`，避免 KEY 被当成变量或命令。
+
+### DeepSeek Harness 不把本站 KEY 填进内置 DeepSeek 卡片
+
+先启动本地 Web UI，然后创建**自定义模型 API**提供商。一个提供商一种协议；Provider ID 创建后不可改名。
+手动填写模型 ID 不依赖目录探测成功。设置保存后下一次请求生效，不重启服务。
+[官方说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.zh.md)指出模型选择也会改变新会话默认值，教程明确提示此行为，不谎称“只影响本次会话”。
+已保存凭据只写，教程不生成猜测的凭据 YAML。
+
+### CodeBuddy 的文件与环境变量不是同一个入口
+
+IDE / 插件使用完整 Chat URL 的 `models.json`。CLI 的 Responses 需显式 `api: openai-responses`，`url` 使用 `/v1`；Messages 使用[官方环境变量入口](https://www.codebuddy.ai/docs/cli/env-vars)，不把 Chat 文件简单改成 `/messages`。
+同 id 模型替换，不重复追加；不生成 `availableModels`，已有白名单需用户明确加入所选模型。
+为避免含 `${...}` 的真实 KEY 被文件解析器展开，生成器拒绝将这种 KEY 写入 CodeBuddy 文件，提示使用客户端安全凭据输入；错误不回显 KEY。
+
+### 不自动修改默认模型
+
+除客户端本身的行为提示外，教程不替用户改默认模型、角色映射、回退模型、允许列表、温度或上下文窗口。
+CLI 用本次启动参数，GUI 保存连接后在模型菜单中明确选择。
+工具调用、图片、思考等能力按模型和渠道的实际支持设置，不根据名称预填能力开关。
+
+## 权限、KEY 与查询
+
+- 模型客户端使用 `/keys` 中的模型 KEY（通常 `sk-` 开头）。账户 MCP 和余额插件使用 `/security` 中的用户 API PAT（新式通常 `nap_` 开头），两种凭据不能混用。
+- 仅列出当前用户自己的令牌；管理员在本页也不能选择其他用户的 KEY。KEY 不进入页面明文、URL、日志或浏览器存储。
+- 读取模型仍受令牌分组、模型权限、IP 白名单、额度、状态和有效期限制；不改为全站模型目录，不调整 `auto` 分组处理。
+- 不创建 PAT 或令牌，不改额度，不发送模型生成或客户端验证请求。用户手动在客户端对话、测试连接、运行任务时，按实际调用计费。
+- 保留现有 15 秒读取 / 复制期限、取消与会话失效处理。模型查询与 KEY 读取不自动重试，不新增轮询或凭据缓存。
+
+| 方法 | 地址 | 用途 |
+| --- | --- | --- |
+| GET | `/cockpit/api/manual/tokens` | 本人令牌列表，只返回脱敏 KEY |
+| POST | `/cockpit/api/manual/models` | 所选令牌的可用模型 |
+| POST | `/cockpit/api/manual/key` | 用户明确点击含 KEY 复制后，读取完整 KEY |
+
+POST 仍要求同源会话、`X-Cockpit-Manual: 1`、`X-Cockpit-Session` 和 `{"token_id": 123}`；脚本使用管理员 PAT 时仍限定本人。
+不接受另一用户 ID、任意上游地址或模型 KEY 作为 Cockpit 认证凭据。令牌列表最多 2000 项，超出时报错，不静默遗漏。
+API 调试器不允许执行这三个接口；无新增数据库表、权限、迁移或后台任务。
+
+## 本地验证
+
+- 纯配置生成与 DOM 用例覆盖三系统、所有接入方式及已启用协议，共 114 组组合；单独检查地址、文件路径、JSON/TOML/YAML、字面值转义和每一步的片段放置。
+- 离线浏览器 `tests/browser/manual-regression.cjs` 使用真实模板和资源，覆盖桌面 / 手机布局、十五个工具下拉项、逐字段复制、KEY 不回显，以及切换时不增加上游请求。
+- 上述验证不安装或启动十五个真实客户端，不调用真实模型，不等同于逐客户端真实网关验收。
+
+TRAE 的两张官方截图仍为同源静态资源，保持比例并保留出处。截图版权见 `NOTICE`。

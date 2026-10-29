@@ -113,7 +113,11 @@ class RepairUnitTest(unittest.TestCase):
                 write_price=Decimal("2.5"),
             )
         ]
-        workbook = load_workbook(report.export_excel([row], "2026-09-01", "2026-09-01"))
+        workbook = load_workbook(
+            report.export_excel(
+                [row], "2026-09-01", "2026-09-01", usd_cny_rate=Decimal("1")
+            )
+        )
         count = 0
         for sheet in workbook:
             for cells in sheet:
@@ -151,7 +155,11 @@ class RepairUnitTest(unittest.TestCase):
         self.assertTrue(all(r["input_price"] is None for r in unknown))
         ranked = report.rankings(rows)
         self.assertIsNone(ranked["user_tokens"][0]["total_tokens"])
-        wb = load_workbook(report.export_excel(rows, "2026-09-01", "2026-09-01"))
+        wb = load_workbook(
+            report.export_excel(
+                rows, "2026-09-01", "2026-09-01", usd_cny_rate=Decimal("1")
+            )
+        )
         self.assertIsNone(wb["用户模型用量"][f"F{len(rows) + 3}"].value)
         self.assertEqual(wb["用户模型用量"][f"P{len(rows) + 3}"].data_type, "f")
         self.assertIsNone(wb["区间汇总"]["B4"].value)

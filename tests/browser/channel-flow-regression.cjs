@@ -28,7 +28,7 @@ const channelRows=[
 const mime={'.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2'};
 
 async function verify(browser,viewport){
-  const context=await browser.newContext({viewport}),page=await context.newPage(),calls=[],errors=[];
+  const context=await browser.newContext({viewport}),page=await context.newPage(),calls=[],errors=[],usageCalls=[];
   page.on('pageerror',error=>errors.push(error.message));
   await page.route('**/*',async route=>{
     const url=new URL(route.request().url());assert.equal(url.origin,'http://channel-flow.test');
@@ -46,8 +46,9 @@ async function verify(browser,viewport){
       return route.fulfill({json:{start:url.searchParams.get('start'),end:url.searchParams.get('end'),rows:channelRows}});
     }
     if(url.pathname.startsWith('/cockpit/api/statistics/usage')){
+      usageCalls.push(url.pathname);
       const rows=url.pathname.endsWith('/tokens')?[]:url.pathname.endsWith('/groups')?[]:[record];
-      return route.fulfill({json:{start:url.searchParams.get('start'),end:url.searchParams.get('end'),rows,totals:{duration_seconds:86400},updated_at:'2026-10-01T23:59:59+08:00'}});
+      return route.fulfill({json:{start:url.searchParams.get('start'),end:url.searchParams.get('end'),rows,currency_display:{usd_cny_rate:'7.2',rate_source:'USDExchangeRate'},totals:{duration_seconds:86400},updated_at:'2026-10-01T23:59:59+08:00'}});
     }
     if(url.pathname==='/favicon.ico')return route.fulfill({status:204});
     throw new Error('Unexpected fixture request: '+url.pathname);
@@ -56,10 +57,26 @@ async function verify(browser,viewport){
     await page.goto('http://channel-flow.test/cockpit/statistics/');
     await page.waitForFunction(()=>document.getElementById('export').disabled===false);
     assert.equal(calls.length,0,'No channel query on ordinary statistics load');
+    await page.locator('.column-picker > summary').click();
+    await page.locator('[data-column-toggle="amount_per_million"]').check();
+    await page.locator('.column-picker > summary').click();
+    const perMillion=page.locator('#rows [data-column="amount_per_million"]');
+    const inputPrice=page.locator('#rows [data-column="input_price"]');
+    const amount=page.locator('#rows [data-column="amount"]');
+    assert.equal(await page.locator('[data-detail-currency="CNY"]').getAttribute('aria-pressed'),'true');
+    assert.equal(await inputPrice.innerText(),'14.40');assert.equal(await amount.innerText(),'14.40');assert.equal(await perMillion.innerText(),'144,000.00');
+    assert.equal(await page.locator('#amount').innerText(),'¥ 14.40');
+    const requestsBeforeSwitch=usageCalls.length;
+    await page.locator('[data-detail-currency="USD"]').click();
+    assert.equal(await inputPrice.innerText(),'2.00');assert.equal(await amount.innerText(),'2.00');assert.equal(await perMillion.innerText(),'20,000.00');
+    assert.equal(await page.locator('#amount').innerText(),'¥ 14.40');
+    await page.locator('[data-detail-currency="CNY"]').click();
+    assert.equal(await inputPrice.innerText(),'14.40');assert.equal(usageCalls.length,requestsBeforeSwitch);
+
     assert.deepEqual(await page.locator('[data-ranking]').allTextContents(),['模型消费','用户 Token','用户消费','渠道分流']);
     await page.locator('#tab-model').focus();await page.keyboard.press('End');
     await page.locator('.channel-flow-channel').nth(2).waitFor();
-    assert.equal(calls.length,1);assert.equal(await page.locator('#chart').getAttribute('aria-labelledby'),'tab-channel-flow');
+    assert.equal(calls.length,1);assert.match(await page.locator('.channel-flow-total').first().innerText(),/14.40/);assert.equal(await page.locator('#chart').getAttribute('aria-labelledby'),'tab-channel-flow');
     assert.deepEqual(await page.locator('.channel-flow-percentage').allTextContents(),['75.00%','25.00%','—']);
     assert.match(await page.locator('#chart').innerText(),/所选时间内暂无消费/);
     assert.equal(await page.locator('.channel-flow-user').first().locator('.bar').evaluate(el=>el.style.width),'75%');

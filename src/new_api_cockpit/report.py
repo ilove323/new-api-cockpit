@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from . import metadata_fallback
+from . import currency_display as display_currency
 from .expression_prices import extract_prices, low_tier, PRICE_VARS
 from .historical_prices import (
     PRICE_FIELDS,
@@ -692,6 +693,7 @@ def load_report(
     include_failures=False,
     channel_ids=None,
     excluded_channel_ids=None,
+    currency_display=None,
 ):
     """Load either user-model totals or user-token-model totals read-only."""
     first, last = period(start, end)
@@ -767,10 +769,19 @@ def load_report(
                     "ModelPrice",
                     "billing_setting.billing_mode",
                     "billing_setting.billing_expr",
+                    *(["USDExchangeRate"] if currency_display is not None else []),
                 ],
             ),
         ).fetchall()
-    options = {r["key"]: json.loads(r["value"] or "{}") for r in records}
+    if currency_display is not None:
+        currency_display.update(
+            display_currency.settings({r["key"]: r["value"] for r in records})
+        )
+    options = {
+        r["key"]: json.loads(r["value"] or "{}")
+        for r in records
+        if r["key"] != "USDExchangeRate"
+    }
     return decorate(rows, options)
 
 
@@ -920,8 +931,9 @@ def append_literal(sheet, values):
             cell.data_type = "s"
 
 
-def export_excel(rows, start, end):
+def export_excel(rows, start, end, *, usd_cny_rate):
     """Merge user cells, retain numeric prices and calculate totals with SUM."""
+    rows = display_currency.rmb_rows(rows, usd_cny_rate)
     wb = Workbook()
     ws = wb.active
     ws.title = "用户模型用量"
@@ -932,6 +944,7 @@ def export_excel(rows, start, end):
             f"{first:%Y-%m-%d %H:%M:%S} 至 {last:%Y-%m-%d %H:%M:%S}（北京时间）",
         ]
     )
+    ws["C1"] = f"币种：RMB；1 USD = {usd_cny_rate} RMB（站点汇率）"
     ws.merge_cells("C1:P1")
     ws.append(HEADERS)
     for r in rows:

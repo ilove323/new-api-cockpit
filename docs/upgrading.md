@@ -7,6 +7,10 @@
 上述两池流程用于[接入已有 New API](existing-installation.md)的默认 Compose。
 如果是 `/root/new-api` 的七服务全量实例，先按下一节处理；不要把源码目录的 Compose 或发布模板覆盖到实例根目录。
 
+## 企业微信通知升级
+
+从 v0.4.2 升级到 v0.4.3 会追加执行监控库迁移 `012_wecom_webhook.sql`；已部署相同迁移的开发版本不会重复执行。新渠道默认关闭，已有通知开关、凭据和余额数据保留。备份监控库和通知加密密钥后正常更新 Cockpit，随后在“报警渠道 · 全局”配置企业微信群机器人；不需要修改 New API、数据库/Redis 版本、源库权限、Nginx 或现有环境变量。已有监控库迁移不能手工删除或重编号。
+
 ## 全量安装实例的更新
 
 本节仅适用于[全量部署手册](deployment.md)创建的七服务实例。命令在 `/root/new-api` 执行，而不是 `source/`。
@@ -66,9 +70,9 @@ docker exec -i <PostgreSQL容器名> pg_restore -l \
 
 ## 准备与切换
 
-Cockpit v0.4.2 随附 VS Code 插件仍为 0.4.2，插件功能不变。只更新 Cockpit 镜像，不需要修改 New API、PostgreSQL 或 Redis 镜像；与 v0.4.1 相比没有新增 SQL 迁移或源库权限。
+Cockpit v0.4.3 随附 VS Code 插件仍为 0.4.2，插件功能不变。只更新 Cockpit 镜像，不需要修改 New API、PostgreSQL、Redis 或 Nginx。与 v0.4.2 相比新增的唯一监控库迁移为 `012_wecom_webhook.sql`，无新增源库权限。
 
-本版鹈鹕测试改为流式 SVG，生成最多 300 秒。同步 [Nginx 示例](../nginx.conf.example)中 `/cockpit/api/intelligence/test` 的精确 location：读取超时 360 秒，关闭缓冲、缓存及 gzip；执行 `nginx -t` 后平滑 reload，不改其他路由、端口或证书。渠道分流只使用现有源库只读权限，不新建表、角色或定时任务。
+v0.4.2 已将鹈鹕测试改为流式 SVG，生成最多 300 秒。只有尚未配好该功能的旧实例才需另行核对 [Nginx 示例](../nginx.conf.example)中 `/cockpit/api/intelligence/test` 的精确 location：读取超时 360 秒，关闭缓冲、缓存及 gzip。v0.4.3 升级本身不要求改动 Nginx，不应覆盖现有路由、端口或证书。渠道分流继续使用现有源库只读权限，不新建表、角色或定时任务。
 
 插件从 v0.4.1 起可独立连接 New API，余额不再依赖 Cockpit MCP；已有连接和刷新等待时间保留。KEY 改组继续使用官方 PUT。
 
@@ -123,7 +127,7 @@ docker compose -f compose.release.yml logs --tail=100 statistics image-studio
 
 `MONITOR_DATABASE_URL` 必须指向独立监控库。
 网页池入口在启动前应用 `migrations/` 中尚未执行的脚本，按编号顺序处理；图片池不执行迁移。
-`schema_migrations` 保存文件名，已登记的脚本不会重复执行；当前结构由 `001`～`011` 构建。
+`schema_migrations` 保存文件名，已登记的脚本不会重复执行；当前开发代码的结构由 `001`～`012` 构建；正式版本以配套安装包的 `install/migrations.txt` 为准。
 迁移在事务和数据库锁内运行，失败回滚且不登记版本，也不启动网页进程。
 
 正常页面/API 请求不执行 DDL，仅在必要时检查迁移版本。

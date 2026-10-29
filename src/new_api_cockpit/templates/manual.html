@@ -26,37 +26,40 @@
         <label for="manual-model">可用模型<select id="manual-model" disabled><option value="">请先选择可用令牌</option></select></label>
         <div class="manual-refresh"><button id="manual-refresh-tokens" type="button">刷新令牌</button><button id="manual-refresh-models" type="button" disabled>读取模型</button></div>
       </div>
-      <dl id="manual-token-details" class="manual-token-details" hidden></dl>
+      <details id="manual-token-info" class="manual-token-info" hidden><summary>令牌详情</summary><dl id="manual-token-details" class="manual-token-details" hidden></dl></details>
       <p id="manual-load-status" role="status" aria-live="polite">正在读取本人令牌…</p>
       <p id="manual-empty" class="manual-notice" hidden>没有可用令牌？请先到 <a href="/keys">New API 的令牌管理</a> 创建或启用自己的令牌，再回来刷新。</p>
       <p class="hint"><a href="#manual-basics-title">接入配置说明</a> · <a href="/cockpit/tools#manual-mcp-title">查询本人余额和用量的 MCP</a></p>
     </section>
 
-    <section class="page-panel manual-basics" aria-labelledby="manual-basics-title">
-      <h2 id="manual-basics-title">接入配置说明</h2>
+    <details class="page-panel manual-basics">
+      <summary id="manual-basics-title">接入配置说明</summary>
       <dl class="manual-definitions">
         <div><dt>模型调用 KEY</dt><dd>从上方“本人令牌”选择，通常以 sk- 开头。用来配置下方客户端并调用模型，消费记在你的账户。页面只显示占位符，明确点击含 KEY 复制按钮才读取该令牌。</dd></div>
         <div><dt>用户 API 访问令牌（PAT）</dt><dd>从 <a href="/security">New API 的“安全与访问”</a> 创建，供<a href="/cockpit/tools">账户 MCP 和 VS Code 插件</a>查询本人账户或管理 KEY。它不是模型 KEY；新式 PAT 通常以 nap_ 开头。不要互换，也不要把管理权限交给客户端。</dd></div>
         <div><dt>服务地址</dt><dd>各客户端的地址格式不同：有的填站点根地址，有的需要 /v1，有的要填完整接口路径。示例按当前站点的地址和端口生成，按对应步骤填写即可，无需再补 /v1。</dd></div>
         <div><dt>接口协议</dt><dd>本站提供 Chat、Responses 和 Anthropic Messages 接口。按教程选择客户端支持的协议，模型也须支持该接口，不能只凭模型名称判断。读取模型列表不会生成内容；连接测试、任务和对话按实际用量计费。</dd></div>
-        <div><dt>配置文件</dt><dd>修改前保留备份，只合并需要的字段，不覆盖整份配置。文件名不要多出 .txt 后缀；JSON 不支持注释和尾随逗号，TOML 顶层字段放在表头之前。保存后完全退出客户端再打开。</dd></div>
+        <div><dt>配置文件</dt><dd>修改前保留备份，同名连接或模型项替换，不重复追加，其他设置保留。文件名不要多出 .txt 后缀；严格 JSON 不加注释或尾随逗号，VS Code 用户设置的 JSONC 注释可保留；TOML 顶层字段放在表头之前。保存后的重载方式按对应步骤操作。</dd></div>
       </dl>
-    </section>
+    </details>
 
     <section class="page-panel" aria-labelledby="manual-tools-title">
-      <div class="page-heading"><h2 id="manual-tools-title">选择你要使用的工具</h2></div>
-      <div id="manual-tools" class="manual-tools" role="group" aria-label="工具教程"></div>
+      <label id="manual-tools-title" for="manual-tools">选择你要使用的工具</label>
+      <select id="manual-tools" class="manual-tool-select" aria-describedby="manual-tool-summary"></select>
+      <p id="manual-tool-summary" class="hint"></p>
       <p id="manual-guides-status" role="status" aria-live="polite"></p>
     </section>
 
     <section class="page-panel manual-guide" aria-labelledby="manual-guide-title">
       <div class="page-heading"><div><h2 id="manual-guide-title">配置教程</h2><p id="manual-guide-description" class="hint"></p></div></div>
       <div class="manual-guide-controls">
-        <label for="manual-platform">我的系统<select id="manual-platform"><option value="posix">macOS / Linux（POSIX）</option><option value="powershell">Windows（PowerShell）</option></select></label>
+        <label id="manual-variant-control" for="manual-variant" hidden>接入方式<select id="manual-variant"></select></label>
+        <label for="manual-platform">我的系统<select id="manual-platform"><option value="macos">macOS</option><option value="windows">Windows（PowerShell）</option><option value="linux">Linux / WSL</option></select></label>
         <label id="manual-target-control" for="manual-target" hidden>CC Switch 目标客户端<select id="manual-target"><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select></label>
         <label for="manual-protocol"><span id="manual-protocol-label">客户端协议</span><select id="manual-protocol" disabled><option value="chat">OpenAI Chat Completions（/v1/chat/completions）</option><option value="responses">OpenAI Responses（/v1/responses）</option><option value="anthropic">Anthropic Messages（/v1/messages）</option></select></label>
       </div>
-      <p id="manual-protocol-help" class="warning" hidden></p>
+      <p id="manual-platform-help" class="hint"></p>
+      <p id="manual-protocol-help" class="hint"></p>
 
       <ol id="manual-steps" class="manual-steps" aria-label="配置步骤"></ol>
       <section class="manual-extra" aria-labelledby="manual-notes-title"><h3 id="manual-notes-title">使用前留意</h3><ul id="manual-notes"></ul></section>

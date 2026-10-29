@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   {% include "partials/auth.html" %}
   <script defer src="{{ url_for('static', filename='presets.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='report-currency.js') }}"></script>
   <script defer src="{{ url_for('static', filename='money-tooltip.js') }}"></script>
   <script defer src="{{ url_for('static', filename='scopes.js') }}"></script>
   <script defer src="{{ url_for('static', filename='channel-flow.js') }}"></script>
@@ -43,7 +44,7 @@
       <button type="submit" id="submit">{{ icon('search') }}查询</button>
     </form>
     <div class="presets" aria-label="快捷时间范围">
-      <button type="button" data-preset="previous-three-months">前三个月</button>
+      <button type="button" data-preset="three-months">三个月</button>
       <button type="button" data-preset="month">上个月</button>
       <button type="button" data-preset="current-month">本月</button>
       <button type="button" data-preset="30">近30天</button>
@@ -90,7 +91,12 @@
       <div class="detail-filter"><span class="sr-only">分组</span><details id="group-filter" class="filter-picker">
         <summary id="group-summary">全部分组</summary><div id="group-options" class="filter-menu" aria-label="筛选分组"></div>
       </details></div>
-      <span class="price-unit">价格单位：元 / 百万 Token</span>
+      <div class="detail-currency-controls">
+        <div class="detail-mode" role="group" aria-label="明细表币种">
+          <button type="button" data-detail-currency="CNY" aria-pressed="true">RMB</button><button type="button" data-detail-currency="USD" aria-pressed="false">USD</button>
+        </div>
+        <span id="usage-price-unit" class="price-unit">价格：RMB / 百万 Token；金额：RMB</span>
+      </div>
       <details class="column-picker"><summary>显示列</summary><div class="column-menu" aria-label="选择明细表显示列">
         <label><input type="checkbox" data-column-toggle="username" checked>用户名</label>
         <label><input type="checkbox" data-column-toggle="request_count" checked>消费请求数</label>
@@ -113,6 +119,7 @@
         <button id="show-all-columns" type="button">全部显示</button>
       </div></details>
     </div></div>
+      <p class="usage-currency-note"><span id="usage-exchange-rate" role="status"></span> · 切换仅影响明细表，区间汇总、排名和 Excel 固定为 RMB。</p>
       <div class="table-wrap" tabindex="0" aria-label="用户模型用量表，可横向滚动">
         <table id="usage-table"><thead><tr><th data-column="username">用户名</th><th data-token-column hidden>令牌</th><th data-column="request_count">消费请求数</th><th data-column="model_name">模型</th><th data-column="tier_name">档位</th><th data-column="total_tokens">总 Token</th><th data-column="input_tokens">输入 Token</th><th data-column="output_tokens">输出 Token</th><th data-column="cache_read_tokens">缓存读取 Token</th><th data-column="cache_write_tokens">缓存写入 Token</th><th data-column="group_ratio">倍率</th><th data-column="input_price">输入价格</th><th data-column="output_price">输出价格</th><th data-column="cache_price">缓存读价格</th><th data-column="write_price">缓存写价格</th><th data-column="amount">消费金额</th><th data-column="cache_hit_rate" hidden>缓存命中率</th><th data-column="amount_per_million" hidden>每百万 Token 金额</th><th data-column="failure_requests" hidden>失败请求</th><th data-column="logs">日志</th></tr></thead><tbody id="rows"></tbody><tfoot id="totals"></tfoot></table>
       </div>
@@ -145,7 +152,7 @@
     <section id="settings-panel-notification" role="tabpanel" aria-labelledby="settings-tab-notification" hidden>
       <form id="channel-form">
         <p>所有账本共用通知配置。各渠道独立启停，可以同时启用；下方开关只控制当前渠道。</p>
-        <label>渠道<select id="channel-type"><option value="feishu_app">飞书企业自建应用</option><option value="dingtalk_webhook">钉钉自定义 Webhook 机器人</option><option value="email">邮件通知</option></select></label>
+        <label>渠道<select id="channel-type"><option value="feishu_app">飞书企业自建应用</option><option value="dingtalk_webhook">钉钉自定义 Webhook 机器人</option><option value="wecom_webhook">企业微信群机器人</option><option value="email">邮件通知</option></select></label>
         <label class="balance-toggle"><input id="channel-enabled" type="checkbox">启用渠道通知</label>
         <div id="channel-feishu-fields" class="channel-provider-fields">
           <label>App ID<input id="channel-app-id" type="text" maxlength="512" autocomplete="off"></label>
@@ -157,6 +164,13 @@
           <label>Webhook URL<input id="channel-webhook-url" type="password" maxlength="2048" autocomplete="new-password"></label>
           <label class="balance-toggle"><input id="channel-signing-enabled" type="checkbox">启用加签</label>
           <label id="channel-signing-secret-field">加签密钥<input id="channel-signing-secret" type="password" maxlength="512" autocomplete="new-password"></label>
+        </div>
+        <div id="channel-wecom-fields" class="channel-provider-fields" hidden>
+          <label>Webhook URL<input id="channel-wecom-webhook-url" type="password" maxlength="2048" autocomplete="new-password"></label>
+          <p>在目标企业微信群的“消息推送”中创建机器人，粘贴完整 Webhook 地址。保存后留空可沿用原地址。</p>
+          <label>@成员 UserID（可选）<textarea id="channel-wecom-mentioned-list" rows="2" maxlength="7000" placeholder="每行一个 UserID，也可用逗号分隔；@all 提醒所有人"></textarea></label>
+          <label>@成员手机号（可选）<textarea id="channel-wecom-mentioned-mobile-list" rows="2" maxlength="3000" placeholder="每行一个手机号，也可用逗号分隔"></textarea></label>
+          <p>不填写则不 @；UserID 不是成员昵称，手机号须与群成员关联。每类最多 100 项。</p>
         </div>
         <div id="channel-email-fields" class="channel-provider-fields" hidden>
           <label>SMTP 服务器<input id="channel-email-host" type="text" maxlength="253" placeholder="smtp.example.com" autocomplete="off"></label>

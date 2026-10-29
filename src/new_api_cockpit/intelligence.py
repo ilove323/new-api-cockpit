@@ -541,6 +541,19 @@ def extract_html(text):
         raise IntelligenceError("生成内容超过预览大小限制。")
     text = text.strip()
     fence = re.fullmatch(r"```(?:html|svg|xml)?\s*\n(.*?)\n```", text, re.S | re.I)
+    if fence is None:
+        # Models often introduce the drawing before its Markdown code block.
+        # Extract one closed document block, not arbitrary <svg> substrings or
+        # an ambiguous choice between multiple drawings. Keep source unchanged.
+        blocks = list(
+            re.finditer(
+                r"^[ \t]*```(?:html|svg|xml)?[ \t]*\r?\n(.*?)\r?\n[ \t]*```[ \t]*\r?$",
+                text,
+                re.S | re.I | re.M,
+            )
+        )
+        if len(blocks) == 1:
+            fence = blocks[0]
     html = fence[1].strip() if fence else text
     check = DocumentCheck()
     check.feed(html)
@@ -564,7 +577,7 @@ def extract_html(text):
                 return document
         except ElementTree.ParseError:
             pass
-    raise IntelligenceError("模型没有返回完整 SVG；可切换源码查看原始输出。")
+    raise IntelligenceError("未能从模型输出中提取完整 SVG；可切换源码查看原始输出。")
 
 
 @cache

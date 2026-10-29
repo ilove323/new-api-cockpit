@@ -44,7 +44,7 @@ class Element {
 }
 async function harness({clipboard = 'promise', handler, guides: suppliedGuides, missingModule = false, actualGuides = false, build} = {}) {
   const elements = new Map([...html.matchAll(/<([a-z][\w-]*)[^>]*\bid="([^"]+)"/g)].map(match => [match[2], new Element(match[1])]));
-  elements.set('logout', new Element('button')); elements.get('manual-platform').value = 'posix';
+  elements.set('logout', new Element('button')); elements.get('manual-platform').value = 'macos';
   const meta = {content: 'fixture-session-a'}, events = {}, calls = [], writes = [], buildCalls = [], timers = new Map();
   const channels = [], observers = [], clipboardCalls = [], forbidden = [];
   let timerID = 0;
@@ -82,7 +82,7 @@ async function harness({clipboard = 'promise', handler, guides: suppliedGuides, 
     async fire(id, event = 'click', value) { if (value !== undefined) this.el(id).value = value; await this.el(id).fire(event); await settle(); },
     async choose() { await this.fire('token', 'change', '1'); await this.fire('model', 'change', 'model-one'); },
     async event(name, detail = {}) { for (const fn of events[name] || []) await fn(detail); await settle(); },
-    async tool(index) { this.exampleIndex = 0; await this.el('tools').children[index].fire('click'); await settle(); },
+    async tool(index) { this.exampleIndex = 0; this.el('tools').value = this.guides[index].id; await this.el('tools').fire('change'); await settle(); },
     dom() {
       const walk = node => [node.textContent, JSON.stringify(node.attrs), node.value, node.href, ...node.children.flatMap(walk)];
       return [...elements.values()].flatMap(walk).filter(Boolean).join('\n');
@@ -122,14 +122,14 @@ async function harness({clipboard = 'promise', handler, guides: suppliedGuides, 
   if (!missingModule) ctx.CockpitManualGuides = {guides, build(id, options) {
     buildCalls.push({id, ...options});
     if (build) return build(id, options);
-    return [{title: '设置配置', language: options.platform === 'posix' ? 'sh' : 'powershell', content: JSON.stringify({id, ...options})},
+    return [{title: '设置配置', language: options.platform === 'windows' ? 'powershell' : 'sh', content: JSON.stringify({id, ...options})},
       {title: '配置文件', language: 'json', content: JSON.stringify({second: true, ...options})}];
   }};
   if (actualGuides) {
     vm.runInNewContext(fs.readFileSync(path.join(root, 'static/manual-guides.js'), 'utf8'), ctx, {filename: 'manual-guides.js'});
     const actual = ctx.CockpitManualGuides;
     h.guides = actual.guides;
-    ctx.CockpitManualGuides = {guides: actual.guides, buildMcp: actual.buildMcp, build(id, options) {
+    ctx.CockpitManualGuides = {guides: actual.guides, resolve: actual.resolve, buildMcp: actual.buildMcp, build(id, options) {
       buildCalls.push({id, ...options}); return actual.build(id, options);
     }};
   }
@@ -219,10 +219,10 @@ test('ClipboardItem promise starts writing in the click before the key response 
 });
 test('system, protocol and the clicked step are captured by the configuration builder', async () => {
   const h = await harness(); await h.choose();
-  await h.fire('platform', 'change', 'powershell'); await h.fire('protocol', 'change', 'anthropic');
+  await h.fire('platform', 'change', 'windows'); await h.fire('protocol', 'change', 'anthropic');
   h.exampleIndex = 1; await h.fire('copy-key');
   const built = JSON.parse(h.writes[0]);
-  assert.equal(built.second, true); assert.equal(built.platform, 'powershell'); assert.equal(built.protocol, 'anthropic');
+  assert.equal(built.second, true); assert.equal(built.platform, 'windows'); assert.equal(built.protocol, 'anthropic');
   assert.equal(built.origin, 'https://models.example.test'); assert.equal(built.model, 'model-one');
   assert.match(h.el('code-language').textContent, /json/);
 });
@@ -231,7 +231,7 @@ test('all three protocols stay visible before choosing a model and with missing 
   assert.deepEqual(h.el('protocol').children.map(item => item.value), ['chat', 'responses', 'anthropic']);
   assert.equal(h.el('load-status').textContent, ''); assert.equal(h.el('load-status').hidden, true);
   await h.fire('model', 'change', 'name-looks-like-anthropic');
-  assert.equal(h.el('protocol-help').textContent, ''); assert.equal(h.el('protocol-help').hidden, true);
+  assert.ok(h.el('protocol-help').textContent); assert.equal(h.el('protocol-help').hidden, false);
   assert.ok(h.el('protocol').children.every(item => !item.disabled));
   assert.equal(h.el('protocol').children.length, 3); assert.equal(h.el('protocol').value, 'chat');
   await h.fire('protocol', 'change', 'responses'); assert.equal(h.buildCalls.at(-1).protocol, 'responses');
@@ -250,21 +250,21 @@ test('contradictory model metadata does not hide the tool protocol or block its 
   assert.deepEqual(h.el('protocol').children.map(item => [item.value, item.disabled]),
     [['chat', true], ['responses', true], ['anthropic', false]]);
   assert.equal(h.el('protocol').value, 'anthropic'); assert.equal(h.el('protocol').disabled, false);
-  assert.equal(h.el('protocol-help').textContent, ''); assert.equal(h.el('protocol-help').hidden, true);
+  assert.ok(h.el('protocol-help').textContent); assert.equal(h.el('protocol-help').hidden, false);
   assert.equal(h.el('copy-key').disabled, false);
   assert.equal(h.el('preview').hidden, false);
   assert.ok(!source.includes('没有共同声明的协议'));
   await h.fire('protocol', 'change', 'responses');
   assert.equal(h.el('protocol').value, 'anthropic'); assert.equal(h.buildCalls.at(-1).protocol, 'anthropic');
 });
-test('tool cards omit obsolete support badges and allow configured tools to copy', async () => {
+test('tool dropdown omits obsolete support badges and allow configured tools to copy', async () => {
   const h = await harness(); await h.choose(); await h.tool(7);
   assert.equal(h.el('guide-badge'), undefined);
   assert.ok(!css.includes('.manual-badge'));
-  assert.ok(h.el('tools').children.every(card => card.children.length === 3));
+  assert.equal(h.el('tools').tagName, 'SELECT'); assert.ok(h.el('tools').children.every(option => option.tagName === 'OPTION'));
   assert.ok(!h.dom().includes('文档已核对')); assert.ok(!h.dom().includes('有限支持'));
   assert.equal(h.el('copy-key').disabled, false);
-  assert.equal(h.el('protocol-help').textContent, ''); assert.equal(h.el('protocol-help').hidden, true);
+  assert.ok(h.el('protocol-help').textContent); assert.equal(h.el('protocol-help').hidden, false);
   await h.tool(8);
   assert.equal(h.el('copy-key').disabled, false);
   assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 0);
@@ -298,7 +298,7 @@ for (const transition of ['token', 'model', 'protocol', 'tool', 'platform', 'tar
     else if (transition === 'model') await h.fire('model', 'change', 'model-two');
     else if (transition === 'protocol') await h.fire('protocol', 'change', 'responses');
     else if (transition === 'tool') await h.tool(1);
-    else if (transition === 'platform') await h.fire('platform', 'change', 'powershell');
+    else if (transition === 'platform') await h.fire('platform', 'change', 'windows');
     else if (transition === 'target') await h.fire('target', 'change', 'codex');
     else if (transition === 'auth') await h.event('cockpit-auth-changed');
     else if (transition === 'logout') await h.elements.get('logout').fire('click');
@@ -547,7 +547,7 @@ test('CC Switch target choice updates routing and model launch without fetching 
   await h.fire('protocol', 'change', 'responses');
   assert.match(h.el('code').textContent, /Direct/);
   h.exampleIndex = 1;
-  assert.equal(h.el('copy-key-label').textContent, '复制配置');
+  assert.equal(h.el('copy-key-label').textContent, '复制命令');
   assert.match(h.el('code').textContent, /^codex --model='model-one'$/);
   await h.fire('copy-key');
   assert.equal(h.calls.filter(call => call.url.endsWith('/key')).length, 0);
@@ -606,15 +606,15 @@ test('missing client protocols disables preview and copy without guessing chat',
   assert.equal(h.el('copy-key').disabled, true);
   assert.equal(h.el('preview').hidden, true); assert.match(h.el('protocol-help').textContent, /协议配置缺失/);
 });
-test('real content module: twelve cards, every official source, both platforms and client protocols', async () => {
+test('real content module: fifteen options, every official source, three systems and client protocols', async () => {
   const h = await harness({actualGuides: true}); await h.choose();
-  assert.equal(h.guides.length, 12); assert.equal(h.el('tools').children.length, 12);
+  assert.equal(h.guides.length, 15); assert.equal(h.el('tools').children.length, 15);
   for (const [index, item] of h.guides.entries()) {
     await h.tool(index);
     assert.equal(h.el('sources').children.length, item.sources.length, `${item.id}: every official source must pass the whitelist`);
     assert.deepEqual(h.el('sources').children.map(row => row.children[0].href), Array.from(item.sources, value => value.url));
     for (const row of h.el('sources').children) assert.equal(row.children[0].rel, 'noopener noreferrer');
-    for (const platform of ['posix', 'powershell']) {
+    for (const platform of ['macos', 'windows', 'linux']) {
       await h.fire('platform', 'change', platform);
       assert.equal(h.el('copy-key').disabled, false, `${item.id}/${platform}: compatible configuration`);
       // Some blocks (e.g. Codex TOML) only reference the environment; the
@@ -638,4 +638,36 @@ test('every manual color variable is defined by the actual shared ui stylesheet'
 test('manual icons exist in the shared local sprite', () => {
   const sprite = fs.readFileSync(path.join(root, 'static/icons.svg'), 'utf8');
   for (const [, name] of html.matchAll(/icon\('([^']+)'\)/g)) assert.ok(sprite.includes(`id="${name}"`), name);
+});
+
+test('field copy uses only its value; copying URL never reads KEY and copying KEY never renders it', async () => {
+  const h=await harness({actualGuides:true});await h.choose();
+  await h.tool(h.guides.findIndex(item=>item.id==='deepseek-harness'));await h.fire('protocol','change','chat');
+  const walk=node=>[node,...node.children.flatMap(walk)];
+  const rows=walk(h.example(1)).filter(node=>node.className==='manual-field-row');
+  const url=rows.find(row=>row.children[0].textContent==='基础 URL');
+  const key=rows.find(row=>row.children[0].textContent==='API 密钥');
+  const calls=h.calls.length;
+  await url.children[2].children[0].fire('click');await settle();
+  assert.equal(h.writes.at(-1),'https://models.example.test/v1');assert.equal(h.calls.length,calls);
+  await key.children[2].children[0].fire('click');await settle();
+  assert.equal(h.writes.at(-1),SECRET);assert.equal(h.calls.length,calls+1);assert.ok(!h.dom().includes(SECRET));
+});
+
+test('surface and OS selectors update real file paths and cancel pending credential copies', async () => {
+  const h=await harness({actualGuides:true});await h.choose();
+  assert.equal(h.el('variant-control').hidden,false);
+  await h.fire('variant','change','vscode');await h.fire('platform','change','windows');
+  assert.match(h.el('code-title').textContent,/%APPDATA%.*settings.json/);
+  assert.match(h.el('code').textContent,/claudeCode.environmentVariables/);
+  assert.ok(!h.dom().includes('在准备启动 Claude 的同一个终端执行'));
+  const pending=deferred();h.handle=async()=>({ok:true,status:200,json:()=>pending.promise});
+  const copying=h.el('copy-key').fire('click');await settle();
+  await h.fire('variant','change','cli');pending.resolve({key:SECRET});await copying;await settle();
+  assert.equal(h.writes.length,0);assert.ok(!h.dom().includes(SECRET));
+  await h.tool(h.guides.findIndex(item=>item.id==='codebuddy'));
+  assert.deepEqual(h.el('protocol').children.map(item=>[item.value,item.disabled]),[['chat',false],['responses',true],['anthropic',true]]);
+  await h.fire('variant','change','cli');await h.fire('protocol','change','responses');
+  assert.match(h.el('code').textContent,/openai-responses/);
+  await h.fire('protocol','change','anthropic');assert.match(h.el('code').textContent,/CODEBUDDY_BASE_URL/);
 });

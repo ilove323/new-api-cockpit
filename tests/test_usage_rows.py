@@ -179,7 +179,9 @@ class UsageRowsTest(unittest.TestCase):
             [Decimal(r["group_ratio"]) for r in body["rows"]], [Decimal(3), Decimal(4)]
         )
         self.assertEqual([r["cache_read_tokens"] for r in body["rows"]], [100, 100])
-        workbook = load_workbook(export_excel(rows, start, end))
+        workbook = load_workbook(
+            export_excel(rows, start, end, usd_cny_rate=Decimal("1"))
+        )
         sheet = workbook["用户模型用量"]
         for line, ratio in [(3, 3), (4, 4)]:
             self.assertEqual(sheet[f"F{line}"].value, 111)

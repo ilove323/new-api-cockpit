@@ -26,7 +26,25 @@ function number(n,digits=6){
 }
 // Presentation only: never round the source values used by calculations or tooltips.
 const moneyFormat = new Intl.NumberFormat('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-const tableMoney = n => n === null || n === undefined ? '—' : moneyFormat.format(Number(n));
+function tableMoney(n){
+  const value=window.CockpitReportCurrency.convert(n);
+  return value===null?'—':moneyFormat.format(value);
+}
+function rmbMoney(n){
+  const value=window.CockpitReportCurrency.convert(n,'CNY');
+  return value===null?'—':'¥ '+moneyFormat.format(value);
+}
+function updateDetailCurrency(){
+  const currency=window.CockpitReportCurrency;
+  document.querySelectorAll('[data-detail-currency]').forEach(button=>{
+    button.setAttribute('aria-pressed',String(button.dataset.detailCurrency===currency.currency));
+    button.disabled=button.dataset.detailCurrency==='CNY'&&currency.rate===null;
+  });
+  $('usage-price-unit').textContent=`价格：${currency.unit} / 百万 Token；金额：${currency.unit}`;
+  $('usage-exchange-rate').textContent=currency.rate===null?'站点汇率不可用；可查看 USD，RMB 导出不可用':
+    `1 USD = ${number(currency.rate,9)} RMB（${currency.source==='new_api_default'?'New API 默认汇率':'站点汇率'}）`;
+}
+
 function priceDisplay(row,key){
   return !(row.pricing_buckets||row.has_pricing_buckets)&&row.pricing_mode==='expression'&&!(row.price_tiers?.length||row.price_tier_count)?'无法拆分':tableMoney(row[key]);
 }
@@ -191,7 +209,7 @@ function sumRows(data) {
 }
 function renderSummary(data) {
   const total=sumRows(data);
-  $('amount').textContent='¥ '+number(total.amount,2);
+  $('amount').textContent=rmbMoney(total.amount);
   tokenFields.forEach(k=>$(k).textContent=number(total[k],0));
   const seconds=Number(snapshot.totals.duration_seconds);
   $('tpm').textContent=number(total.total_tokens===null?null:total.total_tokens*60/seconds,2);
@@ -327,6 +345,12 @@ document.querySelectorAll('[data-detail-mode]').forEach(button=>button.addEventL
   catch(error){if(ticket!==Scope.epoch)return;setDetailMode('summary');renderDetails();$('status').className='error';$('status').textContent=error.message;}
   finally{if(ticket===Scope.epoch)document.querySelectorAll('[data-detail-mode]').forEach(item=>item.disabled=false);}
 }));
+document.querySelectorAll('[data-detail-currency]').forEach(button=>button.addEventListener('click',()=>{
+  if(window.CockpitReportCurrency.select(button.dataset.detailCurrency)){
+    updateDetailCurrency();
+    if(snapshot)renderDetails();
+  }
+}));
 document.querySelectorAll('[data-model-mode]').forEach(button=>button.addEventListener('click',()=>{
   const mode=button.dataset.modelMode;
   if(mode===modelMode)return;
@@ -357,7 +381,7 @@ function renderRanking(data) {
     const row=document.createElement('div');row.className='bar-row';
     const label=document.createElement('span');label.className='bar-label';label.textContent=`${++rank}. ${model}`;label.title=model;
     const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.width=`${(amount||0)/max*100}%`;track.append(bar);
-    const val=document.createElement('span');val.className='bar-value';val.textContent=tokens?number(amount,0)+' Token':'¥ '+number(amount,2);row.append(label,track,val);$('chart').append(row);
+    const val=document.createElement('span');val.className='bar-value';val.textContent=tokens?number(amount,0)+' Token':rmbMoney(amount);row.append(label,track,val);$('chart').append(row);
   }
 }
 function rankingsForSelection(data,type){
@@ -399,7 +423,7 @@ async function query(event,range){
   try{
     const response=await Scope.request('/cockpit/api/statistics/usage?'+params+'&details=lazy');
     if(!response.ok){let msg='查询失败，请重试';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}
-    const result=await response.json();Scope.guard(ticket);snapshot=result;snapshotIncludesFailures=includeFailures;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
+    const result=await response.json();Scope.guard(ticket);snapshot=result;window.CockpitReportCurrency.configure(result.currency_display);updateDetailCurrency();snapshotIncludesFailures=includeFailures;tokenSnapshot=null;filteredSelectionSnapshot=null;tokenOptions=[];groupOptions=[];
     const userNames=[...new Set(snapshot.rows.map(r=>r.username))].sort();
     const displayNames=new Map(snapshot.rows.map(r=>[r.username,r.display_name]));
     populateFilter('user','全部用户',userNames,name=>displayNames.get(name)?`${name}（${displayNames.get(name)}）`:name);
@@ -433,7 +457,7 @@ document.querySelectorAll('[data-column-toggle]').forEach(input=>input.addEventL
 }));
 $('show-all-columns').addEventListener('click',()=>{document.querySelectorAll('[data-column-toggle]:not(:disabled)').forEach(input=>input.checked=true);return columnSelectionChanged();});
 $('export').addEventListener('click',async()=>{if(!snapshot)return;try{await window.CockpitAuth?.ensure();if(snapshot)window.location.assign(Scope.url('/cockpit/api/statistics/export?'+new URLSearchParams({start:snapshot.start,end:snapshot.end})));}catch(error){$('status').className='error';$('status').textContent=error.message;}});
-loadVisibleColumns();applyColumnVisibility();
+loadVisibleColumns();applyColumnVisibility();updateDetailCurrency();
 // Reset every ledger-dependent view before starting requests for the next ledger.
 window.addEventListener('scopechange',()=>{
   hideMoneyTooltip();

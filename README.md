@@ -45,7 +45,7 @@
 | 辅助工具 | `/cockpit/tools` | 从镜像内下载 VS Code 插件，设置账户与 KEY 管理、生成 Claude / Codex 草稿，配置本人账户 MCP |
 
 统计页按渠道标签区分上游账本，也有“全部”和“未分组”。每个账本单独设置预算、报警阈值和监控开关，
-共用飞书、钉钉和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
+共用飞书、钉钉、企业微信和邮件通知配置，各通知渠道可以独立启停、同时发送。邮件支持 SMTP、STARTTLS、SMTPS，
 可使用账号认证或匿名发信，配置方法见[通知渠道](docs/notifications.md)。费用按月、按渠道归档，查看时按渠道当前分组汇总。
 每天北京时间 10:00 检查余额，也可以手动检查。
 
@@ -71,7 +71,7 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 直接等待并显示结果，不保存测试历史；Cockpit 不设置输出 Token 上限，预览会按窗口缩放，也支持调整高度和全屏。
 调用正常计费，实际输出仍受 New API 和上游限制，详见[智力测试](docs/intelligence.md)。
 
-模型使用教程覆盖 Claude Code、Codex、WorkBuddy、Hermes、Claude App、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw 和 curl。
+模型使用教程覆盖 Claude Code、Codex、WorkBuddy、Hermes、Claude App、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw、Pi Agent、DeepSeek Harness、CodeBuddy 和 curl。
 地址取当前站点，按工具分别生成 Chat Completions、Responses 或 Anthropic Messages 配置；
 模型在客户端会话中选择，配置不固定默认模型；需要转换协议的 CC Switch 接入会列出本地路由设置。
 只查询本人令牌和模型，不改分组或额度，也不发起收费生成，详见[模型使用](docs/manual.md)。

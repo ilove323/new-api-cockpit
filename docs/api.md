@@ -237,6 +237,11 @@ curl --fail-with-body "$BASE_URL/cockpit/api/statistics/alert?scope_id=3" \
 
 ### 用量列表
 
+主接口增加 `currency_display`：`base_currency=USD`、`default_currency=CNY`、`usd_cny_rate`（十进制字符串，无效时 null）、`rate_source=USDExchangeRate|new_api_default`。读取与报表使用同一只读事务，复用已有 options 查询，无新增 New API 请求。没有保存汇率时按 New API 默认 7.3 处理；已保存的无效值不回退默认。
+
+各用量接口的 `amount` 和四类单价保留原始系统 USD 数值，不能仅凭旧的“元”标签认定已换成人民币。网页默认 RMB，切换仅影响明细展示；Excel 固定按站点汇率换算为 RMB，并注明汇率，不接受客户端指定 USD 导出。详见[统计口径](calculation.md)。
+
+
 公共参数：
 
 | 参数 | 类型 | 规则 |
@@ -249,7 +254,7 @@ curl --fail-with-body "$BASE_URL/cockpit/api/statistics/alert?scope_id=3" \
 日期结束边界包含当天最后一秒；有时分秒的 `end` 也包含该秒，单次最多 367 天。
 参数值经 URL 编码；接口不分页，较大区间应拆分查询。
 
-- `GET /cockpit/api/statistics/usage`：按用户、模型及请求发生时价格聚合，返回 `scope`、`start`、`end`、`rows`、`totals`、`rankings`、`updated_at`。
+- `GET /cockpit/api/statistics/usage`：按用户、模型及请求发生时价格聚合，返回 `scope`、`start`、`end`、`rows`、`totals`、`rankings`、`updated_at`、`currency_display`。
 - `GET /cockpit/api/statistics/usage/by-token`：额外按令牌 ID 分行，返回 `scope`、`start`、`end`、`rows`。
 - 上面两个接口可额外传单个 `user`、`model`，分别精确匹配用户名和模型名，不是模糊搜索或数组。
 - `GET /cockpit/api/statistics/usage/tokens`：返回该区间用到的 `token_id`、最近 `token_name` 选项；不是完整 KEY 或密钥列表。
@@ -398,7 +403,7 @@ curl --fail-with-body -X PUT "$BASE_URL/cockpit/api/statistics/balance/settings?
 ### 全局通知渠道
 
 `GET /cockpit/api/statistics/balance/channel?channel=email` 读取指定渠道。
-`channel` 可取 `feishu_app`、`dingtalk_webhook`、`email`，省略时默认为 `feishu_app`。
+`channel` 可取 `feishu_app`、`dingtalk_webhook`、`wecom_webhook`、`email`，省略时默认为 `feishu_app`。
 选择只读取配置。各渠道独立启停，可以同时启用；全体账本共用配置，不受 `scope_id` 影响。
 响应公共字段为 `version`、`enabled`、`channel`、`last_attempt_at`、`last_success_at`、`last_error`，均针对所选渠道。
 凭据仅返回是否已配置，不返回明文或密文。
@@ -411,11 +416,24 @@ curl --fail-with-body -X PUT "$BASE_URL/cockpit/api/statistics/balance/settings?
 |---|---|---|
 | feishu_app | `app_id`、`receive_id_type`（`chat_id` 或 `user_id`）、`receive_id`、`app_secret` | `secret_configured` |
 | dingtalk_webhook | `webhook_url`、`signing_enabled`（必填布尔值）、`signing_secret` | `webhook_configured`、`signing_secret_configured` |
+| wecom_webhook | `webhook_url`、`mentioned_list`、`mentioned_mobile_list` | `webhook_configured` |
 | email | 见下表 | `password_configured` |
 
 飞书字段单值最多 512 字符；钉钉 URL 最多 2048 字符，签名密钥最多 512 字符。
 凭据字段留空保持原值；飞书改变 App ID 不提供新 Secret 会清除旧 Secret。
 启用时必须通过提供方完整配置校验。成功返回所选渠道的新脱敏配置与版本号。
+
+企业微信只接受 `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…` 官方地址，URL 最多 2048 字符，留空保留。`mentioned_list` 是成员 UserID 数组（不是昵称，单项最多 64 个 ASCII 字符），`mentioned_mobile_list` 是手机号数组；每类最多 100 项、重复项去重，`@all` 提醒所有人。两个数组可省略，省略或空数组表示不 @。响应包含上述名单及 `webhook_configured`，不回显 Webhook。无应用 Secret 或加签参数，不调用模型、不新增 New API 请求。
+
+```json
+{
+  "version":1,"channel":"wecom_webhook","enabled":true,
+  "webhook_url":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<群机器人密钥>",
+  "mentioned_list":["ops_user"],"mentioned_mobile_list":[]
+}
+```
+
+保存后取得返回的新版本号，用 `{"channel":"wecom_webhook","version":2}` 测试已保存渠道。仅发送文本消息，不重定向、不自动重试；文本超过 2048 个 UTF-8 字节时拒绝发送，保留完整账务内容。
 
 邮件参数：
 

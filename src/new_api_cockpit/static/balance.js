@@ -3,6 +3,7 @@ let balanceData=null,balanceVersion=null;
 let channelVersion=null,channelDirty=false,channelBusy=false;
 let channelLoaded=null,channelRequest=0;
 const channelInputs=['channel-enabled','channel-app-id','channel-secret','channel-receive-type','channel-receive-id','channel-webhook-url','channel-signing-enabled','channel-signing-secret',
+  'channel-wecom-webhook-url','channel-wecom-mentioned-list','channel-wecom-mentioned-mobile-list',
   'channel-email-host','channel-email-port','channel-email-security','channel-email-auth-enabled','channel-email-username','channel-email-password','channel-email-from-address','channel-email-from-name','channel-email-recipients'];
 let historyPreview=null;
 const balanceMoney=value=>value===null||value===undefined?'—':'¥ '+number(value,2);
@@ -172,7 +173,7 @@ function channelButtons(){
   $('channel-test').disabled=channelBusy||channelVersion===null||channelDirty;
 }
 function channelFields(channel,receiveType){
-  for(const [name,id] of [['feishu_app','channel-feishu-fields'],['dingtalk_webhook','channel-dingtalk-fields'],['email','channel-email-fields']])$(id).hidden=channel!==name;
+  for(const [name,id] of [['feishu_app','channel-feishu-fields'],['dingtalk_webhook','channel-dingtalk-fields'],['wecom_webhook','channel-wecom-fields'],['email','channel-email-fields']])$(id).hidden=channel!==name;
   const options=[['chat_id','群聊（chat_id）'],['user_id','个人（user_id）']];
   $('channel-receive-type').replaceChildren(...options.map(([value,label])=>new Option(label,value)));
   if(options.some(([value])=>value===receiveType))$('channel-receive-type').value=receiveType;
@@ -192,6 +193,9 @@ function renderChannel(data){
   $('channel-signing-enabled').checked=Boolean(data.signing_enabled);$('channel-signing-secret').value='';
   $('channel-signing-secret').placeholder=data.signing_secret_configured?'已保存；留空保持不变':'未配置';
   $('channel-signing-secret-field').hidden=!$('channel-signing-enabled').checked;
+  $('channel-wecom-webhook-url').value='';$('channel-wecom-webhook-url').placeholder=data.channel==='wecom_webhook'&&data.webhook_configured?'已保存；留空保持不变':'未配置';
+  $('channel-wecom-mentioned-list').value=(data.mentioned_list||[]).join('\n');
+  $('channel-wecom-mentioned-mobile-list').value=(data.mentioned_mobile_list||[]).join('\n');
   $('channel-email-host').value=data.smtp_host||'';$('channel-email-port').value=data.smtp_port??587;
   $('channel-email-security').value=data.smtp_security||'starttls';
   $('channel-email-auth-enabled').checked=Boolean(data.auth_enabled);
@@ -230,6 +234,9 @@ $('channel-form').addEventListener('submit',async event=>{
     const body={version:channelVersion,enabled:$('channel-enabled').checked,channel:$('channel-type').value};
     if(body.channel==='dingtalk_webhook')Object.assign(body,{webhook_url:$('channel-webhook-url').value,
       signing_enabled:$('channel-signing-enabled').checked,signing_secret:$('channel-signing-secret').value});
+    else if(body.channel==='wecom_webhook')Object.assign(body,{webhook_url:$('channel-wecom-webhook-url').value,
+      mentioned_list:$('channel-wecom-mentioned-list').value.split(/[\n,;，；]+/).map(value=>value.trim()).filter(Boolean),
+      mentioned_mobile_list:$('channel-wecom-mentioned-mobile-list').value.split(/[\n,;，；]+/).map(value=>value.trim()).filter(Boolean)});
     else if(body.channel==='email')Object.assign(body,{smtp_host:$('channel-email-host').value,smtp_port:Number($('channel-email-port').value),
       smtp_security:$('channel-email-security').value,auth_enabled:$('channel-email-auth-enabled').checked,
       username:$('channel-email-username').value,password:$('channel-email-password').value,

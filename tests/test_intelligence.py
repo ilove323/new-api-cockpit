@@ -730,6 +730,52 @@ class IntelligenceTest(unittest.TestCase):
             ):
                 intel.extract_html(text)
 
+    def test_prose_around_one_closed_document_fence_does_not_hide_complete_svg(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600"><title>Pelican</title><circle r="10"/></svg>'
+        for language in ("svg", "SVG", "xml", ""):
+            for newline in ("\n", "\r\n"):
+                source = newline.join(
+                    [
+                        "I’ll create a standalone SVG with a pelican riding a bicycle.",
+                        "Save the following as `pelican-bicycle.svg`:",
+                        "",
+                        "```" + language,
+                        svg,
+                        "```",
+                        "",
+                        "You can open it in a browser.",
+                    ]
+                )
+                with self.subTest(language=language, newline=repr(newline)):
+                    html = intel.extract_html(source)
+                    self.assertIn(svg, html)
+                    self.assertNotIn("I’ll create", html)
+                    self.assertNotIn("```", html)
+                    self.assertIn("pelican-bicycle.svg", source)
+        self.assertEqual(
+            intel.extract_html(
+                "Here is the drawing:\n```html\n" + HTML + "\n```\nDone."
+            ),
+            HTML,
+        )
+
+    def test_prose_extraction_does_not_repair_truncation_or_choose_between_drawings(
+        self,
+    ):
+        for source in (
+            "Here is the SVG:\n```svg\n<svg>unfinished\n```",
+            "Here is the SVG:\n```svg\n<svg></svg>",
+            "Here is the SVG:\n```svg\n<svg/></svg>\n```",
+            'Drawing:\n```xml\n<!DOCTYPE svg [<!ENTITY x "expand">]><svg>&x;</svg>\n```',
+            "Two choices:\n```svg\n<svg/>\n```\nOr:\n```svg\n<svg/>\n```",
+            "Here is the SVG:\n```svg\n<svg/><script>1</script>\n```",
+        ):
+            with (
+                self.subTest(source=source),
+                self.assertRaises(intel.IntelligenceError),
+            ):
+                intel.extract_html(source)
+
     def test_original_svg_is_wrapped_without_rewriting_it_or_expanding_entities(self):
         svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text>鹈鹕</text></svg>'
         for source in (

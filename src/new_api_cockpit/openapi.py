@@ -47,6 +47,10 @@ def choice(*values):
 
 BOOL = {"type": "boolean"}
 MONEY = text("元；十进制字符串，API 不按表格的两位小数截断。", examples=["100.00"])
+REPORT_MONEY = text(
+    "原始 USD 账面金额；RMB 展示及导出按 currency_display 的站点汇率换算。",
+    examples=["1.25"],
+)
 AMOUNT = {
     **MONEY,
     "description": "每人金额；0 < 金额 <= 1000000000，须精确换算为整数 quota。",
@@ -56,7 +60,13 @@ NULL_COUNT = {"type": ["integer", "null"], "minimum": 0}
 TIME = text("ISO 8601 时间，含时区。", format="date-time")
 ID_LIST = array(integer(1), minItems=1, uniqueItems=True)
 GROUP_LIST = array(text(maxLength=256), minItems=1, maxItems=1000, uniqueItems=True)
-CHANNEL = choice("feishu_app", "dingtalk_webhook", "email")
+CHANNEL = choice("feishu_app", "dingtalk_webhook", "wecom_webhook", "email")
+WECOM_MEMBERS = array(
+    text(maxLength=64, pattern=r"^[A-Za-z0-9_.@-]{1,64}$"), maxItems=100
+)
+WECOM_MOBILES = array(
+    text(maxLength=21, pattern=r"^(?:\+?[0-9]{5,20}|@all)$"), maxItems=100
+)
 SCOPE = {
     "name": "scope_id",
     "in": "query",
@@ -187,7 +197,7 @@ SCHEMAS = {
                 )
             },
             **{
-                key: NULL_MONEY
+                key: {**REPORT_MONEY, "type": ["string", "null"]}
                 for key in (
                     "input_price",
                     "output_price",
@@ -200,8 +210,8 @@ SCHEMAS = {
                 "description": "请求日志记录的分组倍率；不同倍率分别成行。",
             },
             "amount": {
-                **MONEY,
-                "description": "日志实际消费，不以当前价格覆盖历史金额。",
+                **REPORT_MONEY,
+                "description": "日志实际消费的原始 USD 值，不以当前价格重计，也不随网页币种切换。",
             },
             "failure_count": integer(),
             "failure_codes": {"type": "object", "additionalProperties": integer()},
@@ -219,13 +229,22 @@ SCHEMAS = {
             "end": text(),
             "rows": array(ref("UsageRow")),
             "totals": obj(
-                {"amount": MONEY, "total_tokens": NULL_COUNT},
+                {"amount": REPORT_MONEY, "total_tokens": NULL_COUNT},
                 description="金额、各项 Token、请求数、用户/模型数、区间秒数及平均 TPM/RPM。",
             ),
             "rankings": obj(
                 description="model_amount、user_tokens、user_amount 排名。"
             ),
             "updated_at": TIME,
+            "currency_display": obj(
+                {
+                    "base_currency": {"const": "USD", "type": "string"},
+                    "default_currency": {"const": "CNY", "type": "string"},
+                    "usd_cny_rate": {"type": ["string", "null"]},
+                    "rate_source": choice("USDExchangeRate", "new_api_default"),
+                },
+                description="主用量接口与日志查询在同一源库快照读取汇率；网页默认 RMB、Excel 固定 RMB，原始 API 数值不转换。",
+            ),
         }
     ),
     "Settings": obj(
@@ -275,6 +294,8 @@ SCHEMAS = {
             "webhook_configured": BOOL,
             "signing_enabled": BOOL,
             "signing_secret_configured": BOOL,
+            "mentioned_list": WECOM_MEMBERS,
+            "mentioned_mobile_list": WECOM_MOBILES,
             "smtp_host": text(),
             "smtp_port": integer(1, maximum=65535),
             "smtp_security": choice("smtp", "starttls", "smtps"),
@@ -896,6 +917,21 @@ NOTIFICATION_BODY = {
         obj(
             {
                 **NOTICE_FIELDS,
+                "channel": {"const": "wecom_webhook", "type": "string"},
+                "webhook_url": text(
+                    "官方群机器人完整地址，留空沿用已保存地址。",
+                    writeOnly=True,
+                    format="password",
+                    maxLength=2048,
+                ),
+                "mentioned_list": WECOM_MEMBERS,
+                "mentioned_mobile_list": WECOM_MOBILES,
+            },
+            ("channel", "enabled", "version"),
+        ),
+        obj(
+            {
+                **NOTICE_FIELDS,
                 "channel": {"const": "email", "type": "string"},
                 "smtp_host": text(maxLength=253),
                 "smtp_port": integer(1, maximum=65535),
@@ -1157,7 +1193,7 @@ def document():
                             {
                                 "channel_id": integer(),
                                 "channel_name": text(),
-                                "amount": MONEY,
+                                "amount": REPORT_MONEY,
                                 "request_count": integer(),
                                 "user_count": integer(),
                                 "users": array(
@@ -1166,7 +1202,7 @@ def document():
                                             "user_id": {"type": ["integer", "null"]},
                                             "username": text(),
                                             "display_name": text(),
-                                            "amount": MONEY,
+                                            "amount": REPORT_MONEY,
                                             "request_count": integer(),
                                             "percentage": {
                                                 "type": ["string", "null"],
@@ -1213,7 +1249,7 @@ def document():
             "用量统计",
             text(format="binary"),
             params=[*DATES, SCOPE, *USER_MODEL],
-            description="返回 XLSX 附件；独立实时查询。不支持令牌/分组筛选、分令牌或失败次数导出。",
+            description="返回仅 RMB 的 XLSX 附件；独立实时查询，四类单价和所有金额按本次站点 USDExchangeRate 换算并注明汇率，不跟随网页 USD 切换。无效汇率返回 400。不支持令牌/分组筛选、分令牌或失败次数导出。",
         ),
         operation(
             "GET",

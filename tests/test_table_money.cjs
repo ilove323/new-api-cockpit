@@ -22,7 +22,7 @@ function harness({search='',preferences}={}){
   const columns=new Map(),headers=new Map(),controls=[];
   for(const match of html.matchAll(/<(input|th|button)\b([^>]*)>/g)){
     const attrs=Object.fromEntries([...match[2].matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]]));
-    if(!attrs['data-column-toggle']&&!attrs['data-column']&&!Object.keys(attrs).some(k=>/data-(detail-mode|model-mode|preset|ranking)/.test(k)))continue;
+    if(!attrs['data-column-toggle']&&!attrs['data-column']&&!Object.keys(attrs).some(k=>/data-(detail-mode|model-mode|detail-currency|preset|ranking)/.test(k)))continue;
     const el=attrs.id?get(attrs.id):new Element();el.tag=match[1];el.attrs=attrs;el.id=attrs.id||'';
     el.checked=/\bchecked\b/.test(match[2]);el.hidden=/\bhidden\b/.test(match[2]);
     for(const [key,value] of Object.entries(attrs))if(key.startsWith('data-'))el.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=value;
@@ -37,7 +37,7 @@ function harness({search='',preferences}={}){
     if(selector==='#usage-table .empty')return allCells().filter(el=>el.className==='empty');
     const filter=selector.match(/^#(\w+)-options input:checked$/);
     if(filter)return get(filter[1]+'-options').querySelectorAll('input:checked');
-    const control=selector.match(/^\[data-(detail-mode|model-mode|preset|ranking)\]$/);
+    const control=selector.match(/^\[data-(detail-mode|model-mode|detail-currency|preset|ranking)\]$/);
     if(control)return controls.filter(el=>Object.hasOwn(el.attrs,'data-'+control[1]));
     return [];
   };
@@ -49,7 +49,7 @@ function harness({search='',preferences}={}){
     if(params.get('include_failures')==='1')rows=[{...row,failure_count:3,failure_codes:{429:3}},{...row,user_id:2,username:'failure-only',model_name:'failed-model',request_count:0,amount:0,total_tokens:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,failure_count:1,failure_codes:{502:1}}];
     if(u.pathname.endsWith('/tokens'))rows=[{token_id:1,token_name:'key'}];
     if(u.pathname.endsWith('/groups'))rows=[{group_name:'default'}];
-    return {ok:true,json:async()=>({start:params.get('start'),end:params.get('end'),rows,totals:{duration_seconds:60},updated_at:'2026-10-04T12:00:00+08:00'})};
+    return {ok:true,json:async()=>({start:params.get('start'),end:params.get('end'),rows,currency_display:{usd_cny_rate:'1',rate_source:'USDExchangeRate'},totals:{duration_seconds:60},updated_at:'2026-10-04T12:00:00+08:00'})};
   };
   let respond=defaultResponse;
   const scope={epoch:1,current:{id:7},guard(epoch){if(epoch!==this.epoch)throw new Error('stale scope');},
@@ -63,6 +63,8 @@ function harness({search='',preferences}={}){
     rowMoneyFormula:row=>row.amount,totalMoneyFormula:(rows,amount)=>amount,
   };
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root,'report-currency.js'),'utf8'),context);
+  context.window.CockpitReportCurrency.configure({usd_cny_rate:'1',rate_source:'USDExchangeRate'});
   vm.runInContext(fs.readFileSync(path.join(root,'presets.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(root,'app.js'),'utf8'),context);
   return {elements,columns,headers,storage,requests,context,defaultResponse,respond:fn=>{respond=fn;},run:code=>vm.runInContext(code,context),select:(id,value)=>{
@@ -76,7 +78,7 @@ const row={user_id:1,username:'tester',model_name:'gpt',tier_name:'low',token_id
   input_price:2,output_price:10.123456,cache_price:0.0049,write_price:null,amount:1234.567891};
 test('calendar shortcut clicks fill Beijing bounds and query the current ledger once',async()=>{
   for(const [preset,start,end] of [
-    ['previous-three-months','2026-07-01T00:00:00','2026-09-30T23:59:59'],
+    ['three-months','2026-08-01T00:00:00','2026-10-27T02:20:54'],
     ['yesterday','2026-10-26T00:00:00','2026-10-26T23:59:59'],
   ]){
     const h=harness();h.run("Date.now=()=>Date.parse('2026-10-26T18:20:54.987Z')");
@@ -317,4 +319,36 @@ test('log time bounds preserve legacy dates, minute precision, and inclusive sin
     h.run(`snapshot=${JSON.stringify(range)}`);
     assert.equal(h.run(`newApiLogsURL(${JSON.stringify(row)})`),null);
   }
+});
+test('RMB default and USD toggle cover all monetary columns and totals without querying or mutating data',async()=>{
+  const h=harness(),currency=h.context.window.CockpitReportCurrency;
+  currency.configure({usd_cny_rate:'7.2',rate_source:'USDExchangeRate'});
+  h.run(`snapshot={rows:[${JSON.stringify(row)}]};updateDetailCurrency();renderDetails()`);
+  const read=column=>h.elements.get('rows').children[0].children.find(c=>c.dataset.column===column).textContent;
+  const controls=h.context.document.querySelectorAll('[data-detail-currency]');
+  assert.equal(currency.currency,'CNY');assert.equal(read('input_price'),'14.40');
+  assert.equal(read('output_price'),'72.89');assert.equal(read('cache_price'),'0.04');assert.equal(read('write_price'),'—');
+  assert.equal(read('amount'),'8,888.89');assert.equal(read('amount_per_million'),'8,888.89');
+  assert.equal(read('group_ratio'),'3.456789');assert.equal(read('total_tokens'),'1,000,000');
+  assert.match(h.elements.get('usage-exchange-rate').textContent,/1 USD = 7.2 RMB/);
+  const before=h.run('JSON.stringify(snapshot.rows)');
+  for(let i=0;i<4;i++){
+    await controls.find(b=>b.dataset.detailCurrency==='USD').fire('click');
+    assert.equal(read('input_price'),'2.00');assert.equal(read('amount'),'1,234.57');
+    assert.match(h.elements.get('usage-price-unit').textContent,/USD/);
+    await controls.find(b=>b.dataset.detailCurrency==='CNY').fire('click');
+    assert.equal(read('input_price'),'14.40');assert.equal(read('amount'),'8,888.89');
+  }
+  assert.equal(h.requests.length,0);
+  assert.equal(h.run('JSON.stringify(snapshot.rows)'),before);
+  assert.equal(h.elements.get('totals').children[0].children.find(c=>c.dataset.column==='amount').textContent,'8,888.89');
+});
+test('missing or invalid exchange rates never display fake RMB, while USD remains selectable',async()=>{
+  const h=harness(),currency=h.context.window.CockpitReportCurrency;
+  currency.configure({usd_cny_rate:null});h.run('updateDetailCurrency()');
+  assert.equal(h.run('tableMoney(2)'),'—');
+  const controls=h.context.document.querySelectorAll('[data-detail-currency]');
+  assert.equal(controls.find(b=>b.dataset.detailCurrency==='CNY').disabled,true);
+  await controls.find(b=>b.dataset.detailCurrency==='USD').fire('click');
+  assert.equal(h.run('tableMoney(2)'),'2.00');assert.match(h.elements.get('usage-exchange-rate').textContent,/汇率不可用/);
 });

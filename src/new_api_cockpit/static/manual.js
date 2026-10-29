@@ -20,7 +20,7 @@
     typeof guide?.id === 'string' && typeof guide.title === 'string') : [];
   const state = {
     active: true, generation: 0, tokens: [], models: [], tokenId: '', modelId: '',
-    guideId: guides[0]?.id || '', protocol: '', platform: 'posix', target: 'claude-code', snippet: 0,
+    guideId: guides[0]?.id || '', protocol: '', platform: 'macos', variant: guides[0]?.variants?.[0]?.id || '', target: 'claude-code', snippet: 0, field: -1,
     previews: [], loadingTokens: false, loadingModels: false, copying: false,
   };
   const controllers = new Set();
@@ -47,7 +47,9 @@
   };
   const token = () => state.tokens.find(item => String(item.id) === state.tokenId);
   const model = () => state.models.find(item => item.id === state.modelId);
-  const guide = () => guides.find(item => item.id === state.guideId);
+  const baseGuide = () => guides.find(item => item.id === state.guideId);
+  const guide = () => typeof module?.resolve === 'function' && baseGuide()
+    ? module.resolve(state.guideId, {platform: state.platform, variant: state.variant, protocol: state.protocol}) : baseGuide();
   const session = () => document.querySelector('meta[name="cockpit-session"]')?.content || '';
   const declared = value => Array.isArray(value) ? [...new Set(value.filter(item => Object.hasOwn(protocolNames, item)))] : [];
   const ready = () => state.active && token()?.usable === true && !!model() && !!guide()
@@ -67,13 +69,14 @@
   function capture() {
     return {generation: state.generation, session: session(), tokenId: state.tokenId,
       modelId: state.modelId, guideId: state.guideId, protocol: state.protocol,
-      platform: state.platform, target: state.target, snippet: state.snippet, origin: location.origin};
+      platform: state.platform, variant: state.variant, target: state.target, snippet: state.snippet, field: state.field, origin: location.origin};
   }
   function current(snapshot) {
     return state.active && snapshot.generation === state.generation && snapshot.session === session()
       && snapshot.tokenId === state.tokenId && snapshot.modelId === state.modelId
       && snapshot.guideId === state.guideId && snapshot.protocol === state.protocol
-      && snapshot.platform === state.platform && snapshot.snippet === state.snippet
+      && snapshot.platform === state.platform && snapshot.variant === state.variant && snapshot.snippet === state.snippet && snapshot.field === state.field
+      && $('tools').value === state.guideId && $('variant').value === state.variant
       && snapshot.target === state.target && $('target').value === state.target
       && $('token').value === state.tokenId && $('model').value === state.modelId
       && $('protocol').value === state.protocol && $('platform').value === state.platform;
@@ -170,19 +173,22 @@
     $('refresh-tokens').disabled = !state.active || state.loadingTokens;
     $('refresh-models').disabled = !state.active || token()?.usable !== true || state.loadingModels || state.loadingTokens;
     $('platform').disabled = !state.active;
+    $('variant').disabled = !state.active;
     $('target').disabled = !state.active;
     $('protocol').disabled = !state.active || !model() || !state.protocol;
     for (const example of examples.filter(Boolean)) {
       const block = state.previews[example.index];
       example.button.disabled = !ready() || !block || state.copying || !canClipboard();
-      example.button.textContent = state.copying && state.snippet === example.index ? '正在复制…'
-        : block?.containsKey === true ? '复制配置（含 KEY）' : '复制配置';
+      example.button.textContent = state.copying && state.snippet === example.index && state.field === -1 ? '正在复制…'
+        : block?.fields ? (block.containsKey ? '复制全部字段（含 KEY）' : '复制全部字段')
+          : (['bash', 'powershell'].includes(block?.language) ? '复制命令' : '复制配置') + (block?.containsKey === true ? '（含 KEY）' : '');
+      for (const field of example.fields || []) field.button.disabled = example.button.disabled;
       if (state.active && !canClipboard() && !example.status.textContent) {
         example.status.textContent = '安全剪贴板不可用，请使用 HTTPS 或本机安全页面并允许剪贴板权限。';
         example.status.hidden = false; example.status.classList.toggle('error', true);
       }
     }
-    for (const card of $('tools').children) card.disabled = !state.active;
+    $('tools').disabled = !state.active || !guides.length;
   }
   function emptyModels(label = '请先选择可用令牌') {
     state.models = [];
@@ -196,6 +202,7 @@
     const item = token();
     $('token-details').replaceChildren();
     $('token-details').hidden = !item;
+    $('token-info').hidden = !item;
     if (!item) return;
     const statuses = {1: '启用', 2: '禁用', 3: '已过期', 4: '额度用尽'};
     const expiry = Number(item.expired_time);
@@ -277,19 +284,8 @@
   }
   function renderTools() {
     $('tools').replaceChildren();
-    guides.forEach((item, index) => {
-      const card = element('button', undefined, 'manual-tool'); card.type = 'button';
-      card.setAttribute('aria-pressed', String(state.guideId === item.id));
-      card.setAttribute('aria-controls', 'manual-guide-title');
-      card.append(element('span', String(index + 1).padStart(2, '0'), 'manual-tool-mark'),
-        element('span', item.title, 'manual-tool-title'), element('span', item.description, 'manual-tool-description'));
-      card.addEventListener('click', () => {
-        if (!state.active || state.guideId === item.id) return;
-        invalidate(); state.guideId = item.id; state.snippet = 0;
-        renderTools(); renderGuide();
-      });
-      $('tools').append(card);
-    });
+    for (const item of guides) $('tools').append(option(item.id, item.title + (item.scope ? ' — ' + item.scope : '')));
+    $('tools').value = state.guideId;
     if (!guides.length || typeof module?.build !== 'function') message('guides-status', '教程内容暂未加载，暂时不能生成配置。请稍后重新加载页面。', true);
   }
   // HTTPS documentation sources only. GitHub remains repository-restricted.
@@ -297,9 +293,11 @@
     'learn.chatgpt.com', 'platform.openai.com', 'developers.openai.com',
     'code.claude.com', 'platform.claude.com', 'cursor.com', 'forum.cursor.com',
     'docs.trae.cn', 'docs.qoder.com', 'docs.openclaw.ai',
-    'workbuddy.cn', 'developers.cloudflare.com',
+    'workbuddy.cn', 'codebuddy.ai', 'codebuddy.cn', 'docs.cloudbase.net',
+    'claude.com', 'hermes-agent.nousresearch.com', 'pi.dev', 'chatboxai.app',
+    'curl.se', 'qoder.com', 'developers.cloudflare.com',
   ]);
-  const githubSources = /^\/(?:farion1231\/cc-switch|chatboxai\/chatbox|openai\/codex|anthropics\/claude-code|NousResearch\/hermes-agent)(?:\/|$)/i;
+  const githubSources = /^\/(?:farion1231\/cc-switch|chatboxai\/chatbox|openai\/codex|anthropics\/claude-code|NousResearch\/hermes-agent|earendil-works\/pi|deepseek-ai\/deepseek-harness)(?:\/|$)/i;
   function sourceURL(value) {
     if (typeof value !== 'string') return '';
     try {
@@ -312,9 +310,14 @@
   function blocks(snapshot, key) {
     if (typeof module?.build !== 'function') throw new Error('配置生成器暂不可用。');
     const result = module.build(snapshot.guideId, {origin: snapshot.origin, model: snapshot.modelId,
-      key, platform: snapshot.platform, target: snapshot.target, protocol: snapshot.protocol});
+      key, platform: snapshot.platform, variant: snapshot.variant, target: snapshot.target, protocol: snapshot.protocol});
     if (!Array.isArray(result) || result.some(item => typeof item?.content !== 'string')) throw new Error('配置内容格式不完整。');
-    return result.map(item => ({title: text(item.title) || '配置片段', language: text(item.language), content: item.content, containsKey: item.containsKey !== false}));
+    return result.map(item => {
+      if (item.fields !== undefined && (!Array.isArray(item.fields) || item.fields.some(field =>
+        typeof field?.label !== 'string' || typeof field.value !== 'string' || typeof field.containsKey !== 'boolean'))) throw new Error('配置字段格式不完整。');
+      return {title: text(item.title) || '配置片段', language: text(item.language), content: item.content,
+        containsKey: item.containsKey !== false, destination: text(item.destination), fields: item.fields};
+    });
   }
   function exampleView(index, help, error) {
     const block = state.previews[index];
@@ -324,7 +327,7 @@
     hint.classList.toggle('error', error);
     const preview = element('div', undefined, 'manual-preview'); preview.hidden = !block;
     const heading = element('div', undefined, 'manual-code-heading');
-    const title = element('span', block?.title), language = element('span', block?.language, 'hint');
+    const title = element('span', block?.destination ? '保存到：' + block.destination : block?.title), language = element('span', block?.language, 'hint');
     const pre = element('pre'), code = element('code', block?.content);
     pre.tabIndex = 0; pre.setAttribute('aria-label', block?.title || '仅含占位符的配置示例');
     heading.append(title, language); pre.append(code); preview.append(heading, pre);
@@ -333,7 +336,22 @@
     const status = element('p', '', 'manual-copy-status');
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.hidden = true;
     actions.append(button); container.append(hint, preview, actions, status);
-    const view = {index, container, button, status}; examples[index] = view;
+    const view = {index, container, button, status, fields: []}; examples[index] = view;
+    if (block?.fields) {
+      pre.hidden = true;
+      const list = element('dl', undefined, 'manual-field-list');
+      block.fields.forEach((field, fieldIndex) => {
+        const row = element('div', undefined, 'manual-field-row'), value = element('dd');
+        value.append(element('code', field.value));
+        const fieldButton = element('button', field.containsKey ? '复制 KEY' : '复制'); fieldButton.type = 'button';
+        fieldButton.setAttribute('aria-label', '复制 ' + field.label + (field.containsKey ? '（含 KEY）' : ''));
+        fieldButton.addEventListener('click', () => { if (examples[index] === view) return copy(index, fieldIndex); });
+        const action = element('dd'); action.append(fieldButton);
+        row.append(element('dt', field.label), value, action); list.append(row);
+        view.fields.push({button: fieldButton, index: fieldIndex});
+      });
+      preview.append(list);
+    }
     button.addEventListener('click', () => {
       // Detached buttons from an earlier render cannot start a new KEY read.
       if (examples[index] === view) return copy(index);
@@ -342,6 +360,12 @@
   }
   function renderGuide() {
     const item = guide(), selectedModel = model();
+    const variants = baseGuide()?.variants || [];
+    $('variant-control').hidden = variants.length < 2;
+    $('variant').replaceChildren(...variants.map(entry => option(entry.id, entry.title)));
+    $('variant').value = state.variant;
+    $('tool-summary').textContent = item ? item.description + ' 支持协议：' + declared(item.protocols).map(value => protocolNames[value].split('（')[0]).join(' / ') + '。' : '';
+    $('platform-help').textContent = item?.platformHint || '';
     $('guide-title').textContent = item?.title || '配置教程';
     $('guide-description').textContent = text(item?.description);
     $('target-control').hidden = item?.id !== 'cc-switch';
@@ -362,7 +386,9 @@
       node.disabled = !allowed.includes(value);
       $('protocol').append(node);
     }
-    $('protocol-help').textContent = item && !allowed.length ? '工具协议配置缺失，请重新加载页面。' : '';
+    $('protocol-help').textContent = item && !allowed.length ? '工具协议配置缺失，请重新加载页面。'
+      : item ? (allowed.length === 1 ? '此接入方式使用 ' + protocolNames[allowed[0]] + '，其他协议不能直接替换。'
+        : '当前接口：' + (protocolNames[state.protocol] || protocolNames[item.defaultProtocol]) + '。下面的地址和配置随选择更新；模型支持情况以本站渠道为准。') : '';
     $('protocol-help').hidden = !$('protocol-help').textContent;
     $('protocol').value = state.protocol;
     state.previews = [];
@@ -384,6 +410,10 @@
     for (const [index, step] of (Array.isArray(item?.steps) ? item.steps : []).entries()) {
       const row = element('li', undefined, 'manual-step'), body = element('div');
       body.append(element('h3', step.title), element('p', step.body));
+      if (index === 0) {
+        const href = sourceURL(item.installURL);
+        if (href) { const link = element('a', '打开官方安装说明'); link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; body.append(link); }
+      }
       for (const snippet of Array.isArray(step.snippets) ? step.snippets : []) {
         if (Number.isSafeInteger(snippet) && snippet >= 0 && !examples[snippet]) {
           body.append(exampleView(snippet, help, buildError));
@@ -436,11 +466,14 @@
     }
     op.assertCurrent();
   }
-  async function copy(index) {
+  async function copy(index, field = -1) {
     if (state.copying || !state.previews[index]) return;
     state.snippet = index;
+    state.field = field;
     if (!ready()) return;
-    const withKey = state.previews[state.snippet]?.containsKey !== false;
+    const preview = state.previews[index];
+    if (field !== -1 && !preview.fields?.[field]) return;
+    const withKey = (field === -1 ? preview : preview.fields[field]).containsKey !== false;
     if (!canClipboard()) { copyMessage('安全剪贴板不可用；本页不会展示真实 KEY 作为后备方案。', true); return; }
     state.copying = true; controls();
     copyMessage('正在复制…');
@@ -462,11 +495,12 @@
         key = data.key; data = undefined;
         built = blocks(snapshot, key);
         if (!built[snapshot.snippet]) throw new Error();
-        value = built[snapshot.snippet].content;
+        value = snapshot.field === -1 ? built[snapshot.snippet].content : built[snapshot.snippet].fields?.[snapshot.field]?.value;
+        if (typeof value !== 'string') throw new Error();
         op.assertCurrent();
         return value;
       } finally { key = ''; data = undefined; built = []; value = ''; }
-    })() : state.previews[snapshot.snippet].content;
+    })() : snapshot.field === -1 ? preview.content : preview.fields[field].value;
     // Some clipboard implementations reject before consuming the promised payload.
     if (withKey) content.catch(() => {});
     try {
@@ -488,7 +522,7 @@
   function shutdown(reason = '登录状态已变化，请重新加载页面后重新选择。') {
     invalidate(); state.active = false;
     state.tokens = []; state.tokenId = ''; state.guideId = '';
-    state.platform = 'posix'; $('platform').value = 'posix';
+    state.platform = 'macos'; $('platform').value = 'macos'; state.variant = '';
     $('token').replaceChildren(option('', '请重新加载页面')); $('token').value = '';
     emptyModels('请重新加载页面'); tokenDetails(); renderTools(); renderGuide();
     $('empty').hidden = true;
@@ -511,7 +545,16 @@
   });
   $('platform').addEventListener('change', () => {
     if (!state.active) return;
-    invalidate(); state.platform = $('platform').value === 'powershell' ? 'powershell' : 'posix'; renderGuide();
+    invalidate(); state.platform = ['macos', 'windows', 'linux'].includes($('platform').value) ? $('platform').value : 'macos'; renderGuide();
+  });
+  $('tools').addEventListener('change', () => {
+    if (!state.active) return;
+    invalidate(); state.guideId = $('tools').value; state.variant = baseGuide()?.variants?.[0]?.id || '';
+    state.snippet = 0; state.field = -1; renderGuide();
+  });
+  $('variant').addEventListener('change', () => {
+    if (!state.active || !baseGuide()?.variants?.some(item => item.id === $('variant').value)) return;
+    invalidate(); state.variant = $('variant').value; state.snippet = 0; state.field = -1; renderGuide();
   });
   $('target').addEventListener('change', () => {
     if (!state.active) return;
@@ -543,6 +586,7 @@
   }) : null;
   const sessionMeta = document.querySelector('meta[name="cockpit-session"]');
   if (sessionMeta) observer?.observe(sessionMeta, {attributes: true, attributeFilter: ['content']});
+  $('platform').value = state.platform;
   renderTools(); renderGuide();
   loadTokens();
 })();

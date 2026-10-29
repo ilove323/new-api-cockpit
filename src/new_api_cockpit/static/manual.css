@@ -1,5 +1,6 @@
 /* Model and account-tool guide layout; the shared shell remains in ui/navigation. */
 .manual-page { display: grid; gap: 16px; }
+.manual-page > * { min-width: 0; }
 .manual-page [id$="-title"] { scroll-margin-top: 80px; }
 .manual-page .page-heading { margin-bottom: 12px; }
 .manual-definitions { display: grid; gap: 12px; margin: 16px 0; }
@@ -22,13 +23,12 @@
 .manual-token-details > div { min-width: 80px; max-width: 100%; }
 .manual-token-details dt { font-size: 11px; color: var(--ui-muted-text); }
 .manual-token-details dd { margin: 4px 0 0; font-size: 12px; overflow-wrap: anywhere; }
-.manual-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.manual-tool { height: auto; min-height: 80px; padding: 14px; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 5px 10px; align-items: start; text-align: left; white-space: normal; border-radius: 16px; }
-.manual-tool[aria-pressed=true] { border-color: var(--ui-primary); background: var(--ui-accent); box-shadow: 0 0 0 1px var(--ui-primary); }
-.manual-tool-mark { grid-row: 1 / 3; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-background); color: var(--ui-primary-text); font-size: 12px; font-weight: 700; }
-.manual-tool-title { font-weight: 600; overflow-wrap: anywhere; }
-.manual-tool-description { color: var(--ui-muted-text); font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
-.manual-guide-controls { display: grid; grid-template-columns: minmax(180px, 260px) minmax(180px, 360px); gap: 12px; }
+.manual-token-info { margin-top: 12px; }
+.manual-token-info > summary { cursor: pointer; font-size: 13px; }
+.manual-tool-select { width: 100%; max-width: 100%; min-width: 0; min-height: 52px; margin-top: 8px; padding: 10px 42px 10px 14px; font-size: 15px; }
+#manual-tool-summary { margin: 10px 0 0; line-height: 1.8; overflow-wrap: anywhere; }
+.manual-basics > summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+.manual-guide-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
 .manual-notice { padding: 10px 12px; border: 1px solid color-mix(in oklch, var(--ui-warning) 25%, var(--ui-border)); border-radius: 13px; background: color-mix(in oklch, var(--ui-warning) 5%, white); font-size: 12px; line-height: 1.7; }
 .manual-steps { display: grid; gap: 12px; margin: 18px 0; padding: 0; list-style: none; }
 .manual-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; padding: 12px; border: 1px solid var(--ui-border); border-radius: 13px; }
@@ -42,6 +42,12 @@
 .manual-step-example .manual-copy-status { margin-top: 8px; font-size: 12px; }
 .manual-preview { border: 1px solid var(--ui-border); border-radius: 13px; overflow: hidden; }
 .manual-code-heading { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--ui-muted); font-size: 12px; overflow-wrap: anywhere; }
+.manual-code-heading > .hint { flex: none; white-space: nowrap; }
+.manual-field-list { margin: 0; padding: 0 12px; }
+.manual-field-row { display: grid; grid-template-columns: minmax(110px, .65fr) minmax(0, 1.5fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--ui-border); font-size: 13px; }
+.manual-field-row:last-child { border-bottom: 0; }
+.manual-field-row dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.manual-field-row button { min-height: 34px; }
 .manual-preview pre { margin: 0; padding: 16px; max-height: 440px; overflow: auto; font: 12px/1.8 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
 .manual-copy-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .manual-extra h3 { margin-bottom: 6px; }
@@ -56,12 +62,11 @@
   .manual-selection { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .manual-refresh { grid-column: 1 / -1; }
 }
-@media (max-width: 780px) {
-  .manual-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 540px) {
   .manual-definitions > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
-  .manual-selection, .manual-guide-controls, .manual-tools { grid-template-columns: minmax(0, 1fr); }
+  .manual-selection, .manual-guide-controls { grid-template-columns: minmax(0, 1fr); }
+  .manual-field-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+  .manual-field-row dt { grid-column: 1 / -1; }
   .manual-progress { gap: 8px 16px; }
   .manual-copy-actions > button { width: 100%; }
 }

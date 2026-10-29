@@ -131,13 +131,15 @@ class MigrationTest(unittest.TestCase):
                 self.verify(connect)
                 with connect() as conn:
                     # The new migration is safe to repeat without resetting saved channels.
-                    conn.execute(MIGRATIONS[-1].read_text())
+                    for migration in MIGRATIONS[10:]:
+                        conn.execute(migration.read_text())
                     rows = {
                         r["channel"]: r
                         for r in conn.execute("SELECT * FROM notification_settings")
                     }
                     self.assertEqual(
-                        set(rows), {"feishu_app", "dingtalk_webhook", "email"}
+                        set(rows),
+                        {"feishu_app", "dingtalk_webhook", "email", "wecom_webhook"},
                     )
                     for key, value in original.items():
                         if key != "id":
@@ -158,3 +160,60 @@ class MigrationTest(unittest.TestCase):
                         ).fetchone()["webhook_encrypted"],
                         "fixture-cipher-webhook",
                     )
+
+    def test_wecom_upgrade_retains_all_existing_settings_and_repeated_startup(self):
+        with isolated_schema() as connect:
+            self.apply_prefix(connect, 11)
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE notification_settings SET enabled=true,version=7,last_error='fixture error'"
+                )
+                conn.execute(
+                    "UPDATE notification_email_settings SET smtp_host='smtp.example.test',secret_encrypted='fixture-email-cipher'"
+                )
+                before = conn.execute(
+                    "SELECT * FROM notification_settings ORDER BY channel"
+                ).fetchall()
+            self.verify(connect)
+            with connect() as conn:
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT * FROM notification_settings WHERE channel!='wecom_webhook' ORDER BY channel"
+                    ).fetchall(),
+                    before,
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT secret_encrypted FROM notification_email_settings"
+                    ).fetchone()["secret_encrypted"],
+                    "fixture-email-cipher",
+                )
+                self.assertFalse(
+                    conn.execute(
+                        "SELECT enabled FROM notification_settings WHERE channel='wecom_webhook'"
+                    ).fetchone()["enabled"]
+                )
+                conn.execute(
+                    "UPDATE notification_wecom_webhook_settings SET webhook_encrypted='fixture-wecom-cipher',mentioned_list='[\"ops_user\"]'"
+                )
+                conn.execute(
+                    "UPDATE notification_settings SET enabled=true,version=3 WHERE channel='wecom_webhook'"
+                )
+                conn.execute(MIGRATIONS[-1].read_text())
+            self.verify(connect)
+            with connect() as conn:
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT webhook_encrypted,mentioned_list FROM notification_wecom_webhook_settings"
+                    ).fetchone(),
+                    {
+                        "webhook_encrypted": "fixture-wecom-cipher",
+                        "mentioned_list": ["ops_user"],
+                    },
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT version FROM notification_settings WHERE channel='wecom_webhook'"
+                    ).fetchone()["version"],
+                    3,
+                )

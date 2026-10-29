@@ -266,6 +266,32 @@ class DrawingTransportTest(unittest.TestCase):
 
 
 class DrawingEventsTest(unittest.TestCase):
+    def test_prose_and_fenced_svg_preview_without_changing_source_or_repeating_call(
+        self,
+    ):
+        source = (
+            "I’ll create the drawing. Save as `pelican.svg`:\n\n```svg\n"
+            + SVG
+            + "\n```"
+        )
+
+        def upstream_events():
+            for part in (source[:30], source[30:]):
+                yield {"type": "text", "text": part}
+            yield {"type": "finish", "reason": "stop"}
+
+        with prepared(upstream_events()) as generation:
+            events = list(intel.run_events(ACTOR, "fixture-pat", {"model": "model-a"}))
+        result = events[-1]["result"]
+        self.assertEqual(result["source"], source)
+        self.assertEqual(result["warning"], "")
+        self.assertIn(SVG, result["html"])
+        self.assertNotIn("I’ll create", result["html"])
+        self.assertEqual(
+            "".join(e["text"] for e in events if e["type"] == "text"), source
+        )
+        generation.assert_called_once()
+
     def test_http_disconnect_closes_generation_and_releases_the_user_lock(self):
         closed = []
 
