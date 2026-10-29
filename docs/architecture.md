@@ -84,7 +84,7 @@ chat：独立有限运行池（默认关闭）
 | `quota.py`、`quota_schedule.py`、`quota_schedule_executor.py` | 手工额度增减、定时规则与逐用户执行 |
 | `user_management.py` | 管理员用户/KEY 管理、受限 PAT 补建、批量改组；普通用户测试 KEY 的本人会话调用与审计 |
 | `operation_records.py` | 请求发送前审计、规则审计、统一操作记录及游标分页 |
-| `notifications.py`、`notification_channels/` | 全局分渠道开关、凭据加密、飞书/钉钉/邮件发送与独立结果 |
+| `notifications.py`、`notification_channels/` | 全局分渠道开关、凭据加密、飞书/钉钉/企业微信/邮件发送与独立结果 |
 | `static/`、`templates/` | 共享界面与各页面交互 |
 
 用量报表的 Token 和金额均来自日志，分组倍率使用请求当时的记录；不同价格或倍率分别成行。
@@ -112,7 +112,7 @@ New API 查询字段见[兼容范围](compatibility.md)。普通查询使用只�
 | `balance_settings`、`balance_settings_audit` | 预算、阈值、起始月份、开关、版本与审计 |
 | `balance_channel_archive_months`、`balance_month_channels`、`balance_months` | 归档月份、逐渠道原始费用与完整性校验总额 |
 | `balance_state`、`balance_alerts`、`balance_daily_runs` | 最近检查结果、当前报警、每日运行记录 |
-| `notification_settings`、`notification_feishu_settings`、`notification_dingtalk_webhook_settings`、`notification_email_settings` | 每个通知渠道的开关、版本、发送状态与独立加密凭据 |
+| `notification_settings`、`notification_feishu_settings`、`notification_dingtalk_webhook_settings`、`notification_wecom_webhook_settings`、`notification_email_settings` | 每个通知渠道的开关、版本、发送状态与独立加密凭据 |
 | `quota_schedule_rules`、`quota_schedule_rule_groups` | 定时规则与用户组 |
 | `quota_schedule_runs`、`quota_schedule_run_items`、`quota_schedule_run_targets` | 周期快照、已发起结果与内部待执行名单 |
 | `user_management_operations`、`user_management_operation_items`、`user_management_operation_targets` | 实际操作者、已发起请求审计、预览冻结名单 |

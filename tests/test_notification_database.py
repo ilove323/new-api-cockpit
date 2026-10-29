@@ -12,6 +12,7 @@ from new_api_cockpit.notification_channels import (
     feishu_app,
     dingtalk_webhook,
     email_smtp,
+    wecom_webhook,
 )
 from new_api_cockpit.notification_channels.base import DeliveryError
 from new_api_cockpit.app import app
@@ -48,6 +49,14 @@ DINGTALK = dict(
     webhook_url="https://oapi.dingtalk.com/robot/send?access_token=fixture-token",
     signing_enabled=False,
     signing_secret="",
+)
+WECOM = dict(
+    version=1,
+    enabled=True,
+    channel="wecom_webhook",
+    webhook_url="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fixture-robot-key",
+    mentioned_list=["ops_user"],
+    mentioned_mobile_list=[],
 )
 
 
@@ -151,6 +160,7 @@ class NotificationDatabaseTest(MonitorTestCase):
         notifications.save(FEISHU, "fixture-admin")
         notifications.save(DINGTALK, "fixture-admin")
         notifications.save(EMAIL, "fixture-admin")
+        notifications.save(WECOM, "fixture-admin")
         for name in notifications.CHANNELS:
             state = notifications.snapshot(name)
             self.assertTrue(state["enabled"])
@@ -226,7 +236,7 @@ class NotificationDatabaseTest(MonitorTestCase):
     def test_enabled_channel_fanout_continues_after_failure_and_keeps_separate_status(
         self,
     ):
-        for config in (FEISHU, DINGTALK, EMAIL):
+        for config in (FEISHU, DINGTALK, EMAIL, WECOM):
             notifications.save(config, "fixture-admin")
         with self.connect() as conn:
             conn.execute(
@@ -243,16 +253,17 @@ class NotificationDatabaseTest(MonitorTestCase):
                 dingtalk_webhook, "send", side_effect=DeliveryError("fixture failure")
             ) as ding_send,
             patch.object(email_smtp, "send") as email_send,
+            patch.object(wecom_webhook, "send") as wecom_send,
         ):
             notifications.deliver()
-            for send in (feishu_send, ding_send, email_send):
+            for send in (feishu_send, ding_send, email_send, wecom_send):
                 send.assert_called_once()
                 self.assertIn("余额不足报警", send.call_args.args[2])
         self.assertEqual(
             notifications.snapshot("dingtalk_webhook")["last_error"], "fixture failure"
         )
         self.assertIsNone(notifications.snapshot("dingtalk_webhook")["last_success_at"])
-        for name in ("feishu_app", "email"):
+        for name in ("feishu_app", "email", "wecom_webhook"):
             self.assertIsNone(notifications.snapshot(name)["last_error"])
             self.assertIsNotNone(notifications.snapshot(name)["last_success_at"])
         self.assertEqual(balance.snapshot()["state"]["remaining"], -2)
@@ -265,9 +276,10 @@ class NotificationDatabaseTest(MonitorTestCase):
             patch.object(feishu_app, "send") as feishu_send,
             patch.object(dingtalk_webhook, "send") as ding_send,
             patch.object(email_smtp, "send") as email_send,
+            patch.object(wecom_webhook, "send") as wecom_send,
         ):
             notifications.deliver()
-            for send in (feishu_send, ding_send, email_send):
+            for send in (feishu_send, ding_send, email_send, wecom_send):
                 send.assert_not_called()
 
     def test_channel_api_returns_selected_provider_and_tests_only_it_even_if_disabled(
@@ -309,3 +321,114 @@ class NotificationDatabaseTest(MonitorTestCase):
                 send.assert_called_once()
                 feishu_send.assert_not_called()
         self.assertIsNone(notifications.snapshot("feishu_app")["last_attempt_at"])
+
+    def test_wecom_saved_config_version_disable_test_and_failure_isolation(self):
+        self.assertFalse(notifications.snapshot("wecom_webhook")["enabled"])
+        self.assertFalse(notifications.snapshot("wecom_webhook")["webhook_configured"])
+        notifications.save(
+            dict(WECOM, mentioned_list=["ops_user", "ops_user"]), "fixture-admin"
+        )
+        snapshot = notifications.snapshot("wecom_webhook")
+        self.assertEqual(snapshot["mentioned_list"], ["ops_user"])
+        self.assertEqual(snapshot["version"], 2)
+        self.assertNotIn("webhook_url", snapshot)
+        with self.connect() as conn:
+            encrypted = conn.execute(
+                "SELECT webhook_encrypted FROM notification_wecom_webhook_settings"
+            ).fetchone()["webhook_encrypted"]
+        self.assertEqual(notifications.decrypt(encrypted), WECOM["webhook_url"])
+        self.assertNotIn("fixture-robot-key", encrypted)
+        with self.assertRaises(balance.SettingsConflict):
+            notifications.save(WECOM, "fixture-admin")
+        for body in (
+            dict(WECOM, version=2, webhook_url="https://127.0.0.1/?key=x"),
+            dict(WECOM, version=2, mentioned_list="@all"),
+        ):
+            with self.assertRaises(ValueError):
+                notifications.save(body, "fixture-admin")
+            self.assertEqual(notifications.snapshot("wecom_webhook")["version"], 2)
+        notifications.save(
+            dict(
+                WECOM,
+                version=2,
+                enabled=False,
+                webhook_url="",
+                mentioned_list=[],
+                mentioned_mobile_list=["13800000000"],
+            ),
+            "fixture-admin",
+        )
+        self.assertFalse(notifications.snapshot("wecom_webhook")["enabled"])
+        client = app.test_client()
+        url = "/cockpit/api/statistics/balance/channel"
+        args = dict(
+            auth=session_auth("fixture_admin"), headers={"X-Statistics-Request": "1"}
+        )
+        with patch(
+            "new_api_cockpit.app.request_identity", side_effect=fixture_identity
+        ):
+            response = client.get(url + "?channel=wecom_webhook", auth=args["auth"])
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json["webhook_configured"])
+            self.assertNotIn("fixture-robot-key", response.text)
+            with patch.object(wecom_webhook, "send") as send:
+                self.assertEqual(
+                    client.post(
+                        url + "/test",
+                        json={"channel": "wecom_webhook", "version": 2},
+                        **args,
+                    ).status_code,
+                    409,
+                )
+                send.assert_not_called()
+                self.assertEqual(
+                    client.post(
+                        url + "/test",
+                        json={"channel": "wecom_webhook", "version": 3},
+                        **args,
+                    ).status_code,
+                    200,
+                )
+                send.assert_called_once()
+                config, secret, text = send.call_args.args
+                self.assertEqual(config["webhook_url"], WECOM["webhook_url"])
+                self.assertEqual(config["mentioned_list"], [])
+                self.assertEqual(config["mentioned_mobile_list"], ["13800000000"])
+                self.assertEqual(secret, "")
+                self.assertIn("Fixture gateway", text)
+            with patch.object(wecom_webhook, "_post") as post:
+                self.assertEqual(
+                    client.post(
+                        url + "/test",
+                        json={"channel": "wecom_webhook", "version": 3},
+                        **args,
+                    ).status_code,
+                    200,
+                )
+                post.assert_called_once()
+                self.assertEqual(post.call_args.args[0], WECOM["webhook_url"])
+                payload = post.call_args.args[1]
+                self.assertEqual(payload["msgtype"], "text")
+                self.assertEqual(
+                    payload["text"]["mentioned_mobile_list"], ["13800000000"]
+                )
+                self.assertNotIn("mentioned_list", payload["text"])
+            notifications.save(EMAIL, "fixture-admin")
+            with patch.object(
+                wecom_webhook,
+                "send",
+                side_effect=DeliveryError("fixture delivery failure"),
+            ):
+                self.assertEqual(
+                    client.post(
+                        url + "/test",
+                        json={"channel": "wecom_webhook", "version": 3},
+                        **args,
+                    ).status_code,
+                    400,
+                )
+        self.assertEqual(
+            notifications.snapshot("wecom_webhook")["last_error"],
+            "fixture delivery failure",
+        )
+        self.assertIsNone(notifications.snapshot("email")["last_attempt_at"])

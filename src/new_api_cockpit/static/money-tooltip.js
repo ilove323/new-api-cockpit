@@ -20,38 +20,41 @@ async function lazyRowMoneyFormula(row){
   return rowMoneyFormula({...row,...detail});
 }
 const moneyNumber=n=>n===null||n===undefined?'未配置':Number(n).toLocaleString('zh-CN',{maximumFractionDigits:9});
+const moneyValue=n=>moneyNumber(window.CockpitReportCurrency.convert(n));
+const moneyAmount=n=>window.CockpitReportCurrency.symbol+' '+moneyValue(n);
+const moneyUnit=()=>window.CockpitReportCurrency.unit;
 function rowMoneyFormula(row){
   const f=row.cost_formula;
   if(!f)return [row.model_name,'暂无计算信息'];
-  if(f.mode==='unknown')return [`${row.username} · ${row.model_name}`,`实际消费金额：¥ ${moneyNumber(row.amount)}`,'日志元数据损坏，缓存用量或倍率无法确认，不能完整试算。'];
+  if(f.mode==='unknown')return [`${row.username} · ${row.model_name}`,`实际消费金额：${moneyAmount(row.amount)}`,'日志元数据损坏，缓存用量或倍率无法确认，不能完整试算。'];
   if(f.mode==='historical'){
     const lines=[`${row.username} · ${row.model_name}`,
-      `${f.matched_tier?'历史价格匹配当前档位':'请求发生时的价格'}；单位：元 / 百万 Token`,
+      `${f.matched_tier?'历史价格匹配当前档位':'请求发生时的价格'}；单位：${moneyUnit()} / 百万 Token`,
       `档位：${row.tier_name||'-'} · ${moneyNumber(row.request_count)} 次请求`,
       `总 Token ${moneyNumber(row.total_tokens)}；输入 ${moneyNumber(row.input_tokens)}；输出 ${moneyNumber(row.output_tokens)}；缓存读 ${moneyNumber(row.cache_read_tokens)}；缓存写 ${moneyNumber(row.cache_write_tokens)}`];
     for(const [label,key] of [['输入','input_price'],['输出','output_price'],['缓存读','cache_price'],['缓存写（5 分钟）','write_price']])
-      lines.push(`${label}价格：${moneyNumber(f.prices[key])}`);
+      lines.push(`${label}价格：${moneyValue(f.prices[key])}`);
     for(const b of f.buckets){
       lines.push(`请求倍率 ${moneyNumber(b.ratio)} · ${moneyNumber(b.request_count)} 次请求`);
       if(b.terms.length){
-        const terms=b.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyNumber(t.price)}`);
+        const terms=b.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyValue(t.price)}`);
         lines.push(`(${terms.join(' + ')}) × ${moneyNumber(b.ratio)} ÷ 1,000,000`);
       }
-      lines.push(`试算：${b.calculated===null?'无法计算':'¥ '+moneyNumber(b.calculated)}；日志实际：¥ ${moneyNumber(b.actual)}`);
+      lines.push(`试算：${b.calculated===null?'无法计算':moneyAmount(b.calculated)}；日志实际：${moneyAmount(b.actual)}`);
     }
-    lines.push(`试算合计：${f.calculated===null?'无法完整计算':'¥ '+moneyNumber(f.calculated)}`);
-    lines.push(`实际消费金额：¥ ${moneyNumber(row.amount)}`);
-    if(f.difference!==null)lines.push(`差额（实际 − 试算）：¥ ${moneyNumber(f.difference)}`);
+    lines.push(`试算合计：${f.calculated===null?'无法完整计算':moneyAmount(f.calculated)}`);
+    lines.push(`实际消费金额：${moneyAmount(row.amount)}`);
+    if(f.difference!==null)lines.push(`差额（实际 − 试算）：${moneyAmount(f.difference)}`);
     lines.push('实际金额来自消费日志；逐请求配额取整可能产生微小尾差。');
     return lines;
   }
   if(f.mode==='expression'){
-    const lines=[`${row.username} · ${row.model_name}`,'当前表达式价格；单位：元 / 百万 Token'];
+    const lines=[`${row.username} · ${row.model_name}`,`当前表达式价格；单位：${moneyUnit()} / 百万 Token`];
     if(!f.tiers.length)lines.push('表达式含复杂规则，无法安全拆分为固定 Token 单价。');
     for(const t of f.tiers){
       lines.push(`${t.name}${t.condition?`（${t.condition}）`:''}`);
       for(const [label,key] of [['输入','input_price'],['输出','output_price'],['缓存读','cache_price'],['缓存写（按 5 分钟档）','write_price']]){
-        if(t[key]!==null)lines.push(`${label}：${moneyNumber(t[key])}`);
+        if(t[key]!==null)lines.push(`${label}：${moneyValue(t[key])}`);
       }
     }
     lines.push(`档位：${row.tier_name||'-'} · ${moneyNumber(row.request_count)} 次请求`);
@@ -59,30 +62,30 @@ function rowMoneyFormula(row){
     for(const b of f.buckets||[]){
       if(f.buckets.length>1)lines.push(`倍率 ${moneyNumber(b.ratio)}：${moneyNumber(b.request_count)} 次请求`);
       if(b.terms.length){
-        const terms=b.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyNumber(t.price)}`);
+        const terms=b.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyValue(t.price)}`);
         lines.push(`(${terms.join(' + ')}) × ${moneyNumber(b.ratio)} ÷ 1,000,000`);
       }
-      lines.push(`该倍率试算：${b.calculated===null?'无法计算（档位或单价不匹配）':'¥ '+moneyNumber(b.calculated)}；日志实际：¥ ${moneyNumber(b.actual)}`);
+      lines.push(`该倍率试算：${b.calculated===null?'无法计算（档位或单价不匹配）':moneyAmount(b.calculated)}；日志实际：${moneyAmount(b.actual)}`);
     }
-    lines.push(`当前价格试算合计：${f.calculated===null?'无法完整计算':'¥ '+moneyNumber(f.calculated)}`);
-    lines.push(`实际消费金额：¥ ${moneyNumber(row.amount)}`);
-    if(f.difference!==null)lines.push(`差额（实际 − 计算）：¥ ${moneyNumber(f.difference)}`);
+    lines.push(`当前价格试算合计：${f.calculated===null?'无法完整计算':moneyAmount(f.calculated)}`);
+    lines.push(`实际消费金额：${moneyAmount(row.amount)}`);
+    if(f.difference!==null)lines.push(`差额（实际 − 计算）：${moneyAmount(f.difference)}`);
     lines.push('缓存写入统一按 5 分钟档试算；当前价格试算不等于历史计费重放。');
     return lines;
   }
-  const lines=[`${row.username} · ${row.model_name}`,'单价单位：元 / 百万 Token'];
-  for(const t of f.terms)lines.push(`${t.label}：${moneyNumber(t.tokens)} × ${moneyNumber(t.price)}${t.tokens===0&&t.price===null?'（用量为 0，不计费）':''}`);
-  const terms=f.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyNumber(t.price)}`);
+  const lines=[`${row.username} · ${row.model_name}`,`单价单位：${moneyUnit()} / 百万 Token`];
+  for(const t of f.terms)lines.push(`${t.label}：${moneyNumber(t.tokens)} × ${moneyValue(t.price)}${t.tokens===0&&t.price===null?'（用量为 0，不计费）':''}`);
+  const terms=f.terms.map(t=>t.tokens===0&&t.price===null?'0':`${moneyNumber(t.tokens)} × ${moneyValue(t.price)}`);
   lines.push(`(${terms.join(' + ')}) × ${moneyNumber(f.ratio)} ÷ 1,000,000`);
-  lines.push(`计算金额：${f.calculated===null?'无法完整计算（缺少单价或倍率）':'¥ '+moneyNumber(f.calculated)}`);
-  lines.push(`实际消费金额：¥ ${moneyNumber(row.amount)}`);
-  if(f.difference!==null)lines.push(`差额（实际 − 计算）：¥ ${moneyNumber(f.difference)}`);
+  lines.push(`计算金额：${f.calculated===null?'无法完整计算（缺少单价或倍率）':moneyAmount(f.calculated)}`);
+  lines.push(`实际消费金额：${moneyAmount(row.amount)}`);
+  if(f.difference!==null)lines.push(`差额（实际 − 计算）：${moneyAmount(f.difference)}`);
   lines.push('试算使用展示单价和日志倍率；实际金额来自消费日志汇总。');
   return lines;
 }
 function totalMoneyFormula(rows,total){
-  return ['当前明细消费金额合计',...rows.map((r,i)=>`${i+1}. ${r.username} · ${r.model_name}：¥ ${moneyNumber(r.amount)}`),
-    `${rows.length?rows.map(r=>moneyNumber(r.amount)).join(' + '):'0'} = ${moneyNumber(total)}`];
+  return ['当前明细消费金额合计',...rows.map((r,i)=>`${i+1}. ${r.username} · ${r.model_name}：${moneyAmount(r.amount)}`),
+    `${rows.length?rows.map(r=>moneyValue(r.amount)).join(' + '):'0'} = ${moneyAmount(total)}`];
 }
 function hideMoneyTooltip(){
   moneyTipVersion++;clearTimeout(moneyHideTimer);

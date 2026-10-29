@@ -7,6 +7,10 @@
 上述两池流程用于[接入已有 New API](existing-installation.md)的默认 Compose。
 如果是 `/root/new-api` 的七服务全量实例，先按下一节处理；不要把源码目录的 Compose 或发布模板覆盖到实例根目录。
 
+## 企业微信通知升级
+
+包含企业微信功能的版本会追加执行监控库迁移 `012_wecom_webhook.sql`，新渠道默认关闭，已有通知开关、凭据和余额数据保留。备份监控库和通知加密密钥后正常更新 Cockpit，随后在“报警渠道 · 全局”配置企业微信群机器人；不需要修改 New API、数据库/Redis 版本、源库权限、Nginx 或现有环境变量。已有监控库迁移不能手工删除或重编号。
+
 ## 全量安装实例的更新
 
 本节仅适用于[全量部署手册](deployment.md)创建的七服务实例。命令在 `/root/new-api` 执行，而不是 `source/`。
@@ -123,7 +127,7 @@ docker compose -f compose.release.yml logs --tail=100 statistics image-studio
 
 `MONITOR_DATABASE_URL` 必须指向独立监控库。
 网页池入口在启动前应用 `migrations/` 中尚未执行的脚本，按编号顺序处理；图片池不执行迁移。
-`schema_migrations` 保存文件名，已登记的脚本不会重复执行；当前结构由 `001`～`011` 构建。
+`schema_migrations` 保存文件名，已登记的脚本不会重复执行；当前开发代码的结构由 `001`～`012` 构建；正式版本以配套安装包的 `install/migrations.txt` 为准。
 迁移在事务和数据库锁内运行，失败回滚且不登记版本，也不启动网页进程。
 
 正常页面/API 请求不执行 DDL，仅在必要时检查迁移版本。

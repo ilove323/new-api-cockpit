@@ -92,7 +92,9 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(row["cost_formula"]["calculated"], Decimal("0.001212"))
         self.assertEqual(row["cost_formula"]["terms"][3]["tokens"], 30)
         self.assertEqual(row["cost_formula"]["terms"][3]["price"], Decimal("2.5"))
-        wb = load_workbook(export_excel([row], "2026-09-01", "2026-09-01"))
+        wb = load_workbook(
+            export_excel([row], "2026-09-01", "2026-09-01", usd_cny_rate=Decimal("1"))
+        )
         self.assertIn("表达式价格", wb.sheetnames)
         self.assertEqual(wb["表达式价格"]["D3"].value, 2)
         self.assertEqual(wb["表达式价格"]["G3"].value, 2.5)
@@ -212,7 +214,9 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(sum(row["failure_count"] for row in rows), 1)
         self.assertEqual(rows[-1]["cost_formula"]["buckets"][0]["tier"], "short")
         self.assertTrue(rows[-1]["cost_formula"]["buckets"][0]["inferred_low_tier"])
-        wb = load_workbook(export_excel(rows, "2026-09-22", "2026-09-22"))
+        wb = load_workbook(
+            export_excel(rows, "2026-09-22", "2026-09-22", usd_cny_rate=Decimal("1"))
+        )
         ws = wb["用户模型用量"]
         self.assertEqual(
             [ws[f"E{line}"].value for line in (3, 4, 5)], ["short", "long", "-"]
@@ -341,9 +345,9 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(sum(r["request_count"] for r in rows), 5)
         self.assertEqual(totals(rows)["amount"], Decimal("0.217258"))
         self.assertEqual(sum(r["failure_count"] for r in rows), 1)
-        ws = load_workbook(export_excel(rows, "2026-09-01", "2026-09-23"))[
-            "用户模型用量"
-        ]
+        ws = load_workbook(
+            export_excel(rows, "2026-09-01", "2026-09-23", usd_cny_rate=Decimal("1"))
+        )["用户模型用量"]
         self.assertEqual(
             [ws[f"E{n}"].value for n in (3, 4, 5, 6)],
             ["0_272k", "0_272k", "272k_plus", "-"],
@@ -585,7 +589,12 @@ class ReportTest(unittest.TestCase):
 
     def test_excel_exact_time(self):
         ws = load_workbook(
-            export_excel([], "2026-07-26T18:20:30", "2026-07-26T19:21:31")
+            export_excel(
+                [],
+                "2026-07-26T18:20:30",
+                "2026-07-26T19:21:31",
+                usd_cny_rate=Decimal("1"),
+            )
         ).active
         self.assertEqual(
             ws["B1"].value, "2026-07-26 18:20:30 至 2026-07-26 19:21:31（北京时间）"
@@ -603,7 +612,11 @@ class ReportTest(unittest.TestCase):
         )
 
     def test_excel_numbers_merge_formulas_and_literal_names(self):
-        ws = load_workbook(export_excel(self.rows, "2026-07-26", "2026-08-25")).active
+        ws = load_workbook(
+            export_excel(
+                self.rows, "2026-07-26", "2026-08-25", usd_cny_rate=Decimal("1")
+            )
+        ).active
         self.assertIn("A3:A4", str(ws.merged_cells))
         self.assertIn("B3:B4", str(ws.merged_cells))
         self.assertEqual(ws["A3"].data_type, "s")
@@ -623,7 +636,11 @@ class ReportTest(unittest.TestCase):
         self.assertNotIn("计价非缓存输入Token", [c.value for c in ws[2]])
 
     def test_excel_ranking_sheets(self):
-        wb = load_workbook(export_excel(self.rows, "2026-07-26", "2026-08-25"))
+        wb = load_workbook(
+            export_excel(
+                self.rows, "2026-07-26", "2026-08-25", usd_cny_rate=Decimal("1")
+            )
+        )
         self.assertEqual(
             wb.sheetnames,
             ["用户模型用量", "模型消费", "用户Token用量", "用户消费", "区间汇总"],
@@ -642,7 +659,9 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(summary["B12"].value, "=B9/B10")
 
     def test_empty_excel_no_circular_formula(self):
-        ws = load_workbook(export_excel([], "2026-07-26", "2026-08-25")).active
+        ws = load_workbook(
+            export_excel([], "2026-07-26", "2026-08-25", usd_cny_rate=Decimal("1"))
+        ).active
         self.assertEqual(ws["F3"].value, 0)
         self.assertEqual(ws["P3"].value, 0)
 
@@ -704,6 +723,13 @@ class ReportTest(unittest.TestCase):
                         )
                         self.assertEqual(response.status_code, 200)
                         expected = dict(kwargs)
+                        if route == "usage":
+                            expected["currency_display"] = {
+                                "base_currency": "USD",
+                                "default_currency": "CNY",
+                                "usd_cny_rate": Decimal("7.3"),
+                                "rate_source": "new_api_default",
+                            }
                         if flag == "&include_failures=1":
                             expected["include_failures"] = True
                         load.assert_called_once_with(

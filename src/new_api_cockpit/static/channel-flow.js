@@ -3,7 +3,7 @@
   'use strict';
   if(typeof module==='object'&&module.exports)module.exports=create;
   else{
-    root.CockpitChannelFlow=create({document:root.document,request:(...args)=>root.fetch(...args)});
+    root.CockpitChannelFlow=create({document:root.document,formatMoney:value=>root.CockpitReportCurrency.formatRMB(value),request:(...args)=>root.fetch(...args)});
     root.addEventListener('pagehide',()=>root.CockpitChannelFlow.reset());
   }
 })(typeof window==='object'?window:globalThis,function(options){
@@ -11,6 +11,7 @@
   const {document,request}=options;
   let cache=null,pending=null,controller=null,version=0,visible=false,target=null,activeKey=null;
   const money=new Intl.NumberFormat('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const formatMoney=options.formatMoney||(value=>'¥ '+money.format(Number(value)));
   const count=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:0});
   function node(tag,cls,text){
     const element=document.createElement(tag);element.className=cls;if(text!==undefined)element.textContent=text;return element;
@@ -27,7 +28,7 @@
       const section=node('section','channel-flow-channel');section.dataset.channelId=String(channel.channel_id);
       const header=node('div','channel-flow-heading');
       const heading=node('h3','',`${channel.channel_name||'未命名渠道'}（#${channel.channel_id}）`);
-      header.append(heading,node('span','channel-flow-total',`合计 ¥ ${money.format(Number(channel.amount))} · ${count.format(channel.user_count)} 位用户 · ${count.format(channel.request_count)} 次消费请求`));
+      header.append(heading,node('span','channel-flow-total',`合计 ${formatMoney(channel.amount)} · ${count.format(channel.user_count)} 位用户 · ${count.format(channel.request_count)} 次消费请求`));
       section.append(header);
       if(!channel.users.length)section.append(node('p','channel-flow-empty','所选时间内暂无消费'));
       for(const [index,user] of channel.users.entries()){
@@ -37,7 +38,7 @@
         const track=node('div','bar-track'),bar=node('div','bar');
         bar.style.width=(user.percentage===null?0:Math.max(0,Math.min(100,Number(user.percentage))))+'%';track.append(bar);
         const value=node('span','bar-value channel-flow-value');
-        value.append(node('span','',`¥ ${money.format(Number(user.amount))}`),node('span','channel-flow-percentage',user.percentage===null?'—':money.format(Number(user.percentage))+'%'));
+        value.append(node('span','',formatMoney(user.amount)),node('span','channel-flow-percentage',user.percentage===null?'—':money.format(Number(user.percentage))+'%'));
         row.title=`${count.format(user.request_count)} 次消费请求`;row.append(label,track,value);section.append(row);
       }
       container.append(section);

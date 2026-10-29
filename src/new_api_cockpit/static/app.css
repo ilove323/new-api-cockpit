@@ -41,7 +41,9 @@
 .detail-title h2 { margin-right: auto; }
 .detail-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .detail-filter { min-width: 0; }
-.detail-controls > .price-unit { margin-left: auto; color: var(--ui-muted-text); font-size: 12px; }
+.detail-currency-controls { margin-left: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.price-unit,.usage-currency-note { color: var(--ui-muted-text); font-size: 12px; }
+.usage-currency-note { margin: 0 0 12px; }
 .column-picker { margin-left: 4px; }
 #usage-table { min-width: var(--usage-table-min-width,1600px); }
 .statistics-page .table-wrap { max-height: 620px; }
@@ -66,5 +68,6 @@
   .bar-value { overflow-wrap: anywhere; }
   .detail-title { gap: 8px; }
   .detail-title h2 { width: 100%; }
-  .detail-controls > .price-unit { width: 100%; margin: 0; }
+  .detail-currency-controls { width: 100%; margin: 0; }
+  .statistics-page .column-menu { z-index: 56; }
 }

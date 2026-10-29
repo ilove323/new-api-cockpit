@@ -95,6 +95,12 @@ def public(row):
             signing_enabled=row["signing_enabled"],
             signing_secret_configured=bool(row["secret_encrypted"]),
         )
+    elif row["channel"] == "wecom_webhook":
+        result.update(
+            webhook_configured=bool(row["webhook_encrypted"]),
+            mentioned_list=row["mentioned_list"],
+            mentioned_mobile_list=row["mentioned_mobile_list"],
+        )
     elif row["channel"] == "email":
         for key in (
             "smtp_host",
@@ -131,6 +137,12 @@ def provider_config(conn, channel, lock=False):
             """SELECT smtp_host,smtp_port,smtp_security,auth_enabled,username,
             secret_encrypted,from_address,from_name,recipients
             FROM notification_email_settings WHERE id=1"""
+            + suffix
+        ).fetchone()
+    if channel == "wecom_webhook":
+        return conn.execute(
+            """SELECT webhook_encrypted,mentioned_list,mentioned_mobile_list
+            FROM notification_wecom_webhook_settings WHERE id=1"""
             + suffix
         ).fetchone()
     raise ValueError("不支持的报警渠道。")
@@ -204,6 +216,34 @@ def save_email(conn, body, current):
     )
 
 
+def save_wecom(conn, body, current):
+    channel = CHANNELS["wecom_webhook"]
+    webhook = body.get("webhook_url", "")
+    if not isinstance(webhook, str) or len(webhook) > 2048:
+        raise ValueError("企业微信 Webhook 配置格式无效。")
+    webhook = webhook.strip()
+    fields = {
+        "mentioned_list": channel.mentions(body.get("mentioned_list", [])),
+        "mentioned_mobile_list": channel.mentions(
+            body.get("mentioned_mobile_list", []), mobile=True
+        ),
+    }
+    encrypted = current["webhook_encrypted"]
+    if webhook or body["enabled"]:
+        channel.validate(dict(fields, webhook_url=webhook or decrypt(encrypted)))
+    if webhook:
+        encrypted = cipher().encrypt(webhook.encode()).decode()
+    conn.execute(
+        """UPDATE notification_wecom_webhook_settings SET webhook_encrypted=%s,
+        mentioned_list=%s,mentioned_mobile_list=%s WHERE id=1""",
+        (
+            encrypted,
+            Jsonb(fields["mentioned_list"]),
+            Jsonb(fields["mentioned_mobile_list"]),
+        ),
+    )
+
+
 def save(body, username):
     if (
         not isinstance(body, dict)
@@ -253,6 +293,8 @@ def save(body, username):
             )
         elif channel == "email":
             save_email(conn, body, current)
+        elif channel == "wecom_webhook":
+            save_wecom(conn, body, current)
         else:
             webhook = body.get("webhook_url", "")
             supplied = body.get("signing_secret", "")
@@ -351,11 +393,12 @@ def deliver_channel(name, *, test=False, expected_version=None, scope_id=1):
             else:
                 text = format_alert_message(alert, load_site_name())
             channel = CHANNELS[config["channel"]]
-            if config["channel"] == "dingtalk_webhook":
+            if config["channel"] in ("dingtalk_webhook", "wecom_webhook"):
                 config["webhook_url"] = decrypt(config["webhook_encrypted"])
             secret = (
                 ""
-                if name == "email" and not config["auth_enabled"]
+                if name == "wecom_webhook"
+                or (name == "email" and not config["auth_enabled"])
                 else decrypt(config["secret_encrypted"])
             )
             channel.send(config, secret, text)

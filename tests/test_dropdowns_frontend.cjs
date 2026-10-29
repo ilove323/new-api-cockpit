@@ -35,3 +35,21 @@ test('Escape closes group/column menus and returns focus, but leaves unrelated d
     assert.equal(h.fire('keydown',{}, {key:'Escape'}).prevented,undefined);
   }
 });
+test('mobile column menu stays above or below its trigger, follows scrolling and resets on desktop',()=>{
+  const events={},viewEvents={},style={};
+  let mobile=true,anchor={top:150,bottom:190};
+  const menu={style};
+  const picker={open:true,matches:()=>true,contains:target=>target===menu,
+    querySelector:selector=>selector==='summary'?{getBoundingClientRect:()=>anchor}:menu};
+  const view={innerHeight:900,matchMedia:()=>({matches:mobile}),addEventListener(type,fn){viewEvents[type]=fn;}};
+  install({defaultView:view,querySelectorAll:()=>[picker],querySelector:()=>({getBoundingClientRect:()=>({bottom:60})}),
+    addEventListener(type,fn){events[type]=fn;}});
+  events.toggle({target:picker});
+  assert.equal(style.top,'196px');assert.equal(style.maxHeight,'320px');
+  anchor={top:750,bottom:790};events.scroll({target:{}});
+  assert.equal(style.top,'424px');assert.ok(parseFloat(style.top)+parseFloat(style.maxHeight)<anchor.top);
+  mobile=false;viewEvents.resize();
+  assert.deepEqual(style,{top:'',bottom:'',maxHeight:''});
+  mobile=true;anchor={top:10,bottom:50};events.scroll({target:{}});
+  assert.equal(picker.open,false);
+});

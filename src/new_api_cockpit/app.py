@@ -42,6 +42,7 @@ from new_api_cockpit import (
     intelligence,
     manual,
     client_downloads,
+    currency_display,
     image_studio,
     image_receipts,
 )
@@ -1047,11 +1048,13 @@ def failure_diagnostics():
     return request.args.get("include_failures") == "1"
 
 
-def selected(*, by_token=False, include_failures=False):
+def selected(*, by_token=False, include_failures=False, display_currency=None):
     start, end = request.args.get("start", ""), request.args.get("end", "")
     kwargs = {"by_token": by_token, **report_scope_kwargs()}
     if include_failures:
         kwargs["include_failures"] = True
+    if display_currency is not None:
+        kwargs["currency_display"] = display_currency
     rows = load_report(start, end, **kwargs)
     user = request.args.get("user", "").strip()
     if user:
@@ -1088,7 +1091,10 @@ def snapshot_expired(exc):
 
 @app.get("/cockpit/api/statistics/usage")
 def usage():
-    start, end, rows = selected(include_failures=failure_diagnostics())
+    display = currency_display.settings({})
+    start, end, rows = selected(
+        include_failures=failure_diagnostics(), display_currency=display
+    )
     return jsonify(
         scope=scope_context(),
         start=start,
@@ -1097,6 +1103,7 @@ def usage():
         totals=totals(rows, start, end),
         rankings=rankings(rows),
         updated_at=datetime.now(TZ).isoformat(timespec="seconds"),
+        currency_display=display,
     )
 
 
@@ -1184,7 +1191,8 @@ def usage_by_selection():
 
 @app.get("/cockpit/api/statistics/export")
 def export():
-    start, end, rows = selected()
+    display = currency_display.settings({})
+    start, end, rows = selected(display_currency=display)
     first = parse_boundary(start).strftime("%Y-%m-%d_%H-%M-%S")
     last = parse_boundary(end, end=True).strftime("%Y-%m-%d_%H-%M-%S")
     scope = scope_context()
@@ -1193,7 +1201,7 @@ def export():
     )
     label = re.sub(r"[^\w\-\u4e00-\u9fff]", "_", label or "scope")[:80]
     return send_file(
-        export_excel(rows, start, end),
+        export_excel(rows, start, end, usd_cny_rate=display["usd_cny_rate"]),
         as_attachment=True,
         download_name=f"usage_{scope['id']}_{label}_{first}_{last}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

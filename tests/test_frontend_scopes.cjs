@@ -181,11 +181,12 @@ test('notification selection precedes its independent switch; email has its own 
 test('changing notification provider loads its independent switch without dirtying or saving others',async()=>{
   const h=harness();h.balance();
   h.ctx.fetch=async(url,options={})=>{h.calls.push({url,options});const channel=new URL(url,'https://example.test').searchParams.get('channel');return {ok:true,json:async()=>notificationState(channel,channel!=='dingtalk_webhook')};};
-  for(const channel of ['feishu_app','dingtalk_webhook','email','feishu_app']){
+  for(const channel of ['feishu_app','dingtalk_webhook','wecom_webhook','email','feishu_app']){
     h.elements.get('channel-type').value=channel;await h.elements.get('channel-type').fire('change');
     assert.equal(h.elements.get('channel-enabled').checked,channel!=='dingtalk_webhook');
     assert.equal(h.run('channelDirty'),false);assert.equal(h.elements.get('channel-test').disabled,false);
     assert.equal(h.elements.get('channel-email-fields').hidden,channel!=='email');
+    assert.equal(h.elements.get('channel-wecom-fields').hidden,channel!=='wecom_webhook');
   }
   assert.ok(h.calls.every(c=>!c.options.method));
 });
@@ -227,4 +228,32 @@ test('email transport choice uses normal ports and never overwrites a custom por
   assert.equal(h.elements.get('channel-email-port').value,2525);assert.equal(h.elements.get('channel-email-warning').hidden,false);
   h.elements.get('channel-email-auth-enabled').checked=true;await h.elements.get('channel-email-auth-enabled').fire('change');
   assert.equal(h.elements.get('channel-email-auth-fields').hidden,false);
+});
+test('wecom fields, saved-secret masking and independent save/test payload',async()=>{
+  const h=harness();h.balance();
+  const data={channel:'wecom_webhook',enabled:false,version:1,webhook_configured:true,mentioned_list:['ops_user'],mentioned_mobile_list:[]};
+  h.run(`renderChannel(${JSON.stringify(data)})`);
+  assert.ok(html.includes('value="wecom_webhook">企业微信群机器人'));
+  assert.equal(h.elements.get('channel-wecom-fields').hidden,false);
+  assert.equal(h.elements.get('channel-dingtalk-fields').hidden,true);
+  assert.equal(h.elements.get('channel-wecom-webhook-url').value,'');
+  assert.equal(h.elements.get('channel-wecom-webhook-url').placeholder,'已保存；留空保持不变');
+  assert.equal(h.elements.get('channel-wecom-mentioned-list').value,'ops_user');
+  h.ctx.fetch=async(url,options={})=>{h.calls.push({url,options});return {ok:true,json:async()=>url.endsWith('/test')?{sent:true}:{...data,version:2}};};
+  h.elements.get('channel-wecom-webhook-url').value='https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fixture-key';
+  h.elements.get('channel-wecom-mentioned-list').value='ops_user\nfinance, @all';
+  h.elements.get('channel-wecom-mentioned-mobile-list').value='13800000000;13900000000';
+  h.elements.get('channel-webhook-url').value='must-not-leak-dingtalk';
+  await h.elements.get('channel-form').fire('input');assert.equal(h.elements.get('channel-test').disabled,true);
+  await h.elements.get('channel-test').fire('click');assert.equal(h.calls.length,0);
+  await h.elements.get('channel-form').fire('submit');
+  const body=JSON.parse(h.calls[0].options.body);
+  assert.equal(body.channel,'wecom_webhook');assert.equal(body.version,1);assert.equal(body.enabled,false);
+  assert.deepEqual(body.mentioned_list,['ops_user','finance','@all']);
+  assert.deepEqual(body.mentioned_mobile_list,['13800000000','13900000000']);
+  assert.ok(body.webhook_url.includes('fixture-key'));assert.ok(!JSON.stringify(body).includes('must-not-leak'));
+  assert.ok(!('signing_enabled' in body));assert.ok(!('app_secret' in body));
+  assert.equal(h.elements.get('channel-wecom-webhook-url').value,'');
+  await h.elements.get('channel-test').fire('click');
+  assert.deepEqual(JSON.parse(h.calls.at(-1).options.body),{channel:'wecom_webhook',version:2});
 });

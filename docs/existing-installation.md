@@ -299,7 +299,7 @@ Redis 不可用、AOF 写入失败、策略不符时，付费请求在派发前�
 | SQL | 位置 | 执行方式 |
 |---|---|---|
 | 监控建库 | [余额监控](monitoring.md#独立数据库) | PostgreSQL 管理员首次创建独立库和账号 |
-| 应用表结构 | [migrations](../src/new_api_cockpit/migrations/) 的 `001`～`011` | 容器启动自动按编号执行尚未登记的文件 |
+| 应用表结构 | [migrations](../src/new_api_cockpit/migrations/) 的 `001`～`012`（当前开发代码） | 容器启动自动按编号执行尚未登记的文件 |
 | 缺失 PAT 补建函数 | [source_pat_function.sql](../sql/source_pat_function.sql) | New API 原库表所有者单独安装，再向查询角色授权 EXECUTE |
 
 `source_pat_function.sql` 安装源库 PAT 补建函数：目标用户没有 PAT 时补建，已有 PAT 原样返回。
