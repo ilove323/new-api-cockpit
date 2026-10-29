@@ -39,7 +39,9 @@ Python 依赖使用 `requirements.txt`；前端构建由 `frontend/studio/packag
 
 安装包不包含应用源码、构建 override、`.env`、真实账号、密钥、数据或部署日志。部署密钥在目标服务器首次生成，不从构建环境打包带出。
 
-`v0.4.2` 随附插件仍为 `0.4.2`，本次没有修改插件功能。新增渠道分流、时间快捷范围和流式鹈鹕测试；没有新的 SQL 迁移或源库权限要求。已有实例只更新 Cockpit 池，并同步智力测试的 Nginx location，不升级 New API、PostgreSQL 或 Redis。
+`v0.4.3` 随附插件仍为 `0.4.2`，插件没有改动。新增企业微信群机器人、RMB / USD 明细展示与固定 RMB 导出，修正“三个月”范围、SVG 提取并重整十五类客户端教程。相比 v0.4.2 追加监控库迁移 `012_wecom_webhook.sql`，企业微信默认关闭；只更新 Cockpit 池，不修改 New API、PostgreSQL、Redis、Nginx 或源库权限。备份监控库和通知加密密钥，保留原有私有配置，按[升级与回退](upgrading.md)执行。
+
+`v0.4.2` 随附插件为 `0.4.2`，当时没有修改插件功能。该版新增渠道分流、时间快捷范围和流式鹈鹕测试；没有新的 SQL 迁移或源库权限要求。首次接入该版流式鹈鹕测试的实例需核对其 Nginx location，已经配置好的实例不重复调整。
 
 `v0.4.1` 起，插件直接调用 New API 本人账户和令牌接口，不依赖 Cockpit 或账户 MCP；KEY 改组沿用官方 PUT，不构建、发布或升级 New API 镜像。
 

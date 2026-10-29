@@ -2,6 +2,8 @@
 
 ## 未发布
 
+## 0.4.3 — 2026-10-30
+
 - 重整模型使用教程：工具改用大下拉框，区分 CLI / 桌面 / 扩展及 macOS / Windows / Linux；配置和实际保存位置放在对应步骤，表单字段可逐项复制，非密钥字段不读取 KEY。
 - 新增 Pi Agent、DeepSeek Harness、CodeBuddy；按官方文档更新 Hermes 三种协议与原生 Windows、Pi 当前包名及 CodeBuddy CLI 的 Responses / Messages 入口，保留 Codex 的 config.toml + auth.json。无后端权限、数据库或调用模型行为变更。
 
