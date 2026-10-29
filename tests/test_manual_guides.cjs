@@ -5,13 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {execFileSync} = require('node:child_process');
-const {guides, build, buildMcp} = require('../src/new_api_cockpit/static/manual-guides.js');
+const {guides, resolve, build, buildMcp} = require('../src/new_api_cockpit/static/manual-guides.js');
 
 const origin = 'https://fixture.test:24443';
 const options = extras => ({origin, model: 'fixture-model', ...extras});
 const content = (id, extras) => build(id, options(extras)).map(item => item.content).join('\n');
 const jsonBlock = extras => JSON.parse(build('openclaw', options(extras))[0].content);
-const titles = ['Claude Code', 'Codex', 'WorkBuddy', 'Hermes', 'Claude App', 'Cursor', 'CC Switch', 'TRAE', 'Qoder', 'Chatbox', 'OpenClaw', 'curl'];
+const titles = ['Claude Code', 'Codex', 'WorkBuddy', 'Hermes', 'Claude App', 'Cursor', 'CC Switch', 'TRAE', 'Qoder', 'Chatbox', 'OpenClaw', 'Pi Agent', 'DeepSeek Harness', 'CodeBuddy', 'curl'];
 
 test('new clients use their documented paths and cannot confuse user PAT with model configuration', () => {
   const work = build('workbuddy', options())[1];
@@ -19,23 +19,23 @@ test('new clients use their documented paths and cannot confuse user PAT with mo
   assert.match(work.content, /自定义协议.*开启/);
   const hermes = build('hermes', options());
   assert.equal(hermes[0].language, 'yaml');
-  assert.match(hermes[0].content, /provider: "custom"/);
+  assert.match(hermes[0].content, /transport: chat_completions/);
   assert.ok(hermes[0].content.includes(origin + '/v1'));
-  assert.match(hermes[1].content, /^hermes --model='fixture-model'$/);
+  assert.match(hermes[1].content, /^hermes --provider=newapi --model='fixture-model'$/);
   const desktop = build('claude-app', options())[0].content;
   assert.ok(desktop.includes('Gateway base URL：' + origin + '\n'));
   assert.match(desktop, /Gateway auth scheme：Bearer/);
   assert.ok(!desktop.includes('/v1/messages'));
-  assert.ok(guides.every(item => item.steps.length >= 5));
+  assert.ok(guides.every(item => item.steps.length >= 4));
 });
 
 test('all clients attach each example to its operation step on every platform and protocol', () => {
   const expected = {
-    'claude-code': {1: [0], 2: [2], 3: [1]}, codex: {2: [0], 3: [1], 5: [2]},
+    'claude-code': {2: [0], 3: [1]}, codex: {2: [0], 3: [1], 5: [2]},
     workbuddy: {2: [0], 3: [1]}, hermes: {2: [0], 4: [1]},
     'claude-app': {2: [0], 3: [1]}, cursor: {1: [0], 2: [1], 3: [2]},
     'cc-switch': {2: [0], 4: [1]}, trae: {2: [0]}, qoder: {2: [0], 3: [1]},
-    chatbox: {1: [0], 2: [1], 3: [2]}, openclaw: {2: [0], 3: [1]}, curl: {3: [0]},
+    chatbox: {1: [0], 2: [1], 3: [2]}, openclaw: {2: [0], 3: [1]}, 'pi-agent': {1: [0], 3: [1], 4: [2]}, 'deepseek-harness': {1: [0], 3: [1], 4: [2]}, codebuddy: {3: [0], 4: [1]}, curl: {3: [0]},
   };
   for (const guide of guides) {
     const steps = Object.fromEntries(guide.steps.flatMap((step, i) => step.snippets ? [[i + 1, step.snippets]] : []));
@@ -80,9 +80,9 @@ test('MCP examples contain only user-PAT placeholders, need no model/key, and pr
   assert.throws(() => buildMcp('codex', 'https://fixture.test/path'));
 });
 
-test('twelve tools expose complete, immutable metadata and client protocols', () => {
+test('fifteen tools expose complete, immutable metadata and client protocols', () => {
   assert.deepEqual(guides.map(item => item.title), titles);
-  assert.equal(new Set(guides.map(item => item.id)).size, 12);
+  assert.equal(new Set(guides.map(item => item.id)).size, 15);
   for (const item of guides) {
     assert.equal(item.status, undefined);
     assert.ok(item.description && item.steps.length && item.notes.length && item.sources.length);
@@ -159,7 +159,7 @@ test('protocol-specific endpoint, credential and OpenClaw adapters are exact', (
   assert.ok(content('trae', {protocol: 'anthropic'}).includes(origin + '/v1/messages'));
   assert.ok(content('cc-switch', {protocol: 'anthropic'}).includes('Endpoint URL：' + origin + '\n'));
   assert.ok(content('cc-switch', {protocol: 'responses'}).includes('Endpoint URL：' + origin + '/v1\n'));
-  assert.ok(build('cc-switch', options())[0].title.includes('非导入文件'));
+  assert.ok(build('cc-switch', options())[0].title.includes('不是导入文件'));
   assert.ok(content('chatbox').includes('apiHost）：' + origin + '/v1\n'));
   assert.ok(content('chatbox').includes('apiPath）：/chat/completions'));
   assert.ok(content('chatbox', {protocol: 'responses'}).includes('apiPath）：/responses'));
@@ -203,7 +203,7 @@ test('invalid options and unsupported protocol fail closed with no echoed secret
   for (const field of ['origin', 'model', 'key', 'platform']) {
     for (const value of ['', ' ', null, {}, 123]) assert.throws(() => build('curl', options({[field]: value})));
   }
-  for (const platform of ['windows', 'sh', 'POSIX']) assert.throws(() => build('curl', options({platform})));
+  for (const platform of ['win32', 'sh', 'POSIX']) assert.throws(() => build('curl', options({platform})));
   for (const item of guides) {
     for (const protocol of item.protocols) assert.ok(build(item.id, options({protocol})).length);
     for (const protocol of ['chat', 'responses', 'anthropic', 'unknown', null, 1].filter(value => !item.protocols.includes(value))) {
@@ -332,8 +332,8 @@ test('browser module exports only pure builders and performs no UI, network or s
   const context = {window, URL, fetch: forbidden, XMLHttpRequest: forbidden, setTimeout: forbidden};
   for (const name of ['document', 'navigator', 'localStorage', 'sessionStorage']) Object.defineProperty(context, name, {get: forbidden});
   vm.runInNewContext(source, context);
-  assert.deepEqual(Object.keys(window.CockpitManualGuides), ['guides', 'build', 'buildMcp']);
-  assert.equal(window.CockpitManualGuides.guides.length, 12);
+  assert.deepEqual(Object.keys(window.CockpitManualGuides), ['guides', 'resolve', 'build', 'buildMcp']);
+  assert.equal(window.CockpitManualGuides.guides.length, 15);
   for (const item of window.CockpitManualGuides.guides) assert.ok(window.CockpitManualGuides.build(item.id, options()).length);
   assert.ok(Object.isFrozen(window.CockpitManualGuides));
 });
@@ -349,7 +349,7 @@ test('connection configs never pin a default model, role mapping, fallback or mo
       assert.doesNotMatch(output.map(part => part.content).join('\n'), /ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_/);
     }
   }
-  const claude = JSON.parse(build('claude-code', options())[1].content);
+  const claude = JSON.parse(build('claude-code', options({variant: 'vscode'}))[0].content);
   assert.deepEqual(claude, {'claudeCode.environmentVariables': [
     {name: 'ANTHROPIC_BASE_URL', value: origin}, {name: 'ANTHROPIC_API_KEY', value: 'API_KEY'},
     {name: 'ANTHROPIC_CUSTOM_MODEL_OPTION', value: 'fixture-model'},
@@ -390,4 +390,85 @@ test('official screenshot metadata references real bundled WebP assets and a pri
     assert.equal(bytes.subarray(8, 12).toString(), 'WEBP');
     assert.ok(picture.width > 0 && picture.height > 0);
   }
+});
+
+test('every system, surface and protocol has exactly one placement for each generated block', () => {
+  let cases = 0;
+  for (const guide of guides) for (const platform of ['macos', 'windows', 'linux']) {
+    assert.deepEqual(guide.platforms, ['macos', 'windows', 'linux']);
+    assert.equal(guide.checkedAt, '2026-10-30');
+    for (const surface of guide.variants || [{id: ''}]) {
+      for (const protocol of resolve(guide.id, {platform, variant: surface.id}).protocols) {
+        const opts = {platform, variant: surface.id, protocol};
+        const tutorial = resolve(guide.id, opts), result = build(guide.id, options(opts));
+        assert.equal(tutorial.title, guide.title);
+        assert.ok(tutorial.platformHint && tutorial.installURL);
+        assert.ok(tutorial.steps.every(step => !/\{(?:codexDir|hermesFile|terminalHint|piFile|buddyFile|permissionHint)/.test(step.body)));
+        assert.deepEqual(tutorial.steps.flatMap(step => step.snippets || []).sort((a,b) => a-b), result.map((_, i) => i));
+        for (const part of result) if (part.fields) {
+          assert.equal(part.containsKey, part.fields.some(field => field.containsKey));
+          for (const field of part.fields) assert.equal(field.containsKey, field.value === 'API_KEY');
+        }
+        cases++;
+      }
+    }
+  }
+  assert.equal(cases, 114);
+});
+
+test('CLI and GUI surfaces do not mix each other’s configuration steps', () => {
+  const cli = build('claude-code', options({variant:'cli'}));
+  assert.equal(cli.length, 2);assert.ok(cli.every(block => block.language === 'bash'));
+  const vscode = build('claude-code', options({variant:'vscode',platform:'windows'}));
+  assert.equal(vscode.length, 1);assert.equal(vscode[0].language, 'json');
+  assert.equal(vscode[0].destination, '%APPDATA%\\Code\\User\\settings.json');
+  for (const variant of ['desktop','vscode']) {
+    const guide = resolve('codex', {variant});
+    assert.equal(build('codex',options({variant})).length,2);
+    assert.ok(!guide.steps.some(step => step.snippets?.includes(2)));
+  }
+  assert.throws(() => resolve('codex',{variant:'unknown'}));
+});
+
+test('Pi, DeepSeek Harness and CodeBuddy honor distinct protocol and address contracts', () => {
+  for (const protocol of ['chat','responses','anthropic']) {
+    const pi = JSON.parse(build('pi-agent',options({protocol}))[1].content).providers.newapi;
+    assert.equal(pi.api,{chat:'openai-completions',responses:'openai-responses',anthropic:'anthropic-messages'}[protocol]);
+    assert.equal(pi.baseUrl,origin+(protocol==='anthropic'?'':'/v1'));
+    const harness = build('deepseek-harness',options({protocol}));
+    assert.equal(harness[0].containsKey,false);
+    assert.equal(harness[1].fields.find(field=>field.label==='基础 URL').value,pi.baseUrl);
+    assert.equal(harness[2].fields.find(field=>field.label==='模型 ID').value,'fixture-model');
+    const buddy = build('codebuddy',options({protocol,variant:'cli'}));
+    if(protocol==='anthropic') {
+      assert.equal(buddy[0].language,'bash');assert.ok(buddy[0].content.includes("CODEBUDDY_BASE_URL='"+origin+"'"));
+    } else {
+      const config=JSON.parse(buddy[0].content);assert.equal(config.models[0].url,origin+(protocol==='responses'?'/v1':'/v1/chat/completions'));
+      assert.equal(config.models[0].api,protocol==='responses'?'openai-responses':undefined);
+      assert.equal(config.availableModels,undefined);
+    }
+  }
+  assert.throws(()=>build('codebuddy',options({variant:'ide',protocol:'responses'})));
+  assert.throws(()=>build('codebuddy',options({key:'${DO_NOT_EXPAND}'})),error=>!error.message.includes('DO_NOT_EXPAND'));
+  const key='!command-$NAME-${SECRET}-$$';
+  const pi=JSON.parse(build('pi-agent',options({key}))[1].content).providers.newapi;
+  assert.equal(pi.apiKey,'$!command-$$NAME-$${SECRET}-$$$$');
+});
+
+test('TOML parses natively and Hermes YAML uses a bounded mapping with literal scalars on all systems', () => {
+  const python=process.env.COCKPIT_PYTHON||(fs.existsSync(path.join(__dirname,'../.venv/bin/python'))?path.join(__dirname,'../.venv/bin/python'):'python3');
+  const fixtures=[];
+  for(const platform of ['macos','windows','linux'])for(const protocol of ['chat','responses','anthropic']){
+    fixtures.push({protocol,toml:build('codex',options({platform}))[0].content});
+    const yaml=build('hermes',options({platform,protocol,key:'fixture-"quote"-\\path'}))[0].content.split('\n');
+    assert.deepEqual(yaml.slice(0,2),['providers:','  newapi:']);assert.equal(yaml.length,5);
+    assert.equal(JSON.parse(yaml[2].slice('    api: '.length)),origin+(protocol==='anthropic'?'':'/v1'));
+    assert.equal(yaml[3],'    transport: '+{chat:'chat_completions',responses:'codex_responses',anthropic:'anthropic_messages'}[protocol]);
+    assert.equal(JSON.parse(yaml[4].slice('    api_key: '.length)),'fixture-"quote"-\\path');
+  }
+  const script='import json,sys,tomllib\n'
+    +'for row in json.load(sys.stdin):\n'
+    +' c=tomllib.loads(row["toml"]); p=c["model_providers"]["newapi"]\n'
+    +' assert c["cli_auth_credentials_store"]=="file" and p["wire_api"]=="responses"\n';
+  execFileSync(python,['-c',script],{input:JSON.stringify(fixtures),encoding:'utf8'});
 });

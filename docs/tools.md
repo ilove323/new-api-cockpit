@@ -4,7 +4,7 @@
 
 | 内容 | 页面 | 用途 |
 | --- | --- | --- |
-| 模型使用 | `/cockpit/manual` | 选择本人 KEY 和模型，查看十二类客户端的接入步骤与配置示例 |
+| 模型使用 | `/cockpit/manual` | 选择本人 KEY 和模型，查看十五类客户端的接入步骤与配置示例 |
 | 辅助工具 | `/cockpit/tools` | 下载 VS Code 插件，设置账户连接、管理 KEY、生成 Claude / Codex 草稿；配置账户 MCP |
 | API 文档 | `/cockpit/docs/` | 管理员查阅接口、在线调试及下载 OpenAPI，原权限和操作确认不变 |
 

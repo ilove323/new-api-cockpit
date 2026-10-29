@@ -71,7 +71,7 @@ Anthropic 渠道用 Claude Messages，其他渠道用 OpenAI Chat Completions。
 直接等待并显示结果，不保存测试历史；Cockpit 不设置输出 Token 上限，预览会按窗口缩放，也支持调整高度和全屏。
 调用正常计费，实际输出仍受 New API 和上游限制，详见[智力测试](docs/intelligence.md)。
 
-模型使用教程覆盖 Claude Code、Codex、WorkBuddy、Hermes、Claude App、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw 和 curl。
+模型使用教程覆盖 Claude Code、Codex、WorkBuddy、Hermes、Claude App、Cursor、CC Switch、TRAE、Qoder、Chatbox、OpenClaw、Pi Agent、DeepSeek Harness、CodeBuddy 和 curl。
 地址取当前站点，按工具分别生成 Chat Completions、Responses 或 Anthropic Messages 配置；
 模型在客户端会话中选择，配置不固定默认模型；需要转换协议的 CC Switch 接入会列出本地路由设置。
 只查询本人令牌和模型，不改分组或额度，也不发起收费生成，详见[模型使用](docs/manual.md)。

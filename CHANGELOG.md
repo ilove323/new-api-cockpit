@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 重整模型使用教程：工具改用大下拉框，区分 CLI / 桌面 / 扩展及 macOS / Windows / Linux；配置和实际保存位置放在对应步骤，表单字段可逐项复制，非密钥字段不读取 KEY。
+- 新增 Pi Agent、DeepSeek Harness、CodeBuddy；按官方文档更新 Hermes 三种协议与原生 Windows、Pi 当前包名及 CodeBuddy CLI 的 Responses / Messages 入口，保留 Codex 的 config.toml + auth.json。无后端权限、数据库或调用模型行为变更。
+
 - 时间快捷按钮“前三个月”改为“三个月”，范围改为前两个月月初至当前时刻，包含本月，按北京时间计算。
 - 用户模型明细增加 RMB / USD 切换，默认 RMB；单价、消费、每百万 Token 金额、合计和悬浮公式联动，切换不查询上游、不修改原数据。汇率复用源库价格配置查询，取 USDExchangeRate；原始 API 数值保持 USD。
 - Excel 固定 RMB，所有工作表的单价与金额按站点汇率换算并标注；区间卡片和消费排名保持 RMB，网页切 USD 不改变导出。
