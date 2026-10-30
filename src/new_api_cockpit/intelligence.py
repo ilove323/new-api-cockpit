@@ -10,9 +10,11 @@ from html.parser import HTMLParser
 from http.client import HTTPConnection, HTTPSConnection, HTTPException
 from importlib.resources import files
 import json
+import logging
 import os
 import re
 import time
+import traceback
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
@@ -137,6 +139,19 @@ def _response(path, credential, user_id, *, body=None, generation=False, headers
     except (OSError, HTTPException, ValueError) as exc:
         if isinstance(exc, IntelligenceError):
             raise
+        if generation:
+            # A protocol decoder error is not necessarily a network failure.
+            # Log only code location/type; exception text can contain upstream
+            # response data, credentials or generated content.
+            origin = traceback.extract_tb(exc.__traceback__)[-1]
+            logging.getLogger(__name__).warning(
+                "Intelligence upstream failure: type=%s errno=%s location=%s:%s:%s",
+                type(exc).__name__,
+                getattr(exc, "errno", None),
+                os.path.basename(origin.filename),
+                origin.name,
+                origin.lineno,
+            )
         raise error("New API 连接或响应异常，未自动重试。") from None
     finally:
         if connection is not None:
@@ -180,11 +195,22 @@ def stream_upstream(path, credential, user_id, *, body, endpoint, headers):
         )
         if content_type == "text/event-stream":
             parser = DrawingStream(endpoint)
-            for chunk in chunks:
-                yield from parser.feed(chunk)
-                if parser.done:
-                    break
-            parser.end()
+            try:
+                for chunk in chunks:
+                    yield from parser.feed(chunk)
+                    if parser.done:
+                        break
+                parser.end()
+            except (OSError, HTTPException, ValueError) as exc:
+                if endpoint != "openai" or parser.reason is None:
+                    raise
+                # Keep consuming a normal usage/DONE tail for New API billing,
+                # but a tail-only disconnect cannot undo a valid finish_reason.
+                # Never infer completion from an apparently closed SVG alone.
+                logging.getLogger(__name__).warning(
+                    "Intelligence completed choice, accounting trailer unavailable: %s",
+                    type(exc).__name__,
+                )
             yield {"type": "finish", "reason": parser.reason}
         elif content_type == "application/json" or content_type.endswith("+json"):
             text, reason = generated_text(
@@ -534,7 +560,12 @@ class DocumentCheck(HTMLParser):
             self.closed = True
 
 
-def extract_html(text):
+def extract_drawing(text):
+    """Return the sandbox document and an optional standalone SVG image.
+
+    An SVG image needs its XML namespace. Namespace-less inline SVG and full
+    HTML keep using the HTTP sandbox; never rewrite the model's drawing.
+    """
     if not isinstance(text, str) or not text.strip():
         raise IntelligenceError("模型没有返回可用的 SVG。")
     if len(text.encode()) > MAX_HTML_BYTES:
@@ -558,7 +589,7 @@ def extract_html(text):
     check = DocumentCheck()
     check.feed(html)
     if check.html and check.closed and check.svg:
-        return html
+        return html, None
     # The original benchmark asks for SVG, not HTML. Wrap only a complete SVG;
     # do not repair a drawing, execute it, or expand XML entities on the server.
     if not re.search(r"<!\s*(?:DOCTYPE|ENTITY)", html, re.I):
@@ -574,10 +605,16 @@ def extract_html(text):
                 )
                 if len(document.encode()) > MAX_HTML_BYTES:
                     raise IntelligenceError("生成内容超过预览大小限制。")
-                return document
+                return document, (
+                    html if root.tag == "{http://www.w3.org/2000/svg}svg" else None
+                )
         except ElementTree.ParseError:
             pass
     raise IntelligenceError("未能从模型输出中提取完整 SVG；可切换源码查看原始输出。")
+
+
+def extract_html(text):
+    return extract_drawing(text)[0]
 
 
 @cache
@@ -665,7 +702,7 @@ def run_events(identity, credential, body):
                     yield event
         elapsed = round((time.monotonic() - start) * 1000)
         text = "".join(parts)
-        warning, html = "", None
+        warning, html, svg = "", None, None
         if oversized:
             warning = "生成内容过大，只显示部分源码，不预览。"
         elif stop_reason not in {None, "stop", "end_turn", "stop_sequence"}:
@@ -686,7 +723,7 @@ def run_events(identity, credential, body):
             )
         else:
             try:
-                html = extract_html(text)
+                html, svg = extract_drawing(text)
             except IntelligenceError as exc:
                 warning = str(exc)
         result = dict(
@@ -698,6 +735,7 @@ def run_events(identity, credential, body):
             key_name=KEY_NAME,
             elapsed_ms=elapsed,
             html=html,
+            svg=svg,
             source=text,
             warning=warning,
         )

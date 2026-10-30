@@ -133,9 +133,12 @@ class DrawingDecoderTest(unittest.TestCase):
         decoder.end()
         self.assertEqual(events, [{"type": "text", "text": "<svg/>"}])
 
-    def test_missing_terminal_or_finish_malformed_or_error_frame_never_succeeds(self):
+    def test_missing_finish_malformed_or_error_frame_never_succeeds(self):
         cases = [
-            ("openai", openai_wire().rsplit(b"data: [DONE]", 1)[0]),
+            (
+                "openai",
+                sse({"choices": [{"index": 0, "delta": {"content": SVG}}]}),
+            ),
             ("openai", sse("[DONE]")),
             ("openai", b"data: {bad-json}\n\n"),
             ("openai", sse({"error": {"message": "fixture-private-error"}})),
@@ -159,8 +162,94 @@ class DrawingDecoderTest(unittest.TestCase):
                 list(decoder.feed(wire))
                 decoder.end()
 
+    def test_openai_finish_completes_before_optional_or_broken_trailers(self):
+        complete = sse(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"content": SVG}, "finish_reason": "stop"}
+                ]
+            }
+        )
+        for trailer in (
+            b"",
+            sse({"choices": [], "usage": {"total_tokens": 20}}) + sse("[DONE]"),
+            b"data: {broken-usage\n\n",
+            sse({"error": {"message": "fixture-private-tail"}}),
+        ):
+            for chunk_size in (1, 7, len(complete + trailer)):
+                with self.subTest(trailer=trailer[:20], chunk_size=chunk_size):
+                    decoder = DrawingStream("openai")
+                    events = []
+                    wire = complete + trailer
+                    for index in range(0, len(wire), chunk_size):
+                        events.extend(decoder.feed(wire[index : index + chunk_size]))
+                    decoder.end()
+                    self.assertTrue(decoder.done)
+                    self.assertEqual(decoder.reason, "stop")
+                    self.assertEqual(events, [{"type": "text", "text": SVG}])
+
 
 class DrawingTransportTest(unittest.TestCase):
+    def test_normal_accounting_tail_is_consumed_before_closing_new_api(self):
+        tail_started = threading.Event()
+        complete = sse(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"content": SVG}, "finish_reason": "stop"}
+                ]
+            }
+        )
+
+        def reply(handler):
+            handler.send_response(200)
+            handler.send_header("Content-Type", "text/event-stream")
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(complete)
+            handler.wfile.flush()
+            time.sleep(0.05)
+            tail_started.set()
+            handler.wfile.write(
+                sse({"choices": [], "usage": {"total_tokens": 20}}) + sse("[DONE]")
+            )
+            handler.wfile.flush()
+
+        with upstream(reply) as attempts:
+            events = list(drawing_request())
+            self.assertTrue(tail_started.is_set())
+            self.assertEqual(events[-1], {"type": "finish", "reason": "stop"})
+            self.assertEqual(len(attempts), 1)
+
+    def test_completed_drawing_survives_stalled_accounting_within_the_deadline(self):
+        release = threading.Event()
+        complete = sse(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"content": SVG}, "finish_reason": "stop"}
+                ]
+            }
+        )
+
+        def reply(handler):
+            handler.send_response(200)
+            handler.send_header("Content-Type", "text/event-stream")
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(complete)
+            handler.wfile.flush()
+            release.wait(2)
+
+        with (
+            upstream(reply) as attempts,
+            patch.object(intel, "GENERATION_TIMEOUT", 0.3),
+        ):
+            try:
+                events = list(drawing_request())
+                self.assertEqual(events[-1], {"type": "finish", "reason": "stop"})
+                self.assertEqual(len(attempts), 1)
+            finally:
+                release.set()
+
     def test_streaming_http_framings_for_both_protocols(self):
         for endpoint, body in [
             ("openai", openai_wire()),
@@ -285,6 +374,7 @@ class DrawingEventsTest(unittest.TestCase):
         result = events[-1]["result"]
         self.assertEqual(result["source"], source)
         self.assertEqual(result["warning"], "")
+        self.assertEqual(result["svg"], SVG)
         self.assertIn(SVG, result["html"])
         self.assertNotIn("I’ll create", result["html"])
         self.assertEqual(

@@ -800,6 +800,14 @@ class IntelligenceTest(unittest.TestCase):
                 intel.extract_html(source)
         self.assertEqual(intel.GENERATION_TIMEOUT, 300)
 
+    def test_standalone_namespaced_svg_can_render_as_an_image_without_rewriting(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><title>鹈鹕</title><circle r="10"/></svg>'
+        html, image = intel.extract_drawing("```svg\n" + svg + "\n```")
+        self.assertEqual(image, svg)
+        self.assertIn(svg, html)
+        self.assertIsNone(intel.extract_drawing("<svg/>")[1])
+        self.assertIsNone(intel.extract_drawing(HTML)[1])
+
     def test_preview_reuses_only_packaged_script_not_generated_documents(self):
         intel._preview_script.cache_clear()
         self.addCleanup(intel._preview_script.cache_clear)

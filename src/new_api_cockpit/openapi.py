@@ -2087,6 +2087,10 @@ def document():
                         "key_name": text(),
                         "elapsed_ms": integer(),
                         "html": {"type": ["string", "null"]},
+                        "svg": {
+                            "type": ["string", "null"],
+                            "description": "可作为图片预览的完整、带命名空间 SVG 原文；HTML 或无命名空间 SVG 为 null。",
+                        },
                         "source": text(),
                         "warning": text(),
                     }
@@ -2099,7 +2103,7 @@ def document():
                 example={"model": "gpt-6-astra"},
                 header=("X-Intelligence-Request", "1"),
                 effect="write",
-                description="使用原始英文提示词 Generate an SVG of a pelican riding a bicycle，不附加系统提示词；不要求动画。使用流式模型调用，不创建后台任务或测试历史。Accept: text/event-stream 返回 status/text/heartbeat/result/error 事件；默认收集同一次调用后返回 JSON。SSE 响应开始后的错误通过 error 事件返回，不能仅凭 HTTP 200 判断成功。所有启用用户的登录会话均可使用。开始时重新选择本人可用分组及渠道，Anthropic 渠道（类型 14）调用 /v1/messages，其他调用 /v1/chat/completions；管理员通过指定渠道机制固定路由；普通用户使用不带渠道后缀的 KEY，交给 New API 在所选分组正常路由，响应 channel_id/channel_type 为 null。失败不自动换协议或重试。当前用户名下复用 cockpit-智力测试专用 KEY，没有才通过官方 API 创建；普通用户使用本人的已验证登录会话操作 KEY，不补建 PAT；自动改组并限制为所选模型。首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 额度/到期/启禁配置不重置。只允许 model，不允许指定用户、渠道、分组、凭据或题目。同一用户并发返回 409；生成总时限 300 秒，持续输出不重置时限；Cockpit 不设置输出 Token 上限参数；Claude 必需的 max_tokens 由 New API 配置补齐，实际仍受上游限制。超时/失败不自动重试，可能已产生费用。测试结果只在响应中；KEY 创建/配置沿用现有审计。不支持接续或按 ID 取回结果。完整 SVG 仅套上 HTML 沙箱预览外壳；source 保留原始输出。html 为 null 时看 source/warning，不自动补代码或再次调用模型。",
+                description="使用原始英文提示词 Generate an SVG of a pelican riding a bicycle，不附加系统提示词；不要求动画。使用流式模型调用，不创建后台任务或测试历史。Accept: text/event-stream 返回 status/text/heartbeat/result/error 事件；默认收集同一次调用后返回 JSON。SSE 响应开始后的错误通过 error 事件返回，不能仅凭 HTTP 200 判断成功。所有启用用户的登录会话均可使用。开始时重新选择本人可用分组及渠道，Anthropic 渠道（类型 14）调用 /v1/messages，其他调用 /v1/chat/completions；管理员通过指定渠道机制固定路由；普通用户使用不带渠道后缀的 KEY，交给 New API 在所选分组正常路由，响应 channel_id/channel_type 为 null。失败不自动换协议或重试。当前用户名下复用 cockpit-智力测试专用 KEY，没有才通过官方 API 创建；普通用户使用本人的已验证登录会话操作 KEY，不补建 PAT；自动改组并限制为所选模型。首次创建永久有效、无限 KEY 额度，仍扣账户余额；已有 KEY 额度/到期/启禁配置不重置。只允许 model，不允许指定用户、渠道、分组、凭据或题目。同一用户并发返回 409；生成总时限 300 秒，持续输出不重置时限；Cockpit 不设置输出 Token 上限参数；Claude 必需的 max_tokens 由 New API 配置补齐，实际仍受上游限制。超时/失败不自动重试，可能已产生费用。测试结果只在响应中；KEY 创建/配置沿用现有审计。不支持接续或按 ID 取回结果。完整且带命名空间的 SVG 原文放入 svg，网页作为图片预览，不执行脚本或加载外部资源；html 保留兼容预览外壳，HTML 文档仍用 HTTP 沙箱；source 保留原始输出。html 为 null 时看 source/warning，不自动补代码或再次调用模型。",
             ),
             operation(
                 "POST",

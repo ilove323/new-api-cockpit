@@ -825,10 +825,10 @@ curl --fail-with-body "$BASE_URL/cockpit/api/quality/summary?start=2026-10-09&en
 优先当前用户组，否则按组名排序；组内按渠道优先级降序、ID 升序选择当前启用渠道。
 `endpoint` 只有 `anthropic` 和 `openai`：Anthropic 渠道（`channel_type: 14`）使用 `/v1/messages`，其他使用 `/v1/chat/completions`。
 开始时重新核对可用模型和分组。管理员固定选中的渠道；普通用户不使用指定渠道后缀，由 New API 在所选分组内正常路由，目录中的渠道字段仅用于选择测试协议。不按模型名猜协议，不自动切换协议或重试。
-测试返回 `model`、`group`、`channel_id`、`channel_type`、`endpoint`、`key_name`、`elapsed_ms`、`html`、`source`、`warning`。普通用户请求没有固定实际渠道，响应中的 `channel_id`、`channel_type` 为 null。
+测试返回 `model`、`group`、`channel_id`、`channel_type`、`endpoint`、`key_name`、`elapsed_ms`、`html`、`svg`、`source`、`warning`。普通用户请求没有固定实际渠道，响应中的 `channel_id`、`channel_type` 为 null。
 Cockpit 不发送输出 Token 上限参数；Claude 必需的 `max_tokens` 由 New API 的模型配置补齐，实际仍受上游限制。
 `html` 为 null 表示结果不能预览，仍可查看 `source` 与 `warning`；不代表可以原样重试而不计费。
-题目固定为 `Generate an SVG of a pelican riding a bicycle`，不附加系统提示词；原题不要求动画。完整 SVG 套上预览外壳后放入 `html`，`source` 保留模型实际输出，兼容返回完整 HTML 内嵌 SVG 的模型。
+题目固定为 `Generate an SVG of a pelican riding a bicycle`，不附加系统提示词；原题不要求动画。完整、带命名空间的 SVG 原文同时放入 `svg`，网页直接作为图片显示，不执行脚本或加载外部资源，不调用预览接口。`html` 继续保留预览外壳，兼容已有客户端；完整 HTML 内嵌 SVG 或无命名空间 SVG 的 `svg` 为 null，使用 HTTP 沙箱。`source` 始终保留模型实际输出。
 同一用户并发返回 409，不排队。模型生成使用 `stream: true`，总时限 300 秒，不因持续输出延长，不自动重试。
 默认返回一次性 JSON；网页及需要实时状态的调用加 `Accept: text/event-stream`，在同一个 POST 响应中接收以下 SSE 事件：
 
