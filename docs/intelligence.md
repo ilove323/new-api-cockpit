@@ -58,10 +58,11 @@ OpenAI Chat Completions 和 Claude Messages 均支持流式文本。思考内容
 只有收到协议完成标记并通过 SVG/HTML 完整性检查，才启用预览。超时、流中错误或断线时，页面保留已经收到的源码，但不把它当作完成结果，也不会自动重试。
 如上游忽略流式参数而返回 JSON，消费这一份响应后返回结果，不再补发第二次调用。
 Cockpit 不设置 `max_tokens`、`max_completion_tokens` 或 `max_output_tokens`，输出 Token 上限由 New API 和上游决定。
+也不指定 `thinking` 或 `output_config.effort`，不主动关闭思考，采用模型和渠道的默认设置。页面能显示思考状态，不代表请求强制使用某个思考等级；没有收到思考事件，也不能据此判断模型没有思考。Claude 的等级参数见 [官方 effort 文档](https://platform.claude.com/docs/en/build-with-claude/effort)。
 Claude 协议要求的 `max_tokens` 由 New API 按模型配置补齐；实际输出仍受 New API、渠道和模型自身限制，不表示模型能无限输出。
 Claude 渠道应使用 New API 的常规转发；开启请求体透传会跳过这一步，需由上游提供默认参数。
 接口原始响应最多 2 MiB（包括 SSE 帧和思考数据），这是响应体保护，不是模型生成 Token 配额。
-OpenAI 单个结果收到合法 `finish_reason` 后，图画文本已经结束；仍会读取正常的用量尾帧及 `[DONE]`，不为显示预览提前断开 New API 的计费收尾。已完成后的尾帧格式异常、断线或缺少 `[DONE]` 不再让完整图画失败，尾部等待仍受原来的 300 秒总时限限制。没有合法结束原因时，即使文本里已有 `</svg>` 或 HTTP 为 200，也不当作成功。Claude 仍需结束原因及 `message_stop`。
+OpenAI 单个结果收到合法 `finish_reason` 后，图画文本已经结束；Claude 需要结束原因及 `message_stop`。收到这些协议完成标记后，两种协议都继续读取 HTTP 响应到结束，包括分块传输的最后一个空块，不提前关闭 New API 连接，避免已完成请求被记为 `client_gone`。已完成后的尾部断线不会否决完整图画，等待仍受原来的 300 秒总时限和响应大小限制。没有完成标记时，即使文本里已有 `</svg>` 或 HTTP 为 200，也不当作成功。
 可预览 HTML / 显示源码最多 512 KiB；截断、拒答、内容过大或缺少完整 SVG 时不自动修复，页面显示提示及可用源码。
 只验证能否提取完整 SVG 或包含 SVG 的 HTML，不自动判定画得好不好，不生成“智力分数”。
 超时、断线或错误响应不自动重试，已有消费以 New API 日志为准。

@@ -197,18 +197,23 @@ def stream_upstream(path, credential, user_id, *, body, endpoint, headers):
             parser = DrawingStream(endpoint)
             try:
                 for chunk in chunks:
-                    yield from parser.feed(chunk)
-                    if parser.done:
-                        break
+                    if not parser.done:
+                        yield from parser.feed(chunk)
+                    # A protocol terminal is not the end of the HTTP body.
+                    # Drain the bounded response so New API can finish its
+                    # stream/accounting cleanup before we close the socket.
                 parser.end()
             except (OSError, HTTPException, ValueError) as exc:
-                if endpoint != "openai" or parser.reason is None:
+                completed = parser.done or (
+                    endpoint == "openai" and parser.reason is not None
+                )
+                if not completed:
                     raise
-                # Keep consuming a normal usage/DONE tail for New API billing,
-                # but a tail-only disconnect cannot undo a valid finish_reason.
-                # Never infer completion from an apparently closed SVG alone.
+                # A transport-only failure after protocol completion cannot
+                # undo the drawing. Claude still requires message_stop;
+                # an apparently closed SVG or stop_reason alone is not enough.
                 logging.getLogger(__name__).warning(
-                    "Intelligence completed choice, accounting trailer unavailable: %s",
+                    "Intelligence completed response, HTTP trailer unavailable: %s",
                     type(exc).__name__,
                 )
             yield {"type": "finish", "reason": parser.reason}
