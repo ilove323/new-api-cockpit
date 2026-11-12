@@ -9,7 +9,7 @@
   let previewSequence=0;
   let previewWidth=1280,previewHeight=900,previewGrowths=0;
   function fit(){
-    if(!frame)return;
+    if(!frame||frame.tagName==='IMG')return;
     const box=$('intelligence-preview'),width=box.clientWidth,height=box.clientHeight;
     if(!width||!height)return;
     const scale=Math.min(width/previewWidth,height/previewHeight);
@@ -108,10 +108,19 @@
     if(!source)fit();
   }
   async function preview(){
-    const current=ticket,html=result?.html;if(!html)return;
+    const current=ticket,html=result?.html,svg=result?.svg;if(!html)return;
     // Generation may outlast the access token. Refresh before the form POST,
     // without replaying inference or accepting a different login account.
     await window.CockpitAuth.ensure();if(current!==ticket||result?.html!==html)return;
+    if(svg){
+      // Image mode cannot execute SVG scripts or load external resources. Keep
+      // model markup out of the parent DOM, URLs sent to the server and files.
+      const image=document.createElement('img');image.alt='鹈鹕骑车测试生成的 SVG';image.referrerPolicy='no-referrer';
+      frame=image;$('intelligence-preview').replaceChildren(image);
+      image.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+      try{await image.decode();}catch{if(current===ticket)throw new Error('SVG 预览加载失败，源码已保留。');return;}
+      if(current===ticket&&frame===image)tab(false);return;
+    }
     frame=document.createElement('iframe');frame.name='cockpit-pelican-'+(++previewSequence);frame.title='鹈鹕骑车测试生成的 SVG';
     frame.setAttribute('sandbox','allow-scripts');frame.referrerPolicy='no-referrer';
     previewWidth=1280;previewHeight=900;previewGrowths=0;

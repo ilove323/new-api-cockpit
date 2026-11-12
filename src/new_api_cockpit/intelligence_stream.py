@@ -48,11 +48,23 @@ class DrawingStream:
                 self.data.append(value[1:] if value.startswith(" ") else value)
 
     def end(self):
-        self.decoder.decode(b"", final=True)
+        try:
+            self.decoder.decode(b"", final=True)
+        except UnicodeError:
+            if self.endpoint != "openai" or self.reason is None:
+                raise
+        if self.endpoint == "openai" and self.reason is not None:
+            self.done = True
         if not self.done:
             raise ValueError("Incomplete drawing stream")
 
     def _frame(self, data):
+        if self.endpoint == "openai" and self.reason is not None:
+            # The drawing is complete, but consume the normal accounting tail
+            # before closing New API. No later usage frame can change its text.
+            if data == "[DONE]":
+                self.done = True
+            return
         if self.endpoint == "openai" and data == "[DONE]":
             if self.reason is None:
                 raise ValueError("Missing finish reason")
